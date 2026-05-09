@@ -2,9 +2,9 @@
 
 > Auto-curated library of KQL (Kusto Query Language) queries collected daily from public GitHub repositories.
 
-[![Daily Scan](https://github.com/YOUR_USER/kql-hunter/actions/workflows/daily-scan.yml/badge.svg)](https://github.com/YOUR_USER/kql-hunter/actions/workflows/daily-scan.yml)
+[![Daily Scan](https://github.com/sivolko/kql-hunter/actions/workflows/daily-scan.yml/badge.svg)](https://github.com/sivolko/kql-hunter/actions/workflows/daily-scan.yml)
 
-**Live site →** https://YOUR_USER.github.io/kql-hunter
+**Live site** https://sivolko.github.io/kql-hunter
 
 ---
 
@@ -32,10 +32,9 @@ kql-hunter/
 
 ## Setup
 
-1. Fork / clone this repo
-2. Enable **GitHub Pages** → Source: `docs/` folder on `main` branch
-3. The `GITHUB_TOKEN` secret is available automatically in Actions — no extra setup needed
-4. Trigger the workflow manually once to seed the library: **Actions → Daily Scan → Run workflow**
+1. Enable **GitHub Pages** → Settings → Pages → Source: `docs/` folder on `main`
+2. `GITHUB_TOKEN` is available automatically in Actions — no extra secrets needed
+3. **Actions → KQL Hunter - Daily Scan → Run workflow** to seed the library
 
 ## Categories
 
