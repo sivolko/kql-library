@@ -3,905 +3,361 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>KQL Hunter</title>
-
-  <!-- Fonts -->
+  <title>KQL Library</title>
+  <meta name="description" content="Curated KQL query library for Microsoft Sentinel, Defender, and Azure — auto-updated daily from public repositories." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,500;12..96,700;12..96,800&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
-
-  <!-- Swiper -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
-
-  <!-- Highlight.js (KQL ≈ sql for colour) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" />
-
   <style>
-    /* ── Reset & tokens ───────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --white:   #ffffff;
-      --bg:      #f7f8fa;
-      --surface: #ffffff;
-      --border:  #e4e8ef;
-      --text:    #0f1117;
-      --muted:   #6b7280;
-      --accent:  #1d6ff3;
-      --accent2: #0ea5e9;
-      --danger:  #ef4444;
-      --success: #10b981;
-      --warn:    #f59e0b;
-      --purple:  #8b5cf6;
-
-      --cat-identity:  #6366f1;
-      --cat-endpoint:  #ef4444;
-      --cat-network:   #0ea5e9;
-      --cat-cloud:     #3b82f6;
-      --cat-m365:      #f59e0b;
-      --cat-linux:     #10b981;
-      --cat-threat:    #ec4899;
-      --cat-alerts:    #f97316;
-      --cat-general:   #6b7280;
-
-      --radius-sm: 8px;
-      --radius-md: 14px;
-      --radius-lg: 20px;
-
-      --shadow-sm: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
-      --shadow-md: 0 4px 16px rgba(0,0,0,.08), 0 1px 4px rgba(0,0,0,.04);
-      --shadow-lg: 0 12px 40px rgba(0,0,0,.12), 0 2px 8px rgba(0,0,0,.06);
-
-      --font-display: 'Bricolage Grotesque', sans-serif;
-      --font-mono:    'DM Mono', monospace;
+      --white:#ffffff; --bg:#f7f8fa; --border:#e4e8ef;
+      --text:#0f1117; --muted:#6b7280; --accent:#1d6ff3;
+      --success:#10b981;
+      --radius-lg:20px;
+      --shadow-sm:0 1px 3px rgba(0,0,0,.06);
+      --shadow-md:0 4px 16px rgba(0,0,0,.08);
+      --shadow-lg:0 12px 40px rgba(0,0,0,.12);
+      --font-display:'Bricolage Grotesque',sans-serif;
+      --font-mono:'DM Mono',monospace;
     }
-
     html { scroll-behavior: smooth; }
+    body { font-family:var(--font-display); background:var(--bg); color:var(--text); min-height:100vh; -webkit-font-smoothing:antialiased; }
 
-    body {
-      font-family: var(--font-display);
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      -webkit-font-smoothing: antialiased;
-    }
+    /* Topbar */
+    .topbar { position:sticky; top:0; z-index:100; background:rgba(255,255,255,.88); backdrop-filter:blur(14px); border-bottom:1px solid var(--border); padding:0 32px; display:flex; align-items:center; gap:24px; height:64px; }
+    .logo { display:flex; align-items:center; gap:10px; font-weight:800; font-size:1.15rem; letter-spacing:-.02em; color:var(--text); text-decoration:none; flex-shrink:0; }
+    .logo-icon { width:32px; height:32px; background:var(--accent); border-radius:8px; display:grid; place-items:center; }
+    .logo-icon svg { width:18px; height:18px; fill:white; }
+    .topbar-search { flex:1; max-width:560px; margin:0 auto; position:relative; }
+    .topbar-search input { width:100%; height:40px; border:1.5px solid var(--border); border-radius:999px; padding:0 16px 0 42px; font-family:var(--font-display); font-size:.9rem; background:var(--bg); color:var(--text); outline:none; transition:border-color .18s,box-shadow .18s; }
+    .topbar-search input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(29,111,243,.12); background:var(--white); }
+    .topbar-search input::placeholder { color:var(--muted); }
+    .search-icon { position:absolute; left:14px; top:50%; transform:translateY(-50%); width:16px; height:16px; stroke:var(--muted); fill:none; pointer-events:none; }
+    .clear-btn { position:absolute; right:12px; top:50%; transform:translateY(-50%); width:20px; height:20px; border-radius:50%; background:var(--muted); border:none; cursor:pointer; display:none; place-items:center; transition:background .15s; }
+    .clear-btn.visible { display:grid; }
+    .clear-btn:hover { background:var(--text); }
+    .clear-btn svg { width:10px; height:10px; stroke:white; fill:none; }
+    .topbar-right { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+    .stats-pill { font-size:.78rem; font-weight:600; background:var(--bg); border:1px solid var(--border); border-radius:999px; padding:4px 12px; color:var(--muted); }
+    .stats-pill span { color:var(--accent); }
+    .gh-link { display:flex; align-items:center; gap:6px; font-size:.82rem; font-weight:600; color:var(--text); border:1.5px solid var(--border); border-radius:8px; padding:6px 12px; text-decoration:none; transition:border-color .15s,background .15s; }
+    .gh-link:hover { border-color:var(--accent); background:var(--white); }
+    .gh-link svg { width:16px; height:16px; fill:currentColor; }
 
-    /* ── Top bar ──────────────────────────────────────────────── */
-    .topbar {
-      position: sticky; top: 0; z-index: 100;
-      background: rgba(255,255,255,.88);
-      backdrop-filter: blur(14px);
-      border-bottom: 1px solid var(--border);
-      padding: 0 32px;
-      display: flex; align-items: center; gap: 24px;
-      height: 64px;
-    }
-
-    .logo {
-      display: flex; align-items: center; gap: 10px;
-      font-weight: 800; font-size: 1.15rem; letter-spacing: -.02em;
-      color: var(--text); text-decoration: none;
-      flex-shrink: 0;
-    }
-    .logo-icon {
-      width: 32px; height: 32px;
-      background: var(--accent);
-      border-radius: 8px;
-      display: grid; place-items: center;
-    }
-    .logo-icon svg { width: 18px; height: 18px; fill: white; }
-
-    .topbar-search {
-      flex: 1; max-width: 560px; margin: 0 auto;
-      position: relative;
-    }
-    .topbar-search input {
-      width: 100%;
-      height: 40px;
-      border: 1.5px solid var(--border);
-      border-radius: 999px;
-      padding: 0 16px 0 42px;
-      font-family: var(--font-display);
-      font-size: .9rem;
-      background: var(--bg);
-      color: var(--text);
-      outline: none;
-      transition: border-color .18s, box-shadow .18s;
-    }
-    .topbar-search input:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(29,111,243,.12);
-      background: var(--white);
-    }
-    .topbar-search input::placeholder { color: var(--muted); }
-    .topbar-search .search-icon {
-      position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
-      width: 16px; height: 16px; stroke: var(--muted); fill: none;
-      pointer-events: none;
-    }
-    .clear-btn {
-      position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
-      width: 20px; height: 20px; border-radius: 50%;
-      background: var(--muted); border: none; cursor: pointer;
-      display: none; place-items: center;
-      transition: background .15s;
-    }
-    .clear-btn.visible { display: grid; }
-    .clear-btn:hover { background: var(--text); }
-    .clear-btn svg { width: 10px; height: 10px; stroke: white; fill: none; }
-
-    .topbar-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-    .stats-pill {
-      font-size: .78rem; font-weight: 600;
-      background: var(--bg); border: 1px solid var(--border);
-      border-radius: 999px; padding: 4px 12px; color: var(--muted);
-    }
-    .stats-pill span { color: var(--accent); }
-    .gh-link {
-      display: flex; align-items: center; gap: 6px;
-      font-size: .82rem; font-weight: 600; color: var(--text);
-      border: 1.5px solid var(--border); border-radius: 8px;
-      padding: 6px 12px; text-decoration: none;
-      transition: border-color .15s, background .15s;
-    }
-    .gh-link:hover { border-color: var(--accent); background: var(--white); }
-    .gh-link svg { width: 16px; height: 16px; fill: currentColor; }
-
-    /* ── Hero ─────────────────────────────────────────────────── */
-    .hero {
-      padding: 64px 32px 48px;
-      text-align: center;
-      background: var(--white);
-      border-bottom: 1px solid var(--border);
-    }
-    .hero-eyebrow {
-      display: inline-flex; align-items: center; gap: 6px;
-      font-size: .78rem; font-weight: 700; letter-spacing: .08em;
-      text-transform: uppercase; color: var(--accent);
-      background: rgba(29,111,243,.07); border-radius: 999px;
-      padding: 4px 12px; margin-bottom: 20px;
-    }
-    .hero-eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+    /* Hero */
+    .hero { padding:64px 32px 48px; text-align:center; background:var(--white); border-bottom:1px solid var(--border); }
+    .hero-eyebrow { display:inline-flex; align-items:center; gap:6px; font-size:.78rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); background:rgba(29,111,243,.07); border-radius:999px; padding:4px 12px; margin-bottom:20px; }
+    .hero-eyebrow .dot { width:6px; height:6px; border-radius:50%; background:var(--accent); animation:pulse 2s infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .hero h1 { font-size:clamp(2.2rem,5vw,3.6rem); font-weight:800; letter-spacing:-.04em; line-height:1.05; background:linear-gradient(135deg,#0f1117 30%,var(--accent)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:16px; }
+    .hero p { font-size:1.1rem; color:var(--muted); max-width:560px; margin:0 auto; line-height:1.65; }
 
-    .hero h1 {
-      font-size: clamp(2.2rem, 5vw, 3.6rem);
-      font-weight: 800; letter-spacing: -.04em;
-      line-height: 1.05;
-      background: linear-gradient(135deg, #0f1117 30%, var(--accent));
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      background-clip: text;
-      margin-bottom: 16px;
-    }
-    .hero p {
-      font-size: 1.1rem; color: var(--muted); max-width: 560px; margin: 0 auto;
-      line-height: 1.65;
-    }
+    /* Tabs */
+    .tabs-wrap { background:var(--white); border-bottom:1px solid var(--border); padding:0 32px; overflow-x:auto; scrollbar-width:none; }
+    .tabs-wrap::-webkit-scrollbar { display:none; }
+    .tabs { display:flex; gap:4px; align-items:center; min-width:max-content; }
+    .tab { padding:14px 16px; font-size:.86rem; font-weight:600; color:var(--muted); cursor:pointer; border:none; background:transparent; border-bottom:2.5px solid transparent; transition:color .15s,border-color .15s; white-space:nowrap; font-family:var(--font-display); }
+    .tab:hover { color:var(--text); }
+    .tab.active { color:var(--accent); border-color:var(--accent); }
+    .tab .count { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; border-radius:999px; font-size:.68rem; font-weight:700; padding:0 5px; background:var(--bg); color:var(--muted); margin-left:6px; }
+    .tab.active .count { background:rgba(29,111,243,.12); color:var(--accent); }
 
-    /* ── Category tabs ────────────────────────────────────────── */
-    .tabs-wrap {
-      background: var(--white);
-      border-bottom: 1px solid var(--border);
-      padding: 0 32px;
-      overflow-x: auto; scrollbar-width: none;
-    }
-    .tabs-wrap::-webkit-scrollbar { display: none; }
-    .tabs {
-      display: flex; gap: 4px; align-items: center;
-      min-width: max-content;
-    }
-    .tab {
-      padding: 14px 16px;
-      font-size: .86rem; font-weight: 600;
-      color: var(--muted); cursor: pointer;
-      border: none; background: transparent;
-      border-bottom: 2.5px solid transparent;
-      transition: color .15s, border-color .15s;
-      white-space: nowrap; font-family: var(--font-display);
-      position: relative;
-    }
-    .tab:hover { color: var(--text); }
-    .tab.active { color: var(--accent); border-color: var(--accent); }
-    .tab .count {
-      display: inline-flex; align-items: center; justify-content: center;
-      min-width: 18px; height: 18px; border-radius: 999px;
-      font-size: .68rem; font-weight: 700; padding: 0 5px;
-      background: var(--bg); color: var(--muted);
-      margin-left: 6px; transition: background .15s, color .15s;
-    }
-    .tab.active .count { background: rgba(29,111,243,.12); color: var(--accent); }
+    /* Main */
+    .main { max-width:1400px; margin:0 auto; padding:40px 32px 80px; }
+    .section-header { display:flex; align-items:baseline; gap:12px; margin-bottom:24px; }
+    .section-title { font-size:1.25rem; font-weight:800; letter-spacing:-.02em; }
+    .section-subtitle { font-size:.86rem; color:var(--muted); }
 
-    /* ── Main content ─────────────────────────────────────────── */
-    .main {
-      max-width: 1400px; margin: 0 auto;
-      padding: 40px 32px 80px;
-    }
+    /* Swiper */
+    .swiper-section { margin-bottom:56px; }
+    .swiper { width:100%; padding-bottom:52px !important; }
+    .swiper-pagination-bullet { width:6px; height:6px; background:var(--border); opacity:1; transition:all .2s; }
+    .swiper-pagination-bullet-active { background:var(--accent); width:20px; border-radius:3px; }
+    .swiper-button-prev,.swiper-button-next { width:36px; height:36px; background:var(--white); border:1.5px solid var(--border); border-radius:10px; box-shadow:var(--shadow-sm); color:var(--text) !important; transition:border-color .15s,box-shadow .15s; top:calc(50% - 26px); }
+    .swiper-button-prev::after,.swiper-button-next::after { font-size:12px !important; font-weight:900; }
+    .swiper-button-prev:hover,.swiper-button-next:hover { border-color:var(--accent); box-shadow:var(--shadow-md); }
+    .swiper-button-disabled { opacity:0.3 !important; }
 
-    .section-header {
-      display: flex; align-items: baseline; gap: 12px;
-      margin-bottom: 24px;
-    }
-    .section-title {
-      font-size: 1.25rem; font-weight: 800; letter-spacing: -.02em;
-    }
-    .section-subtitle { font-size: .86rem; color: var(--muted); }
+    /* Cards */
+    .q-card { background:var(--white); border:1.5px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; cursor:pointer; transition:border-color .18s,box-shadow .18s,transform .18s; display:flex; flex-direction:column; height:320px; }
+    .q-card:hover { border-color:var(--accent); box-shadow:var(--shadow-lg); transform:translateY(-3px); }
+    .q-card-head { padding:18px 20px 14px; flex-shrink:0; }
+    .q-card-meta { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+    .cat-badge { font-size:.7rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; border-radius:6px; padding:3px 8px; color:white; }
+    .tag-badge { font-size:.68rem; font-weight:600; border-radius:5px; padding:2px 7px; background:var(--bg); color:var(--muted); border:1px solid var(--border); }
+    .q-card-title { font-size:.95rem; font-weight:700; letter-spacing:-.01em; line-height:1.35; margin-bottom:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .q-card-desc { font-size:.8rem; color:var(--muted); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .q-card-code { flex:1; overflow:hidden; background:#f8f9fc; border-top:1px solid var(--border); position:relative; }
+    .q-card-code pre { margin:0; padding:14px 16px; font-size:.72rem; line-height:1.55; font-family:var(--font-mono); overflow:hidden; height:100%; }
+    .q-card-code pre code { background:transparent !important; padding:0 !important; }
+    .fade-overlay { position:absolute; bottom:0; left:0; right:0; height:48px; background:linear-gradient(to bottom,transparent,#f8f9fc); pointer-events:none; }
+    .q-card-footer { padding:10px 20px; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; background:var(--white); }
+    .q-card-repo { font-size:.72rem; color:var(--muted); font-family:var(--font-mono); display:flex; align-items:center; gap:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%; }
+    .q-card-repo svg { width:12px; height:12px; flex-shrink:0; }
+    .copy-btn { font-size:.72rem; font-weight:600; color:var(--accent); background:rgba(29,111,243,.07); border:none; border-radius:6px; padding:4px 10px; cursor:pointer; font-family:var(--font-display); transition:background .15s; flex-shrink:0; }
+    .copy-btn:hover { background:rgba(29,111,243,.14); }
+    .copy-btn.copied { color:var(--success); background:rgba(16,185,129,.1); }
 
-    /* ── Swiper overrides ─────────────────────────────────────── */
-    .swiper-section { margin-bottom: 56px; }
+    /* Empty */
+    .empty-state { text-align:center; padding:80px 20px; display:none; }
+    .empty-state.visible { display:block; }
+    .empty-state .empty-icon { font-size:3rem; margin-bottom:16px; }
+    .empty-state h3 { font-size:1.2rem; font-weight:700; margin-bottom:8px; }
+    .empty-state p { color:var(--muted); font-size:.9rem; }
 
-    .swiper {
-      width: 100%;
-      padding-bottom: 52px !important;
-    }
+    /* Modal */
+    .modal-backdrop { position:fixed; inset:0; z-index:200; background:rgba(15,17,23,.5); backdrop-filter:blur(6px); display:none; place-items:center; padding:24px; }
+    .modal-backdrop.open { display:grid; }
+    .modal { background:var(--white); border-radius:var(--radius-lg); width:100%; max-width:860px; max-height:90vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:var(--shadow-lg); animation:modal-in .22s cubic-bezier(.34,1.56,.64,1); }
+    @keyframes modal-in { from{opacity:0;transform:scale(.94) translateY(10px)} to{opacity:1;transform:scale(1) translateY(0)} }
+    .modal-header { padding:24px 28px 20px; border-bottom:1px solid var(--border); flex-shrink:0; }
+    .modal-header-top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:12px; }
+    .modal-title { font-size:1.2rem; font-weight:800; letter-spacing:-.02em; }
+    .modal-close { width:32px; height:32px; border-radius:8px; border:1.5px solid var(--border); background:transparent; cursor:pointer; display:grid; place-items:center; flex-shrink:0; transition:background .15s; }
+    .modal-close:hover { background:var(--bg); }
+    .modal-close svg { width:14px; height:14px; stroke:var(--text); fill:none; stroke-width:2.5; }
+    .modal-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .modal-desc { font-size:.88rem; color:var(--muted); margin-top:10px; line-height:1.55; }
+    .modal-actions { display:flex; gap:8px; padding:14px 28px; border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
+    .btn { display:inline-flex; align-items:center; gap:6px; font-family:var(--font-display); font-size:.82rem; font-weight:600; border-radius:9px; padding:8px 16px; cursor:pointer; border:none; transition:all .15s; }
+    .btn-primary { background:var(--accent); color:white; }
+    .btn-primary:hover { background:#1558d4; }
+    .btn-secondary { background:var(--bg); border:1.5px solid var(--border); color:var(--text); }
+    .btn-secondary:hover { border-color:var(--accent); }
+    .btn svg { width:14px; height:14px; }
+    .modal-body { flex:1; overflow-y:auto; padding:0; }
+    .modal-code pre { margin:0; padding:24px 28px; font-family:var(--font-mono); font-size:.82rem; line-height:1.65; background:#f8f9fc !important; }
+    .modal-code pre code { background:transparent !important; padding:0 !important; }
+    .modal-source { padding:14px 28px; border-top:1px solid var(--border); font-size:.78rem; color:var(--muted); flex-shrink:0; display:flex; align-items:center; gap:6px; }
+    .modal-source a { color:var(--accent); text-decoration:none; }
+    .modal-source a:hover { text-decoration:underline; }
 
-    .swiper-pagination-bullet {
-      width: 6px; height: 6px;
-      background: var(--border); opacity: 1;
-      transition: all .2s;
-    }
-    .swiper-pagination-bullet-active {
-      background: var(--accent); width: 20px; border-radius: 3px;
-    }
+    /* Loading */
+    .loading-screen { position:fixed; inset:0; z-index:300; background:var(--white); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; }
+    .loading-screen.hidden { display:none; }
+    .spinner { width:40px; height:40px; border-radius:50%; border:3px solid var(--border); border-top-color:var(--accent); animation:spin .7s linear infinite; }
+    @keyframes spin { to{transform:rotate(360deg)} }
+    .loading-text { font-size:.9rem; color:var(--muted); font-weight:600; }
 
-    .swiper-button-prev, .swiper-button-next {
-      width: 36px; height: 36px;
-      background: var(--white);
-      border: 1.5px solid var(--border);
-      border-radius: 10px;
-      box-shadow: var(--shadow-sm);
-      color: var(--text) !important;
-      transition: border-color .15s, box-shadow .15s;
-      top: calc(50% - 26px);
-    }
-    .swiper-button-prev::after, .swiper-button-next::after {
-      font-size: 12px !important; font-weight: 900;
-    }
-    .swiper-button-prev:hover, .swiper-button-next:hover {
-      border-color: var(--accent); box-shadow: var(--shadow-md);
-    }
-    .swiper-button-disabled { opacity: 0.3 !important; }
-
-    /* ── Query card ───────────────────────────────────────────── */
-    .q-card {
-      background: var(--white);
-      border: 1.5px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      cursor: pointer;
-      transition: border-color .18s, box-shadow .18s, transform .18s;
-      display: flex; flex-direction: column;
-      height: 320px;
-    }
-    .q-card:hover {
-      border-color: var(--accent);
-      box-shadow: var(--shadow-lg);
-      transform: translateY(-3px);
-    }
-
-    .q-card-head {
-      padding: 18px 20px 14px;
-      flex-shrink: 0;
-    }
-    .q-card-meta {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
-      flex-wrap: wrap;
-    }
-    .cat-badge {
-      font-size: .7rem; font-weight: 700; letter-spacing: .04em;
-      text-transform: uppercase; border-radius: 6px;
-      padding: 3px 8px; color: white;
-    }
-    .tag-badge {
-      font-size: .68rem; font-weight: 600;
-      border-radius: 5px; padding: 2px 7px;
-      background: var(--bg); color: var(--muted);
-      border: 1px solid var(--border);
-    }
-
-    .q-card-title {
-      font-size: .95rem; font-weight: 700; letter-spacing: -.01em;
-      line-height: 1.35; margin-bottom: 6px;
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-    .q-card-desc {
-      font-size: .8rem; color: var(--muted); line-height: 1.5;
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-
-    .q-card-code {
-      flex: 1; overflow: hidden;
-      background: #f8f9fc;
-      border-top: 1px solid var(--border);
-      position: relative;
-    }
-    .q-card-code pre {
-      margin: 0; padding: 14px 16px;
-      font-size: .72rem; line-height: 1.55;
-      font-family: var(--font-mono);
-      overflow: hidden; height: 100%;
-    }
-    .q-card-code pre code { background: transparent !important; padding: 0 !important; }
-    .q-card-code .fade-overlay {
-      position: absolute; bottom: 0; left: 0; right: 0; height: 48px;
-      background: linear-gradient(to bottom, transparent, #f8f9fc);
-      pointer-events: none;
-    }
-
-    .q-card-footer {
-      padding: 10px 20px;
-      border-top: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: space-between;
-      flex-shrink: 0;
-      background: var(--white);
-    }
-    .q-card-repo {
-      font-size: .72rem; color: var(--muted); font-family: var(--font-mono);
-      display: flex; align-items: center; gap: 5px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      max-width: 60%;
-    }
-    .q-card-repo svg { width: 12px; height: 12px; flex-shrink: 0; }
-    .copy-btn {
-      font-size: .72rem; font-weight: 600; color: var(--accent);
-      background: rgba(29,111,243,.07); border: none; border-radius: 6px;
-      padding: 4px 10px; cursor: pointer; font-family: var(--font-display);
-      transition: background .15s; flex-shrink: 0;
-    }
-    .copy-btn:hover { background: rgba(29,111,243,.14); }
-    .copy-btn.copied { color: var(--success); background: rgba(16,185,129,.1); }
-
-    /* ── Empty state ──────────────────────────────────────────── */
-    .empty-state {
-      text-align: center; padding: 80px 20px;
-      display: none;
-    }
-    .empty-state.visible { display: block; }
-    .empty-state .empty-icon {
-      font-size: 3rem; margin-bottom: 16px;
-    }
-    .empty-state h3 { font-size: 1.2rem; font-weight: 700; margin-bottom: 8px; }
-    .empty-state p { color: var(--muted); font-size: .9rem; }
-
-    /* ── Modal ────────────────────────────────────────────────── */
-    .modal-backdrop {
-      position: fixed; inset: 0; z-index: 200;
-      background: rgba(15,17,23,.5);
-      backdrop-filter: blur(6px);
-      display: none; place-items: center; padding: 24px;
-    }
-    .modal-backdrop.open { display: grid; }
-
-    .modal {
-      background: var(--white); border-radius: var(--radius-lg);
-      width: 100%; max-width: 860px; max-height: 90vh;
-      overflow: hidden; display: flex; flex-direction: column;
-      box-shadow: var(--shadow-lg);
-      animation: modal-in .22s cubic-bezier(.34,1.56,.64,1);
-    }
-    @keyframes modal-in {
-      from { opacity:0; transform: scale(.94) translateY(10px); }
-      to   { opacity:1; transform: scale(1) translateY(0); }
-    }
-
-    .modal-header {
-      padding: 24px 28px 20px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    .modal-header-top {
-      display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-      margin-bottom: 12px;
-    }
-    .modal-title { font-size: 1.2rem; font-weight: 800; letter-spacing: -.02em; }
-    .modal-close {
-      width: 32px; height: 32px; border-radius: 8px; border: 1.5px solid var(--border);
-      background: transparent; cursor: pointer; display: grid; place-items: center;
-      flex-shrink: 0; transition: background .15s;
-    }
-    .modal-close:hover { background: var(--bg); }
-    .modal-close svg { width: 14px; height: 14px; stroke: var(--text); fill: none; stroke-width: 2.5; }
-
-    .modal-meta {
-      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    }
-    .modal-desc { font-size: .88rem; color: var(--muted); margin-top: 10px; line-height: 1.55; }
-
-    .modal-actions {
-      display: flex; gap: 8px; padding: 14px 28px;
-      border-bottom: 1px solid var(--border); flex-shrink: 0;
-      flex-wrap: wrap;
-    }
-    .btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      font-family: var(--font-display); font-size: .82rem; font-weight: 600;
-      border-radius: 9px; padding: 8px 16px; cursor: pointer;
-      border: none; transition: all .15s;
-    }
-    .btn-primary { background: var(--accent); color: white; }
-    .btn-primary:hover { background: #1558d4; }
-    .btn-secondary { background: var(--bg); border: 1.5px solid var(--border); color: var(--text); }
-    .btn-secondary:hover { border-color: var(--accent); }
-    .btn svg { width: 14px; height: 14px; }
-
-    .modal-body { flex: 1; overflow-y: auto; padding: 0; }
-    .modal-code pre {
-      margin: 0; padding: 24px 28px;
-      font-family: var(--font-mono); font-size: .82rem; line-height: 1.65;
-      background: #f8f9fc !important;
-    }
-    .modal-code pre code { background: transparent !important; padding: 0 !important; }
-
-    .modal-source {
-      padding: 14px 28px; border-top: 1px solid var(--border);
-      font-size: .78rem; color: var(--muted); flex-shrink: 0;
-      display: flex; align-items: center; gap: 6px;
-    }
-    .modal-source a { color: var(--accent); text-decoration: none; }
-    .modal-source a:hover { text-decoration: underline; }
-
-    /* ── Loading ──────────────────────────────────────────────── */
-    .loading-screen {
-      position: fixed; inset: 0; z-index: 300;
-      background: var(--white);
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center; gap: 16px;
-    }
-    .loading-screen.hidden { display: none; }
-    .spinner {
-      width: 40px; height: 40px; border-radius: 50%;
-      border: 3px solid var(--border);
-      border-top-color: var(--accent);
-      animation: spin .7s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .loading-text { font-size: .9rem; color: var(--muted); font-weight: 600; }
-
-    /* ── Responsive ───────────────────────────────────────────── */
-    @media (max-width: 768px) {
-      .topbar { padding: 0 16px; gap: 12px; }
-      .topbar-right .stats-pill { display: none; }
-      .hero { padding: 40px 16px 32px; }
-      .tabs-wrap { padding: 0 16px; }
-      .main { padding: 24px 16px 60px; }
-      .swiper-button-prev, .swiper-button-next { display: none; }
+    @media(max-width:768px) {
+      .topbar{padding:0 16px;gap:12px;}
+      .topbar-right .stats-pill{display:none;}
+      .hero{padding:40px 16px 32px;}
+      .tabs-wrap{padding:0 16px;}
+      .main{padding:24px 16px 60px;}
+      .swiper-button-prev,.swiper-button-next{display:none;}
     }
   </style>
 </head>
 <body>
 
-<!-- Loading screen -->
 <div class="loading-screen" id="loadingScreen">
   <div class="spinner"></div>
-  <div class="loading-text">Loading KQL queries…</div>
+  <div class="loading-text">Loading KQL queries...</div>
 </div>
 
-<!-- Top bar -->
 <header class="topbar">
   <a class="logo" href="#">
-    <div class="logo-icon">
-      <svg viewBox="0 0 24 24"><path d="M10 3H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1zm10 0h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1zM10 13H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1zm10 0h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1z"/></svg>
-    </div>
-    KQL Hunter
+    <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M10 3H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1zm10 0h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1zM10 13H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1zm10 0h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1z"/></svg></div>
+    KQL Library
   </a>
-
   <div class="topbar-search">
-    <svg class="search-icon" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round">
-      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-    </svg>
-    <input type="text" id="searchInput" placeholder="Search queries, tables, categories…" autocomplete="off" />
-    <button class="clear-btn" id="clearBtn" title="Clear search">
-      <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
+    <svg class="search-icon" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" id="searchInput" placeholder="Search queries, tables, categories..." autocomplete="off" />
+    <button class="clear-btn" id="clearBtn"><svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>
-
   <div class="topbar-right">
-    <div class="stats-pill" id="statsPill">Loading…</div>
-    <a class="gh-link" href="https://github.com/YOUR_USER/kql-hunter" target="_blank">
+    <div class="stats-pill" id="statsPill">Loading...</div>
+    <a class="gh-link" href="https://github.com/sivolko/kql-hunter" target="_blank">
       <svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
       GitHub
     </a>
   </div>
 </header>
 
-<!-- Hero -->
 <section class="hero">
-  <div class="hero-eyebrow">
-    <span class="dot"></span>
-    Auto-updated daily
-  </div>
-  <h1>KQL Query<br/>Library</h1>
-  <p>Curated Kusto queries collected from public GitHub repositories — for Microsoft Sentinel, Defender, and Azure.</p>
+  <div class="hero-eyebrow"><span class="dot"></span>Auto-updated daily</div>
+  <h1>KQL Library</h1>
+  <p>Curated Kusto queries for Microsoft Sentinel, Defender, and Azure — collected from public repositories and kqlsearch.com.</p>
 </section>
 
-<!-- Category tabs -->
-<nav class="tabs-wrap" id="tabsWrap">
-  <div class="tabs" id="tabs"></div>
-</nav>
+<nav class="tabs-wrap"><div class="tabs" id="tabs"></div></nav>
 
-<!-- Main content -->
 <main class="main" id="mainContent">
   <div class="empty-state" id="emptyState">
-    <div class="empty-icon">🔍</div>
+    <div class="empty-icon">&#128269;</div>
     <h3>No queries found</h3>
     <p>Try a different search term or category.</p>
   </div>
 </main>
 
-<!-- Modal -->
 <div class="modal-backdrop" id="modalBackdrop">
-  <div class="modal" id="modal">
+  <div class="modal">
     <div class="modal-header">
       <div class="modal-header-top">
         <div class="modal-title" id="modalTitle"></div>
-        <button class="modal-close" id="modalClose">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
+        <button class="modal-close" id="modalClose"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div class="modal-meta" id="modalMeta"></div>
       <div class="modal-desc" id="modalDesc"></div>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-primary" id="modalCopyBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        Copy Query
-      </button>
-      <a class="btn btn-secondary" id="modalSourceBtn" href="#" target="_blank">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-        View Source
-      </a>
+      <button class="btn btn-primary" id="modalCopyBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy Query</button>
+      <a class="btn btn-secondary" id="modalSourceBtn" href="#" target="_blank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>View Source</a>
     </div>
-    <div class="modal-body">
-      <div class="modal-code"><pre><code class="language-sql" id="modalCode"></code></pre></div>
-    </div>
+    <div class="modal-body"><div class="modal-code"><pre><code class="language-sql" id="modalCode"></code></pre></div></div>
     <div class="modal-source" id="modalSource"></div>
   </div>
 </div>
 
-<!-- Scripts -->
 <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-
 <script>
-// ── Colour helpers ────────────────────────────────────────────────
-const CAT_COLORS = {
-  "Identity & Access":   "#6366f1",
-  "Endpoint Security":   "#ef4444",
-  "Network":             "#0ea5e9",
-  "Cloud / Azure":       "#3b82f6",
-  "Microsoft 365":       "#f59e0b",
-  "Linux / OS":          "#10b981",
-  "Threat Intelligence": "#ec4899",
-  "Alerts & Incidents":  "#f97316",
-  "General":             "#6b7280",
-};
-const catColor = c => CAT_COLORS[c] || "#6b7280";
+const CAT_COLORS={"Identity & Access":"#6366f1","Endpoint Security":"#ef4444","Network":"#0ea5e9","Cloud / Azure":"#3b82f6","Microsoft 365":"#f59e0b","Linux / OS":"#10b981","Threat Intelligence":"#ec4899","Alerts & Incidents":"#f97316","General":"#6b7280"};
+const catColor=c=>CAT_COLORS[c]||"#6b7280";
+let allQueries=[],activeCategory="All",searchTerm="",swipers=[];
 
-// ── State ────────────────────────────────────────────────────────
-let allQueries = [];
-let activeCategory = "All";
-let searchTerm = "";
-let swipers = [];
-
-// ── Load data ────────────────────────────────────────────────────
-async function loadData() {
-  try {
-    const res = await fetch("../queries/index.json");
-    if (!res.ok) throw new Error("Not found");
-    allQueries = await res.json();
-  } catch {
-    // Demo data when index.json not yet generated
-    allQueries = generateDemoData();
-  }
+async function loadData(){
+  try{
+    const res=await fetch("../queries/index.json");
+    if(!res.ok)throw new Error();
+    allQueries=await res.json();
+    if(!allQueries.length)throw new Error();
+  }catch{allQueries=demoData();}
   document.getElementById("loadingScreen").classList.add("hidden");
   render();
 }
 
-function generateDemoData() {
-  const demos = [
-    { id:"d1", title:"Failed Sign-in Attempts > 10", category:"Identity & Access",
-      description:"Detects accounts with more than 10 failed interactive logins in the past hour.",
-      tags:["sentinel","identity"], source_repo:"Azure/Azure-Sentinel",
-      source_url:"https://github.com/Azure/Azure-Sentinel",
-      content:`// Source: Azure/Azure-Sentinel\n// Failed Sign-in Attempts > 10\nSigninLogs\n| where TimeGenerated > ago(1h)\n| where ResultType != "0"\n| summarize FailedAttempts = count() by UserPrincipalName, IPAddress\n| where FailedAttempts > 10\n| project UserPrincipalName, IPAddress, FailedAttempts\n| order by FailedAttempts desc`,
-      collected_at: new Date().toISOString() },
-    { id:"d2", title:"Rare Process Execution on Endpoint", category:"Endpoint Security",
-      description:"Identifies processes that have been executed fewer than 5 times across the fleet.",
-      tags:["defender","endpoint"], source_repo:"microsoft/Microsoft-365-Defender-Hunting-Queries",
-      source_url:"https://github.com/microsoft/Microsoft-365-Defender-Hunting-Queries",
-      content:`// Source: microsoft/Microsoft-365-Defender-Hunting-Queries\n// Rare Process Execution\nDeviceProcessEvents\n| where Timestamp > ago(24h)\n| summarize Machines = dcount(DeviceId) by FileName, SHA256\n| where Machines < 5\n| join kind=leftouter (DeviceProcessEvents\n  | summarize FirstSeen = min(Timestamp) by SHA256)\n  on SHA256\n| project FileName, SHA256, Machines, FirstSeen\n| order by Machines asc`,
-      collected_at: new Date().toISOString() },
-    { id:"d3", title:"Outbound Traffic to Known Bad IPs", category:"Network",
-      description:"Joins network events against threat intelligence indicators.",
-      tags:["network","threat-intel"], source_repo:"reprise99/Sentinel-Queries",
-      source_url:"https://github.com/reprise99/Sentinel-Queries",
-      content:`// Source: reprise99/Sentinel-Queries\n// Outbound to Malicious IPs\nCommonSecurityLog\n| where TimeGenerated > ago(1d)\n| where DeviceAction !in ("deny","block")\n| join kind=inner (ThreatIntelligenceIndicator\n  | where Active == true\n  | where isnotempty(NetworkIP)) on $left.DestinationIP == $right.NetworkIP\n| project TimeGenerated, SourceIP, DestinationIP, ThreatType, Confidence\n| order by Confidence desc`,
-      collected_at: new Date().toISOString() },
-    { id:"d4", title:"Azure Resource Deletion Events", category:"Cloud / Azure",
-      description:"Tracks deletion of critical Azure resources in the last 24 hours.",
-      tags:["azure"], source_repo:"Azure/Azure-Sentinel",
-      source_url:"https://github.com/Azure/Azure-Sentinel",
-      content:`// Source: Azure/Azure-Sentinel\n// Azure Resource Deletions\nAzureActivity\n| where TimeGenerated > ago(1d)\n| where OperationNameValue contains "delete"\n| where ActivityStatusValue == "Success"\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, Resource\n| order by TimeGenerated desc`,
-      collected_at: new Date().toISOString() },
-    { id:"d5", title:"Suspicious Office 365 OAuth App Consent", category:"Microsoft 365",
-      description:"Detects delegated permission grants to third-party OAuth applications.",
-      tags:["m365","identity"], source_repo:"reprise99/Sentinel-Queries",
-      source_url:"https://github.com/reprise99/Sentinel-Queries",
-      content:`// Source: reprise99/Sentinel-Queries\n// Suspicious OAuth Consent\nOfficeActivity\n| where TimeGenerated > ago(7d)\n| where Operation == "Consent to application"\n| extend AppName = tostring(parse_json(ModifiedProperties)[0].NewValue)\n| summarize ConsentCount = count() by UserId, AppName, ClientIP\n| where ConsentCount > 1\n| order by ConsentCount desc`,
-      collected_at: new Date().toISOString() },
-    { id:"d6", title:"SSH Brute Force from Single IP", category:"Linux / OS",
-      description:"Syslog-based detection for SSH brute force — more than 20 failures in 10 minutes.",
-      tags:["linux"], source_repo:"Azure/Azure-Sentinel",
-      source_url:"https://github.com/Azure/Azure-Sentinel",
-      content:`// Source: Azure/Azure-Sentinel\n// SSH Brute Force\nSyslog\n| where TimeGenerated > ago(1d)\n| where Facility == "auth"\n| where SyslogMessage contains "Failed password"\n| parse SyslogMessage with * "from " IPAddress " port" *\n| summarize Failures = count() by IPAddress, bin(TimeGenerated, 10m)\n| where Failures > 20\n| order by Failures desc`,
-      collected_at: new Date().toISOString() },
-    { id:"d7", title:"High Confidence Threat Intel Match", category:"Threat Intelligence",
-      description:"Surfaces any security event matching high-confidence threat intel indicators.",
-      tags:["threat-intel","sentinel"], source_repo:"Azure/Azure-Sentinel",
-      source_url:"https://github.com/Azure/Azure-Sentinel",
-      content:`// Source: Azure/Azure-Sentinel\n// High Confidence TI Match\nThreatIntelligenceIndicator\n| where TimeGenerated > ago(1d)\n| where Confidence > 80 and Active == true\n| join kind=inner (SecurityEvent\n  | where TimeGenerated > ago(1d))\n  on $left.NetworkIP == $right.IpAddress\n| project TimeGenerated, IpAddress, ThreatType, Confidence, Account\n| order by Confidence desc`,
-      collected_at: new Date().toISOString() },
-    { id:"d8", title:"Multiple Security Alerts on Same Host", category:"Alerts & Incidents",
-      description:"Finds endpoints that triggered three or more distinct alert types in one day.",
-      tags:["sentinel","alerts"], source_repo:"reprise99/Sentinel-Queries",
-      source_url:"https://github.com/reprise99/Sentinel-Queries",
-      content:`// Source: reprise99/Sentinel-Queries\n// Alert Accumulation per Host\nSecurityAlert\n| where TimeGenerated > ago(1d)\n| summarize AlertCount = count(), AlertTypes = make_set(AlertName) by CompromisedEntity\n| where AlertCount >= 3\n| extend UniqueTypes = array_length(AlertTypes)\n| where UniqueTypes >= 3\n| order by AlertCount desc`,
-      collected_at: new Date().toISOString() },
+function demoData(){
+  const d=[
+    {id:"d1",title:"Failed Sign-in Attempts > 10",category:"Identity & Access",description:"Detects accounts with more than 10 failed logins in the past hour.",tags:["sentinel","identity"],source_repo:"Azure/Azure-Sentinel",source_url:"https://github.com/Azure/Azure-Sentinel",content:"SigninLogs\n| where TimeGenerated > ago(1h)\n| where ResultType != \"0\"\n| summarize FailedAttempts = count() by UserPrincipalName, IPAddress\n| where FailedAttempts > 10\n| order by FailedAttempts desc",collected_at:new Date().toISOString()},
+    {id:"d2",title:"Rare Process Execution on Endpoint",category:"Endpoint Security",description:"Identifies processes executed fewer than 5 times across the fleet.",tags:["defender","endpoint"],source_repo:"microsoft/Microsoft-365-Defender-Hunting-Queries",source_url:"https://github.com/microsoft/Microsoft-365-Defender-Hunting-Queries",content:"DeviceProcessEvents\n| where Timestamp > ago(24h)\n| summarize Machines = dcount(DeviceId) by FileName, SHA256\n| where Machines < 5\n| order by Machines asc",collected_at:new Date().toISOString()},
+    {id:"d3",title:"Outbound Traffic to Known Bad IPs",category:"Network",description:"Joins network events against threat intelligence indicators.",tags:["network","threat-intel"],source_repo:"reprise99/Sentinel-Queries",source_url:"https://github.com/reprise99/Sentinel-Queries",content:"CommonSecurityLog\n| where TimeGenerated > ago(1d)\n| join kind=inner (ThreatIntelligenceIndicator | where Active == true) on $left.DestinationIP == $right.NetworkIP\n| project TimeGenerated, SourceIP, DestinationIP, ThreatType, Confidence",collected_at:new Date().toISOString()},
+    {id:"d4",title:"Azure Resource Deletion Events",category:"Cloud / Azure",description:"Tracks deletion of critical Azure resources in the last 24 hours.",tags:["azure"],source_repo:"Azure/Azure-Sentinel",source_url:"https://github.com/Azure/Azure-Sentinel",content:"AzureActivity\n| where TimeGenerated > ago(1d)\n| where OperationNameValue contains \"delete\"\n| where ActivityStatusValue == \"Success\"\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, Resource",collected_at:new Date().toISOString()},
+    {id:"d5",title:"Suspicious OAuth App Consent",category:"Microsoft 365",description:"Detects delegated permission grants to third-party OAuth applications.",tags:["m365","identity"],source_repo:"reprise99/Sentinel-Queries",source_url:"https://github.com/reprise99/Sentinel-Queries",content:"OfficeActivity\n| where TimeGenerated > ago(7d)\n| where Operation == \"Consent to application\"\n| summarize ConsentCount = count() by UserId, ClientIP\n| where ConsentCount > 1",collected_at:new Date().toISOString()},
+    {id:"d6",title:"SSH Brute Force Detection",category:"Linux / OS",description:"Syslog-based detection for SSH brute force.",tags:["linux"],source_repo:"Azure/Azure-Sentinel",source_url:"https://github.com/Azure/Azure-Sentinel",content:"Syslog\n| where TimeGenerated > ago(1d)\n| where Facility == \"auth\"\n| where SyslogMessage contains \"Failed password\"\n| parse SyslogMessage with * \"from \" IPAddress \" port\" *\n| summarize Failures = count() by IPAddress, bin(TimeGenerated, 10m)\n| where Failures > 20",collected_at:new Date().toISOString()},
+    {id:"d7",title:"High Confidence Threat Intel Match",category:"Threat Intelligence",description:"Surfaces security events matching high-confidence threat intel.",tags:["threat-intel","sentinel"],source_repo:"Azure/Azure-Sentinel",source_url:"https://github.com/Azure/Azure-Sentinel",content:"ThreatIntelligenceIndicator\n| where Confidence > 80 and Active == true\n| join kind=inner (SecurityEvent | where TimeGenerated > ago(1d)) on $left.NetworkIP == $right.IpAddress\n| project TimeGenerated, IpAddress, ThreatType, Confidence, Account",collected_at:new Date().toISOString()},
+    {id:"d8",title:"Multiple Alerts on Same Host",category:"Alerts & Incidents",description:"Finds endpoints that triggered 3+ distinct alert types in one day.",tags:["sentinel","alerts"],source_repo:"reprise99/Sentinel-Queries",source_url:"https://github.com/reprise99/Sentinel-Queries",content:"SecurityAlert\n| where TimeGenerated > ago(1d)\n| summarize AlertCount = count(), AlertTypes = make_set(AlertName) by CompromisedEntity\n| where AlertCount >= 3\n| extend UniqueTypes = array_length(AlertTypes)\n| where UniqueTypes >= 3",collected_at:new Date().toISOString()},
   ];
-  // Duplicate for more cards
-  const extras = demos.map((d,i) => ({...d, id:"e"+i, title:d.title+" (Variant)"}));
-  return [...demos, ...extras];
+  return d;
 }
 
-// ── Render ───────────────────────────────────────────────────────
-function render() {
-  buildTabs();
-  renderSections();
-  updateStats();
-}
+function render(){buildTabs();renderSections();updateStats();}
 
-function buildTabs() {
-  const categories = ["All", ...new Set(allQueries.map(q => q.category))];
-  const tabs = document.getElementById("tabs");
-  tabs.innerHTML = "";
-  categories.forEach(cat => {
-    const count = cat === "All" ? allQueries.length
-      : allQueries.filter(q => q.category === cat).length;
-    const btn = document.createElement("button");
-    btn.className = "tab" + (cat === activeCategory ? " active" : "");
-    btn.innerHTML = `${cat} <span class="count">${count}</span>`;
-    btn.onclick = () => { activeCategory = cat; renderSections(); buildTabs(); };
-    tabs.appendChild(btn);
+function buildTabs(){
+  const cats=["All",...new Set(allQueries.map(q=>q.category))];
+  const el=document.getElementById("tabs"); el.innerHTML="";
+  cats.forEach(cat=>{
+    const n=cat==="All"?allQueries.length:allQueries.filter(q=>q.category===cat).length;
+    const b=document.createElement("button");
+    b.className="tab"+(cat===activeCategory?" active":"");
+    b.innerHTML=cat+` <span class="count">${n}</span>`;
+    b.onclick=()=>{activeCategory=cat;renderSections();buildTabs();};
+    el.appendChild(b);
   });
 }
 
-function filtered() {
-  return allQueries.filter(q => {
-    const catOk = activeCategory === "All" || q.category === activeCategory;
-    if (!catOk) return false;
-    if (!searchTerm) return true;
-    const s = searchTerm.toLowerCase();
-    return q.title.toLowerCase().includes(s)
-      || q.description.toLowerCase().includes(s)
-      || q.content.toLowerCase().includes(s)
-      || q.category.toLowerCase().includes(s)
-      || (q.tags || []).some(t => t.toLowerCase().includes(s));
+function filtered(){
+  return allQueries.filter(q=>{
+    if(activeCategory!=="All"&&q.category!==activeCategory)return false;
+    if(!searchTerm)return true;
+    const s=searchTerm.toLowerCase();
+    return q.title.toLowerCase().includes(s)||q.description.toLowerCase().includes(s)||
+      q.content.toLowerCase().includes(s)||q.category.toLowerCase().includes(s)||
+      (q.tags||[]).some(t=>t.toLowerCase().includes(s));
   });
 }
 
-const CARDS_PER_SLIDE = 3;
+const PER_SLIDE=3;
 
-function renderSections() {
-  // destroy old swipers
-  swipers.forEach(s => s.destroy(true, true));
-  swipers = [];
-
-  const main = document.getElementById("mainContent");
-  const empty = document.getElementById("emptyState");
-  // Remove old sections
-  main.querySelectorAll(".swiper-section").forEach(el => el.remove());
-
-  const queries = filtered();
-  if (queries.length === 0) { empty.classList.add("visible"); return; }
+function renderSections(){
+  swipers.forEach(s=>s.destroy(true,true));swipers=[];
+  const main=document.getElementById("mainContent");
+  const empty=document.getElementById("emptyState");
+  main.querySelectorAll(".swiper-section").forEach(el=>el.remove());
+  const queries=filtered();
+  if(!queries.length){empty.classList.add("visible");return;}
   empty.classList.remove("visible");
-
-  // Group by category (or show one "Results" group when searching)
   let groups;
-  if (searchTerm || activeCategory !== "All") {
-    groups = [{ title: searchTerm ? `Results for "${searchTerm}"` : activeCategory, items: queries }];
-  } else {
-    const cats = [...new Set(queries.map(q => q.category))];
-    groups = cats.map(cat => ({ title: cat, items: queries.filter(q => q.category === cat) }));
+  if(searchTerm||activeCategory!=="All"){
+    groups=[{title:searchTerm?`Results for "${searchTerm}"`:activeCategory,items:queries}];
+  }else{
+    const cats=[...new Set(queries.map(q=>q.category))];
+    groups=cats.map(cat=>({title:cat,items:queries.filter(q=>q.category===cat)}));
   }
-
-  groups.forEach((group, gi) => {
-    const section = document.createElement("div");
-    section.className = "swiper-section";
-
-    const header = document.createElement("div");
-    header.className = "section-header";
-    header.innerHTML = `
-      <div class="section-title">${group.title}</div>
-      <div class="section-subtitle">${group.items.length} quer${group.items.length===1?"y":"ies"}</div>
-    `;
-
-    // Build slides: each slide = N cards
-    const slides = [];
-    for (let i = 0; i < group.items.length; i += CARDS_PER_SLIDE) {
-      slides.push(group.items.slice(i, i + CARDS_PER_SLIDE));
-    }
-
-    const swiperId = `swiper-${gi}`;
-    const swiperEl = document.createElement("div");
-    swiperEl.className = "swiper";
-    swiperEl.id = swiperId;
-    swiperEl.innerHTML = `
-      <div class="swiper-wrapper">
-        ${slides.map(slide => `
-          <div class="swiper-slide">
-            <div style="display:grid;grid-template-columns:repeat(${Math.min(slide.length,3)},1fr);gap:16px">
-              ${slide.map(q => cardHTML(q)).join("")}
-            </div>
-          </div>
-        `).join("")}
-      </div>
-      <div class="swiper-pagination"></div>
-      <div class="swiper-button-prev"></div>
-      <div class="swiper-button-next"></div>
-    `;
-
-    section.appendChild(header);
-    section.appendChild(swiperEl);
-    main.appendChild(section);
-
-    // Init Swiper
-    const sw = new Swiper(`#${swiperId}`, {
-      loop: false,
-      slidesPerView: 1,
-      spaceBetween: 0,
-      pagination: { el: `#${swiperId} .swiper-pagination`, clickable: true },
-      navigation: {
-        prevEl: `#${swiperId} .swiper-button-prev`,
-        nextEl: `#${swiperId} .swiper-button-next`,
-      },
-    });
-    swipers.push(sw);
+  groups.forEach((group,gi)=>{
+    const sec=document.createElement("div");sec.className="swiper-section";
+    const hdr=document.createElement("div");hdr.className="section-header";
+    hdr.innerHTML=`<div class="section-title">${group.title}</div><div class="section-subtitle">${group.items.length} quer${group.items.length===1?"y":"ies"}</div>`;
+    const slides=[];
+    for(let i=0;i<group.items.length;i+=PER_SLIDE)slides.push(group.items.slice(i,i+PER_SLIDE));
+    const sid=`sw-${gi}`;
+    const sw=document.createElement("div");sw.className="swiper";sw.id=sid;
+    sw.innerHTML=`<div class="swiper-wrapper">${slides.map(slide=>`<div class="swiper-slide"><div style="display:grid;grid-template-columns:repeat(${Math.min(slide.length,3)},1fr);gap:16px">${slide.map(cardHTML).join("")}</div></div>`).join("")}</div><div class="swiper-pagination"></div><div class="swiper-button-prev"></div><div class="swiper-button-next"></div>`;
+    sec.appendChild(hdr);sec.appendChild(sw);main.appendChild(sec);
+    swipers.push(new Swiper(`#${sid}`,{loop:false,slidesPerView:1,spaceBetween:0,pagination:{el:`#${sid} .swiper-pagination`,clickable:true},navigation:{prevEl:`#${sid} .swiper-button-prev`,nextEl:`#${sid} .swiper-button-next`}}));
   });
-
-  // Attach card click + copy listeners, highlight code
-  main.querySelectorAll(".q-card[data-id]").forEach(card => {
-    card.addEventListener("click", e => {
-      if (e.target.closest(".copy-btn")) return;
-      openModal(card.dataset.id);
-    });
-  });
-  main.querySelectorAll(".copy-btn[data-id]").forEach(btn => {
-    btn.addEventListener("click", e => {
-      e.stopPropagation();
-      copyQuery(btn.dataset.id, btn);
-    });
-  });
-  main.querySelectorAll("pre code").forEach(el => hljs.highlightElement(el));
+  main.querySelectorAll(".q-card[data-id]").forEach(c=>c.addEventListener("click",e=>{if(!e.target.closest(".copy-btn"))openModal(c.dataset.id);}));
+  main.querySelectorAll(".copy-btn[data-id]").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();copyQuery(b.dataset.id,b);}));
+  main.querySelectorAll("pre code").forEach(el=>hljs.highlightElement(el));
 }
 
-function cardHTML(q) {
-  const color = catColor(q.category);
-  const preview = q.content.split("\n").slice(0,12).join("\n");
-  const tags = (q.tags || []).slice(0,3);
-  return `
-    <div class="q-card" data-id="${q.id}">
-      <div class="q-card-head">
-        <div class="q-card-meta">
-          <span class="cat-badge" style="background:${color}">${q.category}</span>
-          ${tags.map(t => `<span class="tag-badge">${t}</span>`).join("")}
-        </div>
-        <div class="q-card-title">${esc(q.title)}</div>
-        <div class="q-card-desc">${esc(q.description)}</div>
-      </div>
-      <div class="q-card-code">
-        <pre><code class="language-sql">${esc(preview)}</code></pre>
-        <div class="fade-overlay"></div>
-      </div>
-      <div class="q-card-footer">
-        <div class="q-card-repo">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-          ${esc(q.source_repo)}
-        </div>
-        <button class="copy-btn" data-id="${q.id}">Copy</button>
-      </div>
-    </div>
-  `;
+function cardHTML(q){
+  const color=catColor(q.category);
+  const preview=q.content.split("\n").slice(0,12).join("\n");
+  const tags=(q.tags||[]).slice(0,3);
+  return `<div class="q-card" data-id="${q.id}"><div class="q-card-head"><div class="q-card-meta"><span class="cat-badge" style="background:${color}">${q.category}</span>${tags.map(t=>`<span class="tag-badge">${esc(t)}</span>`).join("")}</div><div class="q-card-title">${esc(q.title)}</div><div class="q-card-desc">${esc(q.description)}</div></div><div class="q-card-code"><pre><code class="language-sql">${esc(preview)}</code></pre><div class="fade-overlay"></div></div><div class="q-card-footer"><div class="q-card-repo"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>${esc(q.source_repo)}</div><button class="copy-btn" data-id="${q.id}">Copy</button></div></div>`;
 }
 
-// ── Stats ────────────────────────────────────────────────────────
-function updateStats() {
-  const total = allQueries.length;
-  const cats = new Set(allQueries.map(q => q.category)).size;
-  document.getElementById("statsPill").innerHTML =
-    `<span>${total}</span> queries · <span>${cats}</span> categories`;
+function updateStats(){
+  const cats=new Set(allQueries.map(q=>q.category)).size;
+  document.getElementById("statsPill").innerHTML=`<span>${allQueries.length}</span> queries &middot; <span>${cats}</span> categories`;
 }
 
-// ── Modal ────────────────────────────────────────────────────────
-function openModal(id) {
-  const q = allQueries.find(x => x.id === id);
-  if (!q) return;
-  const color = catColor(q.category);
-  const tags = (q.tags || []);
-
-  document.getElementById("modalTitle").textContent = q.title;
-  document.getElementById("modalDesc").textContent = q.description;
-  document.getElementById("modalMeta").innerHTML = `
-    <span class="cat-badge" style="background:${color}">${q.category}</span>
-    ${tags.map(t => `<span class="tag-badge">${esc(t)}</span>`).join("")}
-  `;
-
-  const codeEl = document.getElementById("modalCode");
-  codeEl.textContent = q.content;
-  codeEl.removeAttribute("data-highlighted");
-  hljs.highlightElement(codeEl);
-
-  document.getElementById("modalSourceBtn").href = q.source_url || "#";
-  document.getElementById("modalSource").innerHTML =
-    `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-    Source: <a href="${q.source_url || "#"}" target="_blank">${esc(q.source_repo)}</a>`;
-
-  const copyBtn = document.getElementById("modalCopyBtn");
-  copyBtn.onclick = () => copyText(q.content, copyBtn);
-
+function openModal(id){
+  const q=allQueries.find(x=>x.id===id);if(!q)return;
+  const color=catColor(q.category);
+  document.getElementById("modalTitle").textContent=q.title;
+  document.getElementById("modalDesc").textContent=q.description;
+  document.getElementById("modalMeta").innerHTML=`<span class="cat-badge" style="background:${color}">${q.category}</span>${(q.tags||[]).map(t=>`<span class="tag-badge">${esc(t)}</span>`).join("")}`;
+  const codeEl=document.getElementById("modalCode");
+  codeEl.textContent=q.content;codeEl.removeAttribute("data-highlighted");hljs.highlightElement(codeEl);
+  document.getElementById("modalSourceBtn").href=q.source_url||"#";
+  document.getElementById("modalSource").innerHTML=`Source: <a href="${q.source_url||"#"}" target="_blank">${esc(q.source_repo)}</a>`;
+  const copyBtn=document.getElementById("modalCopyBtn");
+  copyBtn.onclick=()=>copyText(q.content,copyBtn);
   document.getElementById("modalBackdrop").classList.add("open");
-  document.body.style.overflow = "hidden";
+  document.body.style.overflow="hidden";
 }
 
-function closeModal() {
-  document.getElementById("modalBackdrop").classList.remove("open");
-  document.body.style.overflow = "";
-}
+function closeModal(){document.getElementById("modalBackdrop").classList.remove("open");document.body.style.overflow="";}
+document.getElementById("modalClose").onclick=closeModal;
+document.getElementById("modalBackdrop").onclick=e=>{if(e.target===e.currentTarget)closeModal();};
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal();});
 
-document.getElementById("modalClose").onclick = closeModal;
-document.getElementById("modalBackdrop").onclick = e => {
-  if (e.target === e.currentTarget) closeModal();
-};
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
-
-// ── Copy ─────────────────────────────────────────────────────────
-function copyQuery(id, btn) {
-  const q = allQueries.find(x => x.id === id);
-  if (q) copyText(q.content, btn);
-}
-
-function copyText(text, btn) {
-  navigator.clipboard.writeText(text).then(() => {
-    const orig = btn.textContent;
-    btn.textContent = "Copied!";
-    btn.classList.add("copied");
-    setTimeout(() => { btn.textContent = orig; btn.classList.remove("copied"); }, 1800);
+function copyQuery(id,btn){const q=allQueries.find(x=>x.id===id);if(q)copyText(q.content,btn);}
+function copyText(text,btn){
+  navigator.clipboard.writeText(text).then(()=>{
+    const orig=btn.textContent;btn.textContent="Copied!";btn.classList.add("copied");
+    setTimeout(()=>{btn.textContent=orig;btn.classList.remove("copied");},1800);
   });
 }
 
-// ── Search ───────────────────────────────────────────────────────
 let searchTimer;
-document.getElementById("searchInput").addEventListener("input", e => {
-  searchTerm = e.target.value.trim();
-  document.getElementById("clearBtn").classList.toggle("visible", searchTerm.length > 0);
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => renderSections(), 200);
+document.getElementById("searchInput").addEventListener("input",e=>{
+  searchTerm=e.target.value.trim();
+  document.getElementById("clearBtn").classList.toggle("visible",searchTerm.length>0);
+  clearTimeout(searchTimer);searchTimer=setTimeout(renderSections,200);
 });
-
-document.getElementById("clearBtn").onclick = () => {
-  document.getElementById("searchInput").value = "";
-  searchTerm = "";
-  document.getElementById("clearBtn").classList.remove("visible");
-  renderSections();
+document.getElementById("clearBtn").onclick=()=>{
+  document.getElementById("searchInput").value="";searchTerm="";
+  document.getElementById("clearBtn").classList.remove("visible");renderSections();
 };
 
-// ── Util ─────────────────────────────────────────────────────────
-function esc(str) {
-  return String(str ?? "")
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-    .replace(/"/g,"&quot;");
-}
+function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 
-// ── Boot ─────────────────────────────────────────────────────────
 loadData();
 </script>
 </body>
