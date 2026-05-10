@@ -1,4 +1,4 @@
-name: KQL Hunter – Daily Scan
+name: KQL Library - Daily Scan
 
 on:
   schedule:
