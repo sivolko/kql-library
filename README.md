@@ -1,10 +1,10 @@
-# KQL Hunter
+# KQL Library
 
 > Auto-curated library of KQL (Kusto Query Language) queries collected daily from public GitHub repositories.
 
-[![Daily Scan](https://github.com/sivolko/kql-hunter/actions/workflows/daily-scan.yml/badge.svg)](https://github.com/sivolko/kql-hunter/actions/workflows/daily-scan.yml)
+[![Daily Scan](https://github.com/sivolko/kql-library/actions/workflows/daily-scan.yml/badge.svg)](https://github.com/sivolko/kql-library/actions/workflows/daily-scan.yml)
 
-**Live site** https://sivolko.github.io/kql-hunter
+**Live site** https://sivolko.github.io/kql-library
 
 ---
 
@@ -19,7 +19,7 @@
 ## Repo structure
 
 ```
-kql-hunter/
+kql-library/
 ├── .github/workflows/daily-scan.yml  # Scheduled GH Actions workflow
 ├── scripts/
 │   └── scan_queries.py               # Scanner + adapter
@@ -34,7 +34,7 @@ kql-hunter/
 
 1. Enable **GitHub Pages** → Settings → Pages → Source: `docs/` folder on `main`
 2. `GITHUB_TOKEN` is available automatically in Actions — no extra secrets needed
-3. **Actions → KQL Hunter - Daily Scan → Run workflow** to seed the library
+3. **Actions → KQL Library - Daily Scan → Run workflow** to seed the library
 
 ## Categories
 
