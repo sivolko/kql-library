@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-KQL Hunter - Scans GitHub public repos for KQL queries,
+KQL Library - Scans GitHub public repos for KQL queries,
 adapts them with consistent structure, and stores to index.
 """
 
@@ -28,7 +28,6 @@ HEADERS = {
 if GITHUB_TOKEN:
     HEADERS["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
-# KQL search terms to find interesting queries across GitHub
 SEARCH_QUERIES = [
     "extension:kql SecurityEvent",
     "extension:kql SigninLogs",
@@ -42,7 +41,6 @@ SEARCH_QUERIES = [
     "extension:kql ThreatIntelligenceIndicator",
 ]
 
-# Category inference from KQL content
 CATEGORY_MAP = {
     "SigninLogs":             "Identity & Access",
     "AuditLogs":              "Identity & Access",
@@ -65,18 +63,17 @@ CATEGORY_MAP = {
 }
 
 TAG_PATTERNS = {
-    "sentinel":  ["SecurityEvent", "SigninLogs", "AuditLogs", "Workspace"],
-    "defender":  ["DeviceEvents", "DeviceProcess", "DeviceNetwork", "IdentityLogon"],
-    "azure":     ["AzureActivity", "AzureDiagnostics", "AzureMetrics"],
-    "m365":      ["OfficeActivity", "EmailEvents", "CloudAppEvents"],
-    "network":   ["CommonSecurityLog", "NetworkSession", "DeviceNetwork"],
-    "identity":  ["SigninLogs", "AuditLogs", "IdentityLogon"],
+    "sentinel":     ["SecurityEvent", "SigninLogs", "AuditLogs", "Workspace"],
+    "defender":     ["DeviceEvents", "DeviceProcess", "DeviceNetwork", "IdentityLogon"],
+    "azure":        ["AzureActivity", "AzureDiagnostics", "AzureMetrics"],
+    "m365":         ["OfficeActivity", "EmailEvents", "CloudAppEvents"],
+    "network":      ["CommonSecurityLog", "NetworkSession", "DeviceNetwork"],
+    "identity":     ["SigninLogs", "AuditLogs", "IdentityLogon"],
     "threat-intel": ["ThreatIntelligenceIndicator"],
 }
 
 
 def gh_search_code(query: str, per_page: int = 30) -> list[dict]:
-    """Search GitHub code index, return list of file items."""
     url = "https://api.github.com/search/code"
     params = {"q": query, "per_page": per_page}
     try:
@@ -87,7 +84,7 @@ def gh_search_code(query: str, per_page: int = 30) -> list[dict]:
             return []
         r.raise_for_status()
         items = r.json().get("items", [])
-        log.info(f"  '{query}' → {len(items)} results")
+        log.info(f"  '{query}' -> {len(items)} results")
         return items
     except Exception as e:
         log.error(f"Search failed for '{query}': {e}")
@@ -95,7 +92,6 @@ def gh_search_code(query: str, per_page: int = 30) -> list[dict]:
 
 
 def fetch_raw(url: str) -> str | None:
-    """Download raw file content from GitHub."""
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
         r.raise_for_status()
@@ -121,21 +117,17 @@ def infer_tags(content: str) -> list[str]:
 
 
 def extract_title(filename: str, content: str) -> str:
-    """Best-effort title from filename or first comment line."""
-    # Try comment lines: // Title or // Description
     for line in content.splitlines()[:5]:
         line = line.strip()
         if line.startswith("//"):
             candidate = line.lstrip("/").strip()
             if 5 < len(candidate) < 120:
                 return candidate
-    # Fall back to filename
     name = Path(filename).stem
     return re.sub(r"[-_]+", " ", name).title()
 
 
 def extract_description(content: str) -> str:
-    """Extract description from comment block at top of file."""
     lines = []
     for line in content.splitlines()[:10]:
         stripped = line.strip()
@@ -146,16 +138,11 @@ def extract_description(content: str) -> str:
         elif lines:
             break
     if lines:
-        return " ".join(lines[1:]) or lines[0]  # skip title line
+        return " ".join(lines[1:]) or lines[0]
     return "KQL query collected from public GitHub repositories."
 
 
 def adapt_query(content: str, source_repo: str) -> str:
-    """
-    Light adaptation: ensure consistent header comment block.
-    Strips existing header comments, prepends standardised block.
-    """
-    # Remove leading blank lines + existing comment header
     body_lines = []
     in_header = True
     for line in content.splitlines():
@@ -167,7 +154,7 @@ def adapt_query(content: str, source_repo: str) -> str:
     header = (
         f"// Source: https://github.com/{source_repo}\n"
         f"// Collected: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}\n"
-        f"// KQL Hunter - https://github.com/YOUR_USER/kql-hunter\n"
+        f"// KQL Library - https://github.com/sivolko/kql-library\n"
     )
     return header + "\n" + "\n".join(body_lines).lstrip("\n")
 
@@ -189,27 +176,22 @@ def save_index(index: dict[str, dict]) -> None:
     entries = sorted(index.values(), key=lambda e: e["collected_at"], reverse=True)
     with INDEX_FILE.open("w") as f:
         json.dump(entries, f, indent=2)
-    log.info(f"Saved index with {len(entries)} entries → {INDEX_FILE}")
+    log.info(f"Saved index with {len(entries)} entries -> {INDEX_FILE}")
 
 
 def main():
-    log.info("=== KQL Hunter starting ===")
+    log.info("=== KQL Library scanner starting ===")
     index = load_index()
     new_count = 0
-
     seen_urls: set[str] = {e.get("source_url", "") for e in index.values()}
 
     for search_q in SEARCH_QUERIES:
         log.info(f"Searching: {search_q}")
         items = gh_search_code(search_q)
-        time.sleep(2)  # respect secondary rate limits
+        time.sleep(2)
 
         for item in items:
             html_url = item.get("html_url", "")
-            raw_url = item.get("url", "").replace(
-                "https://api.github.com/repos", "https://raw.githubusercontent.com"
-            )
-            # Build proper raw URL
             raw_url = (
                 f"https://raw.githubusercontent.com/"
                 f"{item['repository']['full_name']}/HEAD/{item['path']}"
@@ -222,7 +204,6 @@ def main():
             if not content or len(content.strip()) < 30:
                 continue
 
-            # Skip non-KQL files that slipped through
             kql_indicators = ["| where", "| project", "| summarize", "| extend", "| join", "| distinct"]
             if not any(ind in content for ind in kql_indicators):
                 continue
@@ -234,7 +215,6 @@ def main():
                 continue
 
             adapted = adapt_query(content, repo)
-
             entry = {
                 "id": qid,
                 "title": extract_title(item["name"], content),
@@ -248,7 +228,6 @@ def main():
                 "collected_at": datetime.now(timezone.utc).isoformat(),
             }
 
-            # Save individual .kql file
             kql_path = QUERIES_DIR / f"{qid}.kql"
             kql_path.write_text(adapted, encoding="utf-8")
 
