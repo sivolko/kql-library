@@ -1,0 +1,20 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+IdentityLogonEvents
+| extend Time = bin(Timestamp, 1s)
+| where Application == "Active Directory"
+| where Protocol == @"Kerberos"
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend TargetSPNs = tostring(ParsedFields.Spns)
+| extend TargetSPNsList = split(TargetSPNs, ",")
+| mv-expand TargetSPNsList
+| extend TargetSPNSingle = trim(" ", tostring(TargetSPNsList))
+| extend EncryptionType = tostring(ParsedFields.EncryptionType)
+| where isnotempty(TargetSPNSingle)
+| where TargetSPNSingle !contains @"krbtgt" and TargetSPNSingle !contains @"kadmin" and TargetSPNSingle !endswith "$" and TargetSPNSingle !startswith @"HOST" and TargetSPNSingle !startswith @"CIFS"
+| where EncryptionType contains @"rc4"
+| project Time, DeviceName, IPAddress, DestinationDeviceName, TargetSPNSingle, AccountName, EncryptionType
+| summarize RequestCount = count(), DistinctRequestors = dcount(AccountName) by TargetSPNSingle, DeviceName
+| sort by RequestCount desc

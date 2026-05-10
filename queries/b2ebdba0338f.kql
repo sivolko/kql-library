@@ -1,0 +1,49 @@
+// Source: https://github.com/jasonachkar/microsoft-sentinel-siem-detection
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+/*
+RuleId: 5b584395-6a5c-46c8-8de7-1239c7188fe5
+Name: Unusual Outbound Data Volume to Rare Destination
+Category: network
+Severity: High
+Tactics: Exfiltration
+Techniques: T1041
+DataSources: CommonSecurityLog (CEF/Syslog)
+QueryFrequency: PT5M
+QueryPeriod: PT1H
+TriggerOperator: GreaterThan
+TriggerThreshold: 0
+Version: 1.0.0
+Author: Jason Achkar Diab (template)
+Status: Production
+Description: Detects high outbound data volume to destinations not seen in the baseline period.
+FalsePositives: Backup jobs; legitimate large transfers; new SaaS endpoints
+*/
+
+let BaselinePeriod = 14d;
+let DetectionWindow = 1h;
+let MinBytesOut = 50000000; // 50 MB
+let AllowedDestinations = dynamic([]); // Optional allowlist for approved destinations
+let AllowedSources = dynamic([]); // Optional allowlist for data-mover hosts
+// Build baseline of known source-destination pairs.
+let Baseline = CommonSecurityLog
+| where TimeGenerated between (ago(BaselinePeriod) .. ago(DetectionWindow))
+| extend SourceIP = tostring(SourceIP)
+| extend DestinationIP = tostring(DestinationIP)
+| summarize by SourceIP, DestinationIP;
+// Aggregate recent outbound volume.
+let Recent = CommonSecurityLog
+| where TimeGenerated >= ago(DetectionWindow)
+| extend SourceIP = tostring(SourceIP)
+| extend DestinationIP = tostring(DestinationIP)
+| extend BytesOut = tolong(coalesce(column_ifexists("BytesSent", long(null)), column_ifexists("SentBytes", long(null)), column_ifexists("Bytes", long(null)), 0))
+| where SourceIP !in (AllowedSources)
+| where DestinationIP !in (AllowedDestinations)
+| summarize TotalBytesOut=sum(BytesOut), SessionCount=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated),
+           DestPorts=make_set(DestinationPort, 10), Vendors=make_set(DeviceVendor, 5), Products=make_set(DeviceProduct, 5)
+  by SourceIP, DestinationIP, ApplicationProtocol;
+Recent
+| join kind=leftanti Baseline on SourceIP, DestinationIP
+| where TotalBytesOut >= MinBytesOut
+| project TimeGenerated=LastSeen, SourceIP, DestinationIP, ApplicationProtocol, TotalBytesOut, SessionCount, DestPorts, Vendors, Products, FirstSeen, LastSeen

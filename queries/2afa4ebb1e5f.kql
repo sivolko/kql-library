@@ -1,0 +1,135 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceNetworkEvents
+| where RemotePort == 0  // Unix domain socket (protocol 0)
+| where RemoteUrl has "azure-vnet-ipam.sock"
+| where InitiatingProcessFileName !in (
+    "azure-vnet",
+    "azure-cni",
+    "azure-vnet-ipam",
+    "azure-vnet-telemetry"
+)
+| extend
+    SuspiciousProcess   = InitiatingProcessFileName,
+    ParentProcess       = InitiatingProcessParentFileName,
+    NodeName            = DeviceName,
+    ProcessCommandLine  = InitiatingProcessCommandLine
+| project TimeGenerated, NodeName, SuspiciousProcess, ParentProcess,
+          ProcessCommandLine, RemoteUrl
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: IMDS Access from Container Network Namespace
+//
+// Rationale: Legitimate AKS workloads use Azure Workload Identity (federated
+// tokens) rather than IMDS for authentication. Direct IMDS access (169.254.169.254)
+// from a container context indicates either legacy pod identity usage or,
+// more critically, post-CVE-2026-33105 IMDS token theft from node netns.
+// ============================================================================
+DeviceNetworkEvents
+| where RemoteIP == "169.254.169.254"
+| where InitiatingProcessFileName !in (
+    "kubelet",
+    "node-exporter",
+    "azure-vnet",
+    "microsoft-defender-for-cloud-containers-agent"
+)
+| extend
+    SuspiciousProcess = InitiatingProcessFileName,
+    IsContainerProcess = InitiatingProcessCommandLine has "--container-id"
+        or InitiatingProcessParentFileName has "containerd-shim"
+        or InitiatingProcessParentFileName has "runc"
+| where IsContainerProcess == true
+| project TimeGenerated, DeviceName, SuspiciousProcess, RemoteIP,
+          InitiatingProcessCommandLine, InitiatingProcessParentFileName
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 3: Anomalous Pod-to-Pod Traffic Following CNI State Corruption
+//
+// Rationale: After CVE-2026-33105 IPAM manipulation, routing tables become
+// inconsistent — traffic intended for pod A starts flowing to pod B.
+// NSG flow logs show unexpected source-destination pod pairs on the same node.
+//
+// Data source: AzureNetworkAnalytics_CL (Network Watcher flow logs)
+// ============================================================================
+AzureNetworkAnalytics_CL
+| where FlowType_s == "IntraSubnet"
+| where L4Protocol_s == "T"  // TCP
+| where FlowStatus_s == "A"  // Allowed
+| extend
+    SrcIP  = SrcIP_s,
+    DstIP  = DestIP_s,
+    SrcPort = toint(SrcPort_s),
+    DstPort = toint(DestPort_s)
+// Flag traffic between pod IPs that bypasses expected Azure CNI routes
+// (this would be tuned to the specific VNet/subnet CIDR in production)
+| where SrcIP startswith "10." and DstIP startswith "10."
+| summarize
+    FlowCount    = count(),
+    DestPorts    = make_set(DstPort),
+    FirstSeen    = min(TimeGenerated),
+    LastSeen     = max(TimeGenerated)
+    by SrcIP, DstIP
+| where FlowCount > 100   // Sustained anomalous flow
+| order by FlowCount desc
+
+
+// ============================================================================
+// Query 4: Managed Identity Token Requests from Unexpected Pod Contexts
+//
+// Rationale: The node's system-assigned managed identity token (accessed via
+// IMDS) should only be requested by kubelet and approved Azure agents.
+// Post-CVE-2026-33105 exploitation, the attacker uses the node identity to
+// access Azure resources. Azure Activity Log shows resource access using the
+// node's managed identity from unexpected contexts.
+// ============================================================================
+AzureActivity
+| where Authorization has "Microsoft.ContainerService"
+    or Authorization has "Microsoft.KeyVault"
+    or Authorization has "Microsoft.ContainerRegistry"
+| extend
+    CallerIdentity  = Caller,
+    OperationName   = OperationNameValue,
+    ResourceGroup   = ResourceGroup,
+    ActivityStatus  = ActivityStatus
+| where CallerIdentity matches regex @"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+// Filter to managed identity callers (GUID format, not UPN)
+| where OperationName has "read" or OperationName has "list" or OperationName has "get"
+// Correlate with anomalous container events in same time window
+| join kind=inner (
+    SecurityAlert
+    | where ProviderName == "Microsoft.SecurityInsights"
+    | where AlertName has "container" or AlertName has "AKS"
+    | project AlertTime = TimeGenerated, AlertNodeName = CompromisedEntity
+) on $left.TimeGenerated between (AlertTime - 30min .. AlertTime + 30min)
+| project TimeGenerated, CallerIdentity, OperationName, ResourceGroup, AlertNodeName
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 5: Defender for Containers Alerts Correlated with CNI Anomalies
+//
+// Rationale: Defender for Containers generates alerts for container runtime
+// anomalies. Correlating those alerts with the CNI-specific signals above
+// creates a high-fidelity detection for CVE-2026-33105 exploitation chains.
+// ============================================================================
+let ContainerAlerts = SecurityAlert
+    | where ProviderName == "Azure Defender for Containers"
+    | where AlertSeverity in ("High", "Critical")
+    | extend NodeName = tostring(parse_json(Entities)[0].HostName)
+    | project AlertTime = TimeGenerated, NodeName, AlertName, AlertSeverity, Description;
+let IMDSAccess = DeviceNetworkEvents
+    | where RemoteIP == "169.254.169.254"
+    | where InitiatingProcessParentFileName has "containerd-shim"
+    | project IMDSTime = TimeGenerated, NodeName = DeviceName,
+              Process = InitiatingProcessFileName;
+ContainerAlerts
+| join kind=inner IMDSAccess on NodeName
+| where IMDSTime between (AlertTime - 15min .. AlertTime + 15min)
+| project AlertTime, NodeName, AlertName, AlertSeverity, IMDSTime, Process
+| order by AlertTime desc

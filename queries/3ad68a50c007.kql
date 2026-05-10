@@ -1,0 +1,8 @@
+// Source: https://github.com/EEN421/KQL-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SigninLogs
+| where ResultType == 50126
+| summarize FailedAttempts = count() by UserPrincipalName, bin(TimeGenerated, 2m)
+| where FailedAttempts >= 3

@@ -1,0 +1,7 @@
+// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SigninLogs
+| where UserPrincipalName == "EMAIL ADDRESS"
+| project TimeGenerated, UserPrincipalName, ResultType, AppDisplayName, IPAddress, LocationDetails

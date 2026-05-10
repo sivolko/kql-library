@@ -1,0 +1,38 @@
+// Source: https://github.com/le0li9ht/Microsoft-Sentinel-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let DataIngestionMultipleSources =(union isfuzzy=true
+(
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| summarize WindowsSecurityEvents=count()),
+(WindowsEvent
+| where TimeGenerated > ago(1h)
+| summarize SysmonEvents=count()),
+(Syslog
+| where TimeGenerated > ago(1h)
+| summarize Syslogevents=count()),
+(CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where DeviceProduct=="ASM"
+| summarize F5_ASMEvents=count()),
+(CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where DeviceProduct=="PAN-OS"
+| summarize PaloAltoEvents=count()),
+(CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where DeviceProduct=="Firepower"
+| summarize CiscoFirePowerEvents=count())
+);
+DataIngestionMultipleSources
+| project IngestionStatus=case(
+WindowsSecurityEvents<1, "WindowsSecurityEventsStopped",
+Syslogevents<1, "SyslogeventsStopped",
+SysmonEvents<1, "WindowsSysmonEventsStopped",
+F5_ASMEvents<1, "F5ASMEventsStopped",
+PaloAltoEvents<1,"PaloAltoEventsStopped",
+CiscoFirePowerEvents<1, "CiscoFirePowerEventsStopped",
+"IngestionSuccess")
+| where IngestionStatus!="IngestionSuccess"

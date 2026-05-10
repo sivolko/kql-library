@@ -1,0 +1,13 @@
+// Source: https://github.com/Tomasinjo/security-queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let MoreThanOneActiveSession =
+SigninLogs
+| summarize unique_IP_addresses=count_distinct(IPAddress) by Identity, bin(TimeGenerated, 1h)
+| where unique_IP_addresses > 1;
+AuditLogs
+| project TimeGenerated, OperationName, ResultDescription, Identity
+| where OperationName == "User registered security info"
+| summarize by Identity, bin(TimeGenerated, 1h)
+| join kind=innerunique MoreThanOneActiveSession on Identity, TimeGenerated

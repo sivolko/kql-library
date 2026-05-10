@@ -1,0 +1,9 @@
+// Source: https://github.com/rod-trent/Security-Copilot
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+IdentityLogonEvents
+| where TimeGenerated >= ago(24h)
+| where AdditionalFields.["ARG.CLOUD_SERVICE"] == "Medeina Portal"
+| extend User = AdditionalFields.["ACTOR.ALIAS"]
+| project AccountDomain, User, ActionType, AccountUpn, IPAddress, Location, ISP, OSPlatform, DeviceType

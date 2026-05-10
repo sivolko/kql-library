@@ -1,0 +1,8 @@
+// Source: https://github.com/seancl8611/azure-infra-observability-lab
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+Syslog
+| where SeverityLevel in ("err", "crit", "alert", "emerg")
+| summarize ErrorCount = count() by Facility, SeverityLevel, Computer, bin(TimeGenerated, 1h)
+| order by ErrorCount desc

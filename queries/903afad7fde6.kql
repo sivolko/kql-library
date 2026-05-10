@@ -1,0 +1,5 @@
+// Source: https://github.com/xpinux/Project-SABER
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+source | project TimeGenerated = ls_timestamp, EventTime = todatetime(timestamp), Computer = tostring(host), HostName = logsource, SyslogMessage = message, Facility = facility_label, SeverityLevel = severity_label

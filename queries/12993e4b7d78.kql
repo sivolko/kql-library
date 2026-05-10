@@ -1,0 +1,13 @@
+// Source: https://github.com/eshlomo1/Microsoft-Sentinel-SecOps
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+NetworkAccessTraffic
+| where TimeGenerated >= ago(3d)
+| where TrafficType == "microsoft365" 
+    and DestinationFqdn == "aps.globalsecureaccess.microsoft.com"
+| join SigninLogs on UserPrincipalName    
+| extend DeviceDisplayName = tostring(DeviceDetail.displayName)
+| where AppDisplayName == "ZTNA Network Access Client -- M365"
+| where ResultType != "0"
+| project TimeGenerated, UserDisplayName, TransactionId, TrafficType, SourceIp, ResultType, DeviceDisplayName 

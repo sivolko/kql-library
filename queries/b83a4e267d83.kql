@@ -1,0 +1,15 @@
+// Source: https://github.com/pduggusa/dugganusa-sentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let dugganusa_iocs = ThreatIntelligenceIndicator
+    | where SourceSystem == "DugganUSA-STIX-Feed"
+    | where Active == true
+    | summarize by NetworkIP, DomainName, FileHashValue;
+
+// Match against CommonSecurityLog (firewall/proxy)
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DestinationIP in (dugganusa_iocs) or RequestURL has_any (dugganusa_iocs)
+| project TimeGenerated, DeviceVendor, DeviceProduct, SourceIP, DestinationIP, RequestURL, Activity
+| extend ThreatMatch = "DugganUSA IOC Match"

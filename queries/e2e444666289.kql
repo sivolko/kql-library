@@ -1,0 +1,9 @@
+// Source: https://github.com/VashrithVinodh/Azure-SOAR
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4672
+| where SubjectUserName !endswith "$"
+| where SubjectUserName != "SYSTEM"

@@ -1,0 +1,19 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let VulnDrivers = 
+externaldata (KnownVulnerableSamples:dynamic) 
+    [
+    h@"https://www.loldrivers.io/api/drivers.json"
+    ]
+    with (format=multijson)
+| mv-expand KnownVulnerableSamples
+| extend FileName = parse_json(KnownVulnerableSamples).Filename
+| extend SHA1 = tostring(parse_json(KnownVulnerableSamples).SHA1)
+| extend SHA256 = tostring(parse_json(KnownVulnerableSamples).SHA256)
+| project FileName, SHA1, SHA256;
+//  
+DeviceEvents
+| where ActionType =~ "DriverLoad"
+| join kind=inner ( VulnDrivers ) on SHA1, SHA256

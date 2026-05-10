@@ -1,0 +1,11 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SigninLogs
+| where TimeGenerated > ago (14d)
+| where ResultType != "0"
+| mv-expand ConditionalAccessPolicies
+| where ConditionalAccessPolicies.result == "failure"
+| summarize FailuresInAnHour = count() by UserPrincipalName, bin(TimeGenerated, 1h)
+| where FailuresInAnHour >=5

@@ -1,0 +1,72 @@
+// Source: https://github.com/str4int/KQL-Repository
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let ip1 = "*destectedIP*";
+let ip2 = "*destectedIP*";
+let ip3 = "*destectedIP*";
+let ip4 = "*destectedIP*";
+let checkUserID = "userObjecIDfromEntraID";
+AADSignInEventsBeta
+| where Timestamp >= ago(3d)
+| where AccountObjectId == checkUserID// directly with the usre object id
+//| where AadDeviceId != "deviceObjectID" // ALTERNATIVE - check for "device objectID" on EntraID user page
+| where IPAddress == ip1 or IPAddress == ip2  //or IPAddress == ip3 // or IPAddress == ip4 // correlate IP involved into the impossibe travel - remove comment to add IPs
+//| where OSPlatform contains "os"
+| project Timestamp, AccountDisplayName, DeviceName, Application, IPAddress, City, Country, OSPlatform, LastPasswordChangeTimestamp, AuthenticationRequirement, ClientAppUsed
+| sort by Timestamp desc
+| summarize Total = count() by DeviceName, IPAddress, Country, AccountDisplayName, OSPlatform, Application
+
+
+// Impossible travel Check 2
+// Part 1 - get IPs and check if came from registred data or not
+let timeCheck = 24h;
+let InvolvedUser = "mailAdressFromUser"; // add full email address
+let suspiciousIPs = 
+IdentityLogonEvents
+| where Timestamp >= ago(timeCheck)
+| where ActionType == "LogonSuccess"
+| where AccountUpn == InvolvedUser // also possible with objectID = //| where AccountObjectId == InvolvedUser
+| project IPAddress;
+// Part 2 : check IPs into AADSignInEventsBeta and check if connection came from non registred devices
+AADSignInEventsBeta
+| where Timestamp >= ago(timeCheck)
+| where AccountUpn == InvolvedUser // also possible with objectID = //| where AccountObjectId == InvolvedUser
+| where isempty(AadDeviceId) or isnull(AadDeviceId) // check if deviceID is empty
+| where IPAddress in (suspiciousIPs) // check IPs
+//| where OSPlatform contains "MacOS" // check by os to finetune search
+| project Timestamp, AccountDisplayName, AccountUpn, DeviceName, AadDeviceId, Application, IPAddress, City, Country, OSPlatform, ClientAppUsed, LastPasswordChangeTimestamp, AuthenticationRequirement, ReportId
+| sort by Timestamp desc
+//| summarize count() by  Country
+
+
+//-----  IMPOSSIBLE TRAVEL CHECK -------//
+// when impossible travel is trigered
+// complete information directly from impossible travel with IPs & email address
+// v.3.2
+// -------------------------------------//
+let useremail = "mailAdressFromUser";
+let times = 5d;
+let ip1 = "*destectedIP*";
+let ip2 = "*destectedIP*";
+let ip3 = "";
+let ip4 = "";
+let checkUserID = toscalar(IdentityInfo
+| where AccountUpn == useremail
+| take 1 | project AccountObjectId);
+AADSignInEventsBeta
+| where Timestamp >= ago(times)
+| where AccountObjectId == checkUserID // directly with the usre object id
+| where IPAddress in (ip1, ip2, ip3, ip4) // correlate IP involved into the impossibe travel
+| project Timestamp, AccountDisplayName, DeviceName, Application, IPAddress, City, Country, OSPlatform, LastPasswordChangeTimestamp, AuthenticationRequirement, ClientAppUsed
+| sort by Timestamp desc
+| summarize Total = count() by DeviceName, IPAddress, Country, AccountDisplayName, OSPlatform, Application
+
+
+         .::                                  .::  
+         .::             .::     .:           .::  
+ .:::: .:.: .:.: .:::  . .::       .:: .::  .:.: .:
+.::      .::   .::    .: .::    .:: .::  .::  .::  
+  .:::   .::   .::  .::  .::    .:: .::  .::  .::  
+    .::  .::   .:: .:::: .: .:: .:: .::  .::  .::  
+.:: .::   .:: .:::       .::    .::.:::  .::   .:: 

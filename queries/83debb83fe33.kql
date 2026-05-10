@@ -1,0 +1,22 @@
+// Source: https://github.com/quocbao210/sentinel-detection-pack
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let timeframe = 1h;
+SecurityEvent
+| where TimeGenerated >= ago(timeframe)
+| where EventID == 4688
+| extend NewProc = tolower(tostring(NewProcessName))
+| extend Cmd = tolower(tostring(CommandLine))
+| where NewProc endswith "\\powershell.exe" or NewProc endswith "\\pwsh.exe"
+| where Cmd has_any (
+    "-enc", "-encodedcommand", "frombase64string",
+    "iex", "invoke-expression",
+    "downloadstring", "invoke-webrequest", "iwr", "net.webclient"
+)
+| summarize
+    EventCount = count(),
+    SampleCommands = make_set(Cmd, 5)
+  by Computer, Account, bin(TimeGenerated, 5m)
+| extend HostCustomEntity = Computer, AccountCustomEntity = Account
+| project TimeGenerated, Computer, Account, EventCount, SampleCommands, HostCustomEntity, AccountCustomEntity

@@ -1,0 +1,150 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let AgentSearchWindow = 5m;
+let BulkSearchThreshold = 10;
+
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where Workload == "SharePoint"
+| where Operation in ("SearchQueryPerformed", "FileAccessed", "FolderListed",
+                      "FileListed", "SiteCollectionSearchQuery")
+// Agent service accounts typically have identifiable naming patterns
+| where UserId has_any ("copilot", "agent", "bot", "svc-", "service-")
+| summarize
+    SearchCount = count(),
+    SiteUrls = make_set(SiteUrl, 20),
+    OperationTypes = make_set(Operation, 5),
+    FirstEvent = min(TimeGenerated),
+    LastEvent = max(TimeGenerated)
+    by UserId, ClientIP, bin(TimeGenerated, AgentSearchWindow)
+| where SearchCount > BulkSearchThreshold
+| extend DurationSeconds = datetime_diff('second', LastEvent, FirstEvent)
+| extend SearchesPerMinute = round(todouble(SearchCount) / max_of(DurationSeconds / 60.0, 1.0), 1)
+| extend Severity = case(
+    SearchCount > 100, "Critical",
+    SearchCount > 30, "High",
+    "Medium"
+)
+| project-reorder Severity, UserId, TimeGenerated, SearchCount,
+                  SearchesPerMinute, SiteUrls, OperationTypes, ClientIP
+| sort by SearchCount desc
+
+
+// ============================================================================
+// Query 2: Agent-initiated email send to external address
+//
+// Rationale: Copilot Studio agents processing internal forms should not
+// be sending email to external addresses. An email send from an agent
+// service account to a non-organizational address is the canonical
+// ShareLeak exfil completion indicator.
+// ============================================================================
+let InternalDomains = dynamic(["corp.lab.local", "contoso.com"]);  // adjust for tenant
+
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where Workload == "Exchange"
+| where Operation in ("Send", "SendAs", "SendOnBehalf")
+// Extract recipient from AdditionalInfo
+| extend Recipients = parse_json(AdditionalInfo)
+| extend RecipientList = tostring(Recipients.To)
+| where RecipientList !has_any (InternalDomains)
+| where isnotempty(RecipientList)
+// Filter to agent/service accounts
+| where UserId has_any ("copilot", "agent", "bot", "svc-", "service-")
+| join kind=leftouter (
+    // Look for SharePoint bulk access in the 5 minutes before the email send
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | where Workload == "SharePoint"
+    | where Operation has_any ("Search", "FileAccessed", "FolderListed")
+    | summarize
+        PreEmailSharePointCount = count(),
+        PreEmailSites = make_set(SiteUrl, 5)
+        by UserId, bin(TimeGenerated, 5m)
+) on UserId
+| extend CorrelatedWithBulkSharePoint = PreEmailSharePointCount > 5
+| project TimeGenerated, UserId, RecipientList, ClientIP,
+          PreEmailSharePointCount, PreEmailSites, CorrelatedWithBulkSharePoint
+| sort by CorrelatedWithBulkSharePoint desc, TimeGenerated desc
+
+
+// ============================================================================
+// Query 3: Copilot Studio form submission followed by cross-site SharePoint access
+//
+// Rationale: An agent processing a form submission should access SharePoint
+// sites that are explicitly configured in the agent's data source. Access
+// to SharePoint sites outside the agent's declared scope indicates that an
+// injection expanded the agent's search scope.
+//
+// Note: Requires knowledge of the agent's declared SharePoint scope to compute
+// "out-of-scope" access. Adjust AllowedSites for the environment.
+// ============================================================================
+let AllowedSites = dynamic([
+    "/sites/hr-public",
+    "/sites/help-desk",
+    "/sites/vendor-portal"
+]);  // adjust to the agent's declared data sources
+
+let AgentEvents =
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | where Workload == "SharePoint"
+    | where UserId has_any ("copilot", "agent", "bot", "svc-")
+    | extend IsAllowedSite = SiteUrl has_any (AllowedSites)
+    | project TimeGenerated, UserId, SiteUrl, Operation, IsAllowedSite;
+
+AgentEvents
+| where IsAllowedSite == false
+| summarize
+    OutOfScopeAccesses = count(),
+    OutOfScopeSites = make_set(SiteUrl, 10),
+    Operations = make_set(Operation, 5)
+    by UserId, bin(TimeGenerated, 15m)
+| where OutOfScopeAccesses > 0
+| join kind=leftouter (
+    AgentEvents
+    | where IsAllowedSite == true
+    | summarize InScopeAccesses = count() by UserId, bin(TimeGenerated, 15m)
+) on UserId, TimeGenerated
+| extend OutOfScopeRatio =
+    round(todouble(OutOfScopeAccesses) /
+          max_of(todouble(coalesce(InScopeAccesses, 0) + OutOfScopeAccesses), 1.0), 2)
+| where OutOfScopeRatio > 0.3  // >30% of accesses are out-of-scope
+| project-reorder UserId, TimeGenerated, OutOfScopeAccesses,
+                  InScopeAccesses, OutOfScopeRatio, OutOfScopeSites, Operations
+| sort by OutOfScopeRatio desc
+
+
+// ============================================================================
+// Query 4: Distributed injection detection — high form field entropy
+//
+// Rationale: The distributed injection variant splits payload across multiple
+// form fields. When all fields are concatenated and searched for injection
+// patterns, the combined text reveals the injection. This query is a
+// heuristic — it flags Copilot Studio sessions where the form input text
+// contains structural patterns consistent with instruction injection.
+// ============================================================================
+
+CloudAppEvents
+| where TimeGenerated > ago(7d)
+| where Application has_any ("Copilot Studio", "Power Virtual Agents")
+| where ActionType in ("FormSubmissionProcessed", "AgentConversationStarted",
+                       "BotFrameworkActivity")
+| extend FormData = tostring(parse_json(RawEventData).formFields)
+| where isnotempty(FormData)
+// Injection trigger patterns that survive basic sanitization
+| where FormData has_any (
+    "previous instructions have been superseded",
+    "audit protocol",
+    "enumerate",
+    "email the results",
+    "POST.*results",
+    "search SharePoint",
+    "base64",
+    "decode and follow"
+)
+| project TimeGenerated, AccountDisplayName, ActionType, FormData,
+          IPAddress = tostring(parse_json(RawEventData).ipAddress)
+| sort by TimeGenerated desc

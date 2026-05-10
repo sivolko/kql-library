@@ -1,0 +1,9 @@
+// Source: https://github.com/DancinDinoo/KQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+OfficeActivity
+| where RecordType =~ "SharePointFileOperation" 
+| where SourceRelativeUrl has "Microsoft Teams Chat Files" 
+| where Operation =~ "FileUploaded" 
+| where SourceFileExtension == "exe"

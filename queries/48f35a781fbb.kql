@@ -1,0 +1,38 @@
+// Source: https://github.com/frances-saunders/cybersecurity-portfolio
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let timeWindow = 24h;
+let suspiciousPaths = dynamic(["\\Users\\","\\AppData\\","\\Temp\\","\\ProgramData\\","\\Windows\\Tasks\\"]);
+union isfuzzy=true
+(
+  SecurityEvent
+  | where TimeGenerated > ago(timeWindow)
+  | where EventID in (4698, 106, 140) // Task creation (varies by provider)
+  | extend Detail = coalesce(CommandLine, EventData, NewProcessName)
+  | where Detail has_any (suspiciousPaths)
+  | extend Technique="T1053.005", Tactic="Persistence"
+),
+(
+  SecurityEvent
+  | where TimeGenerated > ago(timeWindow)
+  | where EventID in (4697) // Service install
+  | extend ServiceName = tostring(EventData["ServiceName"])
+  | extend ImagePath   = tostring(EventData["ImagePath"])
+  | where ImagePath has_any (suspiciousPaths)
+  | extend Technique="Service Install", Tactic="Persistence"
+),
+(
+  Sysmon
+  | where TimeGenerated > ago(timeWindow)
+  | where EventID in (13) // Registry value set
+  | extend TargetObject= tostring(EventData["TargetObject"])
+  | extend Details= tostring(EventData["Details"])
+  | where TargetObject matches regex @"\\Software\\(Microsoft\\Windows\\CurrentVersion\\Run|RunOnce)"
+  | extend Technique="T1547.001", Tactic="Persistence"
+)
+| extend Host = coalesce(Computer, tostring(ComputerName))
+| extend Account = coalesce(SubjectUserName, tostring(User))
+| extend Severity=iff(Details has ".exe", "High","Medium")
+| project TimeGenerated, Host, Account, Technique, Tactic, ServiceName, ImagePath, TargetObject, Details
+| order by TimeGenerated desc

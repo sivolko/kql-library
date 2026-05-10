@@ -1,0 +1,11 @@
+// Source: https://github.com/jkerai1/KQL-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SigninLogs
+//| where ResultType != 0
+//| where ResultSignature == "FAILURE"
+//| where CrossTenantAccessType == "passthrough"
+| where Status.failureReason == "The resource tenant\'s cross-tenant access policy does not allow this user to access this tenant."
+//use something Like AADInternalsOsint to look up ResourceTenantID from AppOwnerTenantId field.
+//This query covers B2b. For Tenant Restrictions see the other KQL in this Repo.

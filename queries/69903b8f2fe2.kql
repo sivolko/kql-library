@@ -1,0 +1,34 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let dt_lookBack = 1h; // Look back 1 hour for Fastly events  
+let ioc_lookBack = 14d; // Look back 14 days for threat intelligence indicators  
+// Fetch threat intelligence indicators related to IP addresses  
+let IP_Indicators = ThreatIntelligenceIndicator  
+| where isnotempty(NetworkIP) or isnotempty(EmailSourceIpAddress) or isnotempty(NetworkDestinationIP) or isnotempty(NetworkSourceIP)  
+| where TimeGenerated >= ago(ioc_lookBack)  
+| extend TI_ipEntity = iff(isnotempty(NetworkIP), NetworkIP, NetworkDestinationIP)  
+| extend TI_ipEntity = iff(isempty(TI_ipEntity) and isnotempty(NetworkSourceIP), NetworkSourceIP, TI_ipEntity)  
+| extend TI_ipEntity = iff(isempty(TI_ipEntity) and isnotempty(EmailSourceIpAddress), EmailSourceIpAddress, TI_ipEntity)  
+| where ipv4_is_private(TI_ipEntity) == false and TI_ipEntity !startswith "fe80" and TI_ipEntity !startswith "::" and TI_ipEntity !startswith "127."  
+| summarize LatestIndicatorTime = arg_max(TimeGenerated, *) by IndicatorId  
+| where Active == true and ExpirationDateTime > now();  
+// Perform a join between IP indicators and Fastly events  
+IP_Indicators  
+// Use innerunique to keep performance fast and result set low, as we only need one match to indicate potential malicious activity that needs investigation  
+| join kind=innerunique (  
+Fastly_CL  
+| where timestamp_t >= ago(dt_lookBack)  
+| where isnotempty(client_ip_s)  
+| where ipv4_is_private(client_ip_s) == false and client_ip_s !startswith "fe80" and client_ip_s !startswith "::" and client_ip_s !startswith "127."  
+| extend Fastly_TimeStamp = timestamp_t  
+)  
+on $left.TI_ipEntity == $right.client_ip_s  
+// Filter out Fastly events that occurred after the expiration of the corresponding indicator  
+| where Fastly_TimeStamp < ExpirationDateTime  
+// Group the results by IndicatorId and keep the Fastly event with the latest timestamp  
+| summarize Fastly_TimeStamp = arg_max(Fastly_TimeStamp, *) by IndicatorId, client_ip_s  
+// Select the desired output fields  
+| project timestamp = Fastly_TimeStamp, Description, ActivityGroupNames, IndicatorId, ThreatType, Url, ExpirationDateTime, ConfidenceScore,  
+TI_ipEntity, Computer, host_s, client_ip_s, request_method_s, response_status_d, NetworkIP, NetworkDestinationIP, NetworkSourceIP, EmailSourceIpAddress, Type

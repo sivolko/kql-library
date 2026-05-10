@@ -1,0 +1,13 @@
+// Source: https://github.com/EEN421/KQL-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let rate=3.96;                                                                  //<-- Plug in Effective per GB Rate Here)
+Heartbeat                                                                       //<-- Query the Heartbeat table
+| where OSName contains "Windows 10" or OSName contains "Windows 11"            //<-- Query for Win10 and 11 Workstations
+| where TimeGenerated >ago(30d)                                                 //<-- Query the last 30 days
+| summarize arg_max(TimeGenerated, OSName) by Computer                          //<-- Summarize by computer
+| join (SecurityEvent                                                           //<-- Join results with the following query against the SecurityEvent table
+| where TimeGenerated >ago(30d)) on Computer                                    //<-- Query the last 30 days
+| summarize GB=sum(_BilledSize)/1000/1000/1000                                  //<-- Summarize by total _Billed Size and convert to GB
+| extend cost = GB*rate                                                         //<-- Multiply total GB by the effective per GB rate

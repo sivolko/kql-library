@@ -1,0 +1,37 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let Lookback = 3d;
+let TopN = 50;
+let TargetCaller = "";
+let TargetResourceProvider = "";
+let TargetActivityStatus = "";
+AzureActivity
+| where TimeGenerated >= ago(Lookback)
+| where tolower(tostring(_IsBillable)) == "true"
+| extend ResourceProviderValue = tostring(column_ifexists("ResourceProviderValue", ""))
+| extend OperationNameValue = tostring(column_ifexists("OperationNameValue", ""))
+| extend ActivityStatusValue = tostring(column_ifexists("ActivityStatusValue", ""))
+| extend CallerValue = tostring(column_ifexists("Caller", ""))
+| extend ResourceIdValue = tostring(coalesce(column_ifexists("_ResourceId", ""), column_ifexists("ResourceId", "")))
+| extend ResourceGroupValue = tostring(column_ifexists("ResourceGroup", ""))
+| where isempty(TargetCaller) or CallerValue =~ TargetCaller
+| where isempty(TargetResourceProvider) or ResourceProviderValue =~ TargetResourceProvider
+| where isempty(TargetActivityStatus) or ActivityStatusValue =~ TargetActivityStatus
+| summarize
+    Rows = count(),
+    GB = sum(_BilledSize) / 1e9,
+    AvgKB = avg(_BilledSize) / 1024.0
+  by Caller = CallerValue, ResourceProvider = ResourceProviderValue, OperationName = OperationNameValue, ActivityStatus = ActivityStatusValue, ResourceGroup = ResourceGroupValue, ResourceId = ResourceIdValue
+| top TopN by GB desc
+| project
+    Caller,
+    ResourceProvider,
+    OperationName,
+    ActivityStatus,
+    ResourceGroup,
+    ResourceId,
+    GB = round(GB, 3),
+    Rows,
+    AvgKB = round(AvgKB, 2)

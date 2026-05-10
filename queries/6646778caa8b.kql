@@ -1,0 +1,17 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let timeframe=30d;
+IdentityInfo
+| where TimeGenerated > ago(21d)
+| where UserType == "Guest"
+| summarize arg_max(TimeGenerated, *) by AccountUPN
+| project UserId=tolower(AccountUPN)
+| join kind=inner (
+    OfficeActivity
+    | where TimeGenerated > ago(timeframe)
+    | where Operation in ("FileSyncDownloadedFull", "FileDownloaded")
+    )
+    on UserId
+| summarize DownloadCount=count(), DownloadList=make_set(OfficeObjectId) by UserId

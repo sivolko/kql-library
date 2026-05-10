@@ -1,0 +1,7 @@
+// Source: https://github.com/rod-trent/Sentinel-SOC-101
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SigninLogs
+| where TimeGenerated > ago(30d)
+| where ClientAppUsed in ("Browser", "Exchange ActiveSync", "IMAP4", "Mobile Apps and Desktop clients", "Other clients", "POP3", "SMTP")

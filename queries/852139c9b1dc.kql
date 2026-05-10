@@ -1,0 +1,24 @@
+// Source: https://github.com/EEN421/KQL-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let rate = 2.53;  //<-- Effective Cost per GB (500GB / Day Commitment Tier in EastUS)
+Syslog                                            //<-- Query the Syslog table
+| where TimeGenerated > ago(30d)                  //<-- Query the last 30 Days in the table
+| where SeverityLevel == 'info'                   //<-- Query for events of SecurityLevel 'info'
+| summarize GB=sum(_BilledSize)/1000/1000/1000    //<-- Summarize billable volume in GB using the _BilledSize column
+| extend cost = GB*rate                           //<-- Multiple the total GBs by Effective Price per GB
+
+//You can change the last line in the above query to the following if you’re a stickler for Gibibytes versus Gigabytes: 
+| summarize GB=sum(_BilledSize)/1024/1024/1024	
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+Syslog
+| where TimeGenerated >ago(90d)
+| where _IsBillable == True
+| summarize Billable_GB=round(sum(_BilledSize / 1000 / 1000 / 1000),2) by SeverityLevel
+| extend TotalCost = round(Billable_GB * 5.16, 2)
+| extend TotalCost=strcat('$', TotalCost)
+| sort by Billable_GB desc
+| limit 10

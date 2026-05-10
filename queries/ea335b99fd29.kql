@@ -1,0 +1,10 @@
+// Source: https://github.com/AIHRSec/KQL-DFIR
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AuditLogs
+| where TimeGenerated >= ago(1d) // CHANGE ME
+| extend UserPrincipalName = tostring(TargetResources[0].userPrincipalName)
+| where OperationName in~ ("Add registered owner to device","Add registered users to device")
+| extend ['Device Registered'] = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue)))
+| project-reorder ActivityDisplayName,UserPrincipalName,['Device Registered'],Result,TimeGenerated,ResultDescription

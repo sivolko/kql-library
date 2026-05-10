@@ -1,0 +1,17 @@
+// Source: https://github.com/azure-ad-b2c/siem
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let start = ago(24h);
+let end = now();
+let threshold = -25; //25% decrease in total requests.
+AuditLogs
+| serialize TimeGenerated, CorrelationId, Result
+| make-series TotalRequests=dcount(CorrelationId) on TimeGenerated in range(start, end, 1h)
+| mvexpand TimeGenerated, TotalRequests
+| serialize TotalRequests, TimeGenerated, TimeGeneratedFormatted=format_datetime(todatetime(TimeGenerated), 'yyyy-M-dd [hh:mm:ss tt]')
+| order by TimeGeneratedFormatted desc 
+| extend previous = toreal(next(TotalRequests,1))
+| extend PercentageChange= ((toreal(TotalRequests) - previous)/previous)*100 
+| project   TimeGeneratedFormatted, TotalRequests,   PercentageChange
+| where PercentageChange <= threshold

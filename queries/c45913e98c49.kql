@@ -1,0 +1,95 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let ObservationWindow = 5m;
+let TransmitFileCallers =
+    DeviceEvents
+    | where TimeGenerated > ago(1d)
+    | where ActionType == "DeviceIoControlRequest"
+    | where AdditionalFields has "\\Device\\Afd"
+    | where AdditionalFields has "0x1201F"  // IOCTL_AFD_TRANSMIT_FILE
+    | where InitiatingProcessFileName !in~ (
+        "w3wp.exe", "httpd.exe", "nginx.exe", "apache.exe",
+        "svchost.exe", "lsass.exe"
+    )
+    | summarize
+        TransmitFileCount = count(),
+        FirstSeen = min(TimeGenerated),
+        LastSeen = max(TimeGenerated)
+        by DeviceName, ProcessId, InitiatingProcessFileName,
+           InitiatingProcessAccountName, InitiatingProcessIntegrityLevel
+    | where TransmitFileCount > 5   // Any non-trivial use by unexpected process
+    | project
+        DeviceName,
+        ProcessId,
+        ProcessName = InitiatingProcessFileName,
+        Account = InitiatingProcessAccountName,
+        IntegrityLevel = InitiatingProcessIntegrityLevel,
+        TransmitFileCount,
+        FirstSeen,
+        LastSeen;
+
+TransmitFileCallers
+| order by TransmitFileCount desc
+
+
+// ============================================================================
+// Query 2: Correlated token elevation after TransmitFile anomaly
+// ============================================================================
+let ElevationWindow = 60s;
+
+let TokenElevations =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4672
+    | where PrivilegeList has_any ("SeDebugPrivilege", "SeTcbPrivilege")
+    | project
+        ElevationTime = TimeGenerated,
+        Computer,
+        ElevatedAccount = Account,
+        LogonId,
+        PrivilegeList;
+
+TransmitFileCallers
+| join kind=inner TokenElevations
+    on $left.DeviceName == $right.Computer
+| where ElevationTime between (LastSeen .. (LastSeen + ElevationWindow))
+| project
+    DeviceName,
+    Account,
+    ProcessName,
+    TransmitFileCount,
+    ExploitEnd = LastSeen,
+    ElevationTime,
+    ElevatedAccount,
+    PrivilegeList,
+    LagSeconds = datetime_diff('second', ElevationTime, LastSeen)
+| order by ElevationTime desc
+
+
+// ============================================================================
+// Query 3: Hunting for oversized TransmitFile buffer parameters
+//
+// When ETW kernel network tracing is available, the HeadLength/TailLength
+// values from the AFD IOCTL are captured. Values >0x10000000 (256 MB) from
+// a non-server process are highly anomalous.
+// ============================================================================
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType == "DeviceIoControlRequest"
+| where AdditionalFields has "\\Device\\Afd"
+| where AdditionalFields has "0x1201F"
+| extend IoctlParams = parse_json(AdditionalFields)
+| extend HeadLength = toint(IoctlParams.HeadLength)
+| extend TailLength = toint(IoctlParams.TailLength)
+| where HeadLength > 0x10000000 or TailLength > 0x10000000
+| project
+    TimeGenerated,
+    DeviceName,
+    ProcessId,
+    ProcessName = InitiatingProcessFileName,
+    Account = InitiatingProcessAccountName,
+    HeadLength,
+    TailLength
+| order by TimeGenerated desc

@@ -1,0 +1,43 @@
+// Source: https://github.com/jsa2/kql
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let azIp =externaldata(changeNumber: string, cloud: string, values: dynamic)
+    ["https://download.microsoft.com/download/7/1/D/71D86715-5596-4529-9B13-DA13A5DE5B63/ServiceTags_Public_20240603.json"]
+    with(format='multijson')
+    | mv-expand values
+    | project aId =values.id, prefix =values.properties.addressPrefixes
+    | where aId == "AzureCloud"
+    | summarize make_list(prefix);
+let s = union AADServicePrincipalSignInLogs, AADManagedIdentitySignInLogs
+    | distinct AppId, ServicePrincipalName
+    | summarize make_list(bag_pack('AppId', AppId, 'ServicePrincipalName', ServicePrincipalName));
+let src = union
+// Storage logs in azure very often log private IP addresses // remove the log sources from below you don't have available
+        Storage*,
+        AzureDiagnostics,
+        (AzureActivity
+        | where ActivityStatusValue == "Success"),
+        AppServiceConsoleLogs,
+        MicrosoftGraphActivityLogs,
+        AuditLogs
+| project-away Time*
+    | extend mass = pack_all(true)
+    | mv-apply apps = toscalar(s) to typeof(dynamic) on (
+        where mass contains apps.AppId
+        | extend AppId = apps.AppId
+        | extend ServicePrincipalName = apps.ServicePrincipalName
+        | extend corr = coalesce(CorrelationId, ClientRequestId)
+        | extend op = coalesce(OperationName, OperationNameValue, RequestUri, mass)
+        ); 
+src
+| extend ipByAsIdentifiedByAzure= coalesce(IPAddress, CallerIPAddress, IPAddress, CallerIpAddress, 'no IP context identified')
+| extend AzureCloudPublicIp =ipv4_is_in_any_range(ipByAsIdentifiedByAzure, toscalar (azIp))
+| summarize AppIdSeenAt = make_set(strcat(Type, '-', op))
+    by
+    ipByAsIdentifiedByAzure,
+    tostring(AppId),
+    tostring(ServicePrincipalName),
+    AzureCloudPublicIp
+| extend location = geo_info_from_ip_address(ipByAsIdentifiedByAzure)
+| evaluate bag_unpack(location) | project-away  latitude,longitude

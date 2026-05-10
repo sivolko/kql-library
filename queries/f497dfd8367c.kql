@@ -1,0 +1,11 @@
+// Source: https://github.com/BrianTJackett/log-analytics-samples
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let StartDate = ago(7d);
+let OperationNameFilter = "Add group";
+let AzureADGroupNameMatch = "<nameOfGroup>";
+AuditLogs
+| where TimeGenerated > StartDate
+| where OperationName contains OperationNameFilter
+| where TargetResources has AzureADGroupNameMatch

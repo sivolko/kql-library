@@ -1,0 +1,13 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SecurityEvent
+| project TimeGenerated, EventID, TargetAccount, SubjectAccount, UserAccountControl
+| where EventID == "4738"
+| where UserAccountControl has_any("2094", "2062")
+| extend Activity = case
+    (UserAccountControl contains "2094", strcat("Account Sensitivity Enabled"),
+     UserAccountControl contains "2062", strcat("Account Sensitivity Disabled"),
+    "Unknown")
+| project TimeGenerated, Target=TargetAccount, Actor=SubjectAccount, Activity

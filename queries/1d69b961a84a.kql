@@ -1,0 +1,32 @@
+// Source: https://github.com/Ascendstarcel/Hunting-with-KQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let suspiciousLocalIPs = dynamic(["172.16.42.1", "172.16.42.42", "192.168.0.1", "192.168.1.1", "10.0.0.1"]);
+let suspiciousDomains = dynamic(["connectivitycheck.gstatic.com", "msftconnecttest.com", "apple.com", "example.com"]);
+DeviceNetworkEvents
+| where RemoteUrl in (suspiciousDomains)
+| where RemoteIP in (suspiciousLocalIPs)
+| project Timestamp, DeviceName, ActionType, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine
+| join kind=leftouter (
+    DeviceEvents
+    | where ActionType == "NetworkConnected"
+    | where RemoteIP in (suspiciousLocalIPs)
+    | project DeviceName, ConnectionTime = Timestamp, ConnectedIP = RemoteIP
+) on DeviceName
+| where Timestamp between (ConnectionTime .. ConnectionTime + 5m)
+| project Timestamp, DeviceName, RemoteUrl, RemoteIP, ConnectedIP, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by Timestamp desc
+
+// 2. Detect Gateway/DNS Changes Matching Pineapple Profiles
+DeviceNetworkInfo
+| summarize by DeviceName, IPAddress, DefaultGateway, Timestamp
+| order by DeviceName, Timestamp desc
+| extend isSuspicious = iff(DefaultGateway in (suspiciousLocalIPs), true, false)
+
+// 3. Detect PowerShell Web Requests to Local IPs (Rogue Server Usage)
+DeviceProcessEvents
+| where FileName == "powershell.exe"
+| where ProcessCommandLine contains "Invoke-WebRequest"
+| where ProcessCommandLine matches regex @"(172\.16\.42|192\.168\.0|10\.0\.0)\."
+| project Timestamp, DeviceName, ProcessCommandLine

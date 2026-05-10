@@ -1,0 +1,13 @@
+// Source: https://github.com/CyberAutomationX/SecureAzCloud-Scripts
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let Lookback = 30d;
+AzureActivity
+| where TimeGenerated > ago(Lookback)
+| extend Operation_l = tolower(OperationNameValue),
+         Provider_l = tolower(ResourceProviderValue)
+| where Provider_l has "microsoft.cognitiveservices"
+| where Operation_l has "privateendpointconnections/delete" or Operation_l has "privateendpointconnections/remove"
+| project TimeGenerated, Caller, CallerIpAddress, OperationNameValue, ActivityStatusValue, SubscriptionId, ResourceGroup, ResourceId, Properties_d
+| sort by TimeGenerated desc

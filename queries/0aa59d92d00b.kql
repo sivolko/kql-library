@@ -1,0 +1,31 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let Lookback = 3d;
+let TopN = 50;
+let TargetComputer = "";
+let TargetFacility = "";
+let TargetSeverityLevel = "";
+let TargetProcessName = "";
+Syslog
+| where TimeGenerated >= ago(Lookback)
+| where tolower(tostring(_IsBillable)) == "true"
+| where isempty(TargetComputer) or Computer =~ TargetComputer
+| where isempty(TargetFacility) or Facility =~ TargetFacility
+| where isempty(TargetSeverityLevel) or SeverityLevel =~ TargetSeverityLevel
+| where isempty(TargetProcessName) or ProcessName =~ TargetProcessName
+| summarize
+    Rows = count(),
+    GB = sum(_BilledSize) / 1e9,
+    AvgKB = avg(_BilledSize) / 1024.0
+  by Computer, Facility, SeverityLevel, ProcessName
+| top TopN by GB desc
+| project
+    Computer,
+    Facility,
+    SeverityLevel,
+    ProcessName,
+    GB = round(GB, 3),
+    Rows,
+    AvgKB = round(AvgKB, 2)

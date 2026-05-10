@@ -1,0 +1,17 @@
+// Source: https://github.com/mattiasborg82/Talks
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+print SyslogMessage = "<13>Oct 22 12:34:56 myhostname myapp[1234]: This is a sample syslog message."
+| extend retval = extract_all(  
+                    @"<(?P<PRI>[\d]+)>(?P<Month>[^\s]+)\s(?P<Day>[^\s]+)\s(?P<Timestamp>[^\s]+)\s(?P<HostName>[^\s]+)\s(?P<ProcessName>[^\W]+)\[(?P<ProcessId>[\d]+)\]\:(?P<Message>[^$]+)",
+                    dynamic(["PRI","Month","Day","Timestamp","HostName","ProcessName","ProcessId","Message"]),
+                    tostring(SyslogMessage))[0] 
+| extend PRI = retval[0],
+         Date = strcat(retval[1]," ",retval[2]),
+         Timestamp = retval[3],
+         HostName = retval[4],
+         ProcessName = retval[5],
+         ProcessId = retval[6],
+         Message = retval[7]
+         |project-away retval,SyslogMessage

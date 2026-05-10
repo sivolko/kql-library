@@ -1,0 +1,6 @@
+// Source: https://github.com/josamontiel/secops-warehouse
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+CommonSecurityLog 
+| where (HttpUserAgentOriginal =~ @'Hello-World/1.0' and RequestMethod =~ @'GET' and dest_port in (80, 81, 82, 83, 84, 85) and source_ip != '192.168.1.0/24')

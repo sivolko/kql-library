@@ -1,0 +1,18 @@
+// Source: https://github.com/samilamppu/Sentinel-queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceEvents 
+| where ActionType in ('SmartScreenUrlWarning','ExploitGuardNetworkProtectionBlocked') 
+| extend ParsedFields=parse_json(AdditionalFields) 
+| project DeviceName, ActionType, Timestamp, RemoteUrl, InitiatingProcessFileName, ResponseCategory=tostring(ParsedFields.ResponseCategory), Experience=tostring(ParsedFields.Experience) 
+| where ResponseCategory == "CustomPolicy" or Experience == "CustomPolicy"
+
+
+
+// Web Content Filtering - CustomBlockList Used 
+DeviceEvents 
+| where ActionType in ('SmartScreenUrlWarning','ExploitGuardNetworkProtectionBlocked') 
+| extend ParsedFields=parse_json(AdditionalFields) 
+| project DeviceName, ActionType, Timestamp, RemoteUrl, InitiatingProcessFileName, ResponseCategory=tostring(ParsedFields.ResponseCategory), Experience=tostring(ParsedFields.Experience) 
+| where ResponseCategory == "CustomBlockList" or Experience == "CustomBlockList"

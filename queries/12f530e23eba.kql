@@ -1,0 +1,8 @@
+// Source: https://github.com/jkerai1/KQL-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.AUTHORIZATION/LOCKS/DELETE"
+| where _ResourceId startswith @"/<SUB ID>/resourcegroups/<RG NAME>/providers/microsoft.insights/scheduledqueryrules"
+| where ActivityStatusValue == "Start"

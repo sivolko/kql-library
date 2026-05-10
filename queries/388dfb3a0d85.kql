@@ -1,0 +1,42 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let LookbackDays = 90d;
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackDays)
+| where RecordType == "MicrosoftTeams"
+| where Operation in (
+    "AppInstalled", "BotAddedToTeam", "TabAdded",
+    "ConnectorAdded", "SideLoadedApp",
+    "AppUpgraded", "AppUninstalled")
+| extend
+    AppName       = tostring(ExtraProperties[0].Value),
+    AppPublisher  = tostring(ExtraProperties[1].Value)
+| extend AppNameLower = tolower(AppName)
+| extend IsSuspicious = AppNameLower has_any (dynamic([
+    "ngrok", "webhook", "tunnel", "shell", "exec", "proxy", "revealer",
+    "forward", "exfil", "bypass", "pentest", "hack", "rat "
+]))
+| summarize
+    InstallCount  = count(),
+    Teams         = make_set(TeamName, 15),
+    Channels      = make_set(ChannelName, 10),
+    Installers    = make_set(UserId, 10),
+    FirstInstall  = min(TimeGenerated),
+    LastInstall   = max(TimeGenerated),
+    IsSuspicious  = any(IsSuspicious)
+    by AppName, AppPublisher, Operation
+| sort by IsSuspicious desc, InstallCount desc
+| project
+    AppName,
+    AppPublisher,
+    Operation,
+    InstallCount,
+    Teams,
+    Channels,
+    Installers,
+    IsSuspicious,
+    FirstInstall,
+    LastInstall

@@ -1,0 +1,12 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceEvents
+| where TimeGenerated > ago (30d)
+| where ActionType startswith "SmartScreen"
+| extend SmartScreenExperience = tostring(AdditionalFields.Experience)
+| where AdditionalFields.Experience == "Phishing"
+| parse-where RemoteUrl with * '://' RemoteDomain '/' *
+| summarize Count=count()by RemoteDomain
+| sort by Count

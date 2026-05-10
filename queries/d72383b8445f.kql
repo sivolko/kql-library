@@ -1,0 +1,8 @@
+// Source: https://github.com/ugurkocde/kql_search_submissions
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+CommonSecurityLog | where DeviceVendor == "Zscaler" and DeviceProduct == "NSSWeblog"
+| where TimeGenerated > ago(30d)
+| summarize last_log = datetime_diff("second",now(), max(TimeGenerated))
+| where last_log >= 7200 

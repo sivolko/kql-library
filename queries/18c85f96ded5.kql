@@ -1,0 +1,8 @@
+// Source: https://github.com/rootsecdev/Microsoft-Blue-Forest
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SigninLogs
+| where AlternateSignInName == "example@upndomain.local"
+| where ResultType == "50126"
+| project TimeGenerated, Identity, ResultDescription, AppDisplayName, IPAddress, LocationDetails.city, LocationDetails.countryOrRegion

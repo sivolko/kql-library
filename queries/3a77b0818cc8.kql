@@ -1,0 +1,11 @@
+// Source: https://github.com/jkatzmandu/sentinel_tricks
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+Syslog | where HostName in ("FIREPOWER_HOSTS","ANOTHER_HOST")
+| extend HostName = extract(@'(\S+):',1,SyslogMessage)
+| extend UserName = extract(@'\S+: ([^@]*)@',1,SyslogMessage)
+| extend SrcHost = extract(@'@([^,]*)\,',1,SyslogMessage)
+| extend Action = extract(@'@.*\,([^,]*)\,',1,SyslogMessage)
+| extend Result = extract(@'@.*\,.*\,([^,]*)',1,SyslogMessage)
+| extend Signature = extract(@'\((\d+\:\d+)',1,SyslogMessage)

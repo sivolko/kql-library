@@ -1,0 +1,17 @@
+// Source: https://github.com/reversinglabs/reversinglabs-siem-rules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let susLocations = @"(?i)(\\Users\\Public\\|\\AppData\\Local\\Temp\\|\\AppData\\Local\\Temp\\|\\Desktop\\|\\Downloads\\|\\PerfLogs\\|\\Windows\\Temp\\|\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\)";
+SecurityEvent
+| where EventID == 4688
+| where Process contains "regsvcs.exe"
+| where ParentProcessName matches regex (susLocations)
+| union
+(SysmonParser
+| where OriginalFileName contains "regsvcs.exe"
+| where ParentImage matches regex (susLocations)),
+(DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where FileName contains "regsvcs.exe"
+| where InitiatingProcessFolderPath matches regex (susLocations))

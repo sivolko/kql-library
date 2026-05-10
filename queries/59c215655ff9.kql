@@ -1,0 +1,14 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+OfficeActivity
+| where TimeGenerated > ago (30d)
+| where Operation == "New-InboxRule"
+| mv-apply p=todynamic(Parameters) on (
+where p.Name == "Name"
+| extend RuleName = tostring(p.Value)
+)
+| project TimeGenerated, UserId, ClientIP, RuleName
+//Additionally search for inbox rule names that have no alphanumeric characters, can be a sign of threat actor activity
+| where RuleName matches regex @"^[^a-zA-Z0-9]*$"

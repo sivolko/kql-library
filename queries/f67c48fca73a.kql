@@ -1,0 +1,15 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/SHAREDKEYS/ACTION"
+| extend WorkspaceName = tostring(parse_json(Properties).resource)
+| where ActivityStatusValue == "Success"
+| project
+    TimeGenerated,
+    Actor=Caller,
+    ['Log Analytics Workspace Name']=WorkspaceName,
+    ['Actor IP Address']=CallerIpAddress,
+    ['Azure Subscription Id']=SubscriptionId,
+    ['Azure Resource Group']=ResourceGroup

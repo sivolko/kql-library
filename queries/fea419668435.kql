@@ -1,0 +1,175 @@
+// Source: https://github.com/kevinflint-cs2/sentinel-threat-hunting
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let PrivilegedGroups = dynamic([
+    "Domain Admins",
+    "Enterprise Admins",
+    "Schema Admins",
+    "Account Operators",
+    "Backup Operators",
+    "Server Operators",
+    "Administrators"
+]);
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4728 or EventID == 4732 or EventID == 4756 // Member added to security group
+| extend GroupName = TargetUserName
+| where GroupName in (PrivilegedGroups)
+| extend AddedUser = SubjectUserName, AddedBy = Account
+| project 
+    TimeGenerated,
+    AddedUser,
+    GroupName,
+    AddedBy,
+    Computer,
+    Activity
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 2. Suspicious Service Creation Running as SYSTEM
+// ----------------------------------------------------------------------------
+// Detects new services created with SYSTEM privileges
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID in (4697, 7045) // Service installed
+| where ServiceAccount =~ "LocalSystem" or ServiceAccount has "SYSTEM"
+| where ServiceFileName !has "\\Windows\\" // Exclude legitimate Windows services
+| extend Severity = case(
+    ServiceFileName has_any ("powershell", "cmd.exe", "wscript", "cscript", "mshta"), "High",
+    ServiceFileName has_any (".bat", ".vbs", ".ps1"), "High",
+    "Medium"
+)
+| summarize 
+    FirstSeen = min(TimeGenerated),
+    Installations = count(),
+    Computers = make_set(Computer, 10)
+    by ServiceName, ServiceFileName, Account, Severity
+| order by Severity desc, Installations desc
+
+// ----------------------------------------------------------------------------
+// 3. Token Manipulation - Access Token Changes
+// ----------------------------------------------------------------------------
+// Detects process token manipulation attempts
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4648 // Logon with explicit credentials
+| where TargetUserName != Account // Different user context
+| where Process has_any ("powershell.exe", "cmd.exe", "rundll32.exe")
+| summarize 
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    AttemptCount = count(),
+    TargetUsers = make_set(TargetUserName, 10),
+    Computers = make_set(Computer, 10)
+    by Account, Process
+| where AttemptCount > 3
+| order by AttemptCount desc
+
+// ----------------------------------------------------------------------------
+// 4. UAC Bypass Attempts via Registry Modifications
+// ----------------------------------------------------------------------------
+// Detects registry changes commonly used for UAC bypass
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4657 // Registry value modified
+| where ObjectName has_any (
+    "\\Software\\Classes\\ms-settings\\shell\\open\\command",
+    "\\Software\\Classes\\mscfile\\shell\\open\\command",
+    "\\Software\\Classes\\exefile\\shell\\runas\\command",
+    "\\Environment\\windir",
+    "\\CurrentVersion\\App Paths\\control.exe"
+)
+| extend Technique = case(
+    ObjectName has "ms-settings", "fodhelper UAC Bypass",
+    ObjectName has "mscfile", "Eventvwr UAC Bypass",
+    ObjectName has "Environment\\windir", "Windir UAC Bypass",
+    "Unknown UAC Bypass"
+)
+| project 
+    TimeGenerated,
+    Computer,
+    Account,
+    Technique,
+    ObjectName,
+    NewValue = ObjectValueName,
+    Process = ProcessName
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 5. Scheduled Task Creation by Non-Admin Users
+// ----------------------------------------------------------------------------
+// Detects scheduled tasks created by standard users, potential priv esc vector
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4698 // Scheduled task created
+| extend TaskName = tostring(parse_xml(EventData).TaskName)
+| extend TaskCreator = Account
+// Filter out system and known admin accounts
+| where TaskCreator !has "SYSTEM" and TaskCreator !has "Administrator"
+| extend TaskContent = tostring(parse_xml(EventData).TaskContent)
+| where TaskContent has_any ("powershell", "cmd.exe", "wscript", "rundll32")
+| project 
+    TimeGenerated,
+    Computer,
+    TaskCreator,
+    TaskName,
+    TaskContent
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 6. SeDebugPrivilege Enabled
+// ----------------------------------------------------------------------------
+// Detects enabling of debug privileges, often used by attackers
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4673 // Sensitive privilege use
+| where PrivilegeList has "SeDebugPrivilege"
+| where Process !has_any ("lsass.exe", "csrss.exe", "services.exe") // Exclude legitimate system processes
+| summarize 
+    FirstUse = min(TimeGenerated),
+    LastUse = max(TimeGenerated),
+    UseCount = count(),
+    Processes = make_set(Process, 10),
+    Computers = make_set(Computer, 10)
+    by Account
+| order by UseCount desc
+
+// ----------------------------------------------------------------------------
+// 7. Process Running with Unexpected Integrity Level
+// ----------------------------------------------------------------------------
+// Detects processes running with elevated integrity levels
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4688 // Process creation
+| where MandatoryLabel has "High Mandatory Level" or MandatoryLabel has "System Mandatory Level"
+| where Process !has "\\Windows\\" // Focus on non-system processes
+| where Process has_any (".exe", ".bat", ".ps1", ".vbs")
+| summarize 
+    FirstSeen = min(TimeGenerated),
+    ExecutionCount = count(),
+    ParentProcesses = make_set(ParentProcessName, 5),
+    CommandLines = make_set(CommandLine, 3)
+    by Process, Account, Computer, MandatoryLabel
+| where ExecutionCount > 2 or Process has_any ("powershell", "cmd", "wscript")
+| order by ExecutionCount desc
+
+// ----------------------------------------------------------------------------
+// 8. Suspicious Use of Runas Command
+// ----------------------------------------------------------------------------
+// Detects use of runas.exe to execute commands as different user
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4688
+| where Process has "runas.exe"
+| where CommandLine has_any ("/user:", "/savecred")
+| extend TargetUser = extract(@"/user:(\S+)", 1, CommandLine)
+| extend UsingSavedCreds = iff(CommandLine has "/savecred", true, false)
+| project 
+    TimeGenerated,
+    Computer,
+    Account,
+    TargetUser,
+    UsingSavedCreds,
+    CommandLine
+| order by TimeGenerated desc

@@ -1,0 +1,35 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let IdentityLogonEventsFiltered = IdentityLogonEvents
+    | where not (IPAddress startswith "10.")  
+    and not (AccountUpn startswith "spi") 
+    and not (AccountUpn endswith "inspiro.com")
+    and isnotempty(AccountObjectId) 
+    and Location != "US"
+    and Location != "CA"
+    and isnotempty(Location)
+    and isnotempty(IPAddress)
+    and not (ISP contains "flowers")
+    and not (ISP contains "Microsoft")
+    and not (ISP contains "palo alto")
+    and not (ISP startswith "inspiro")
+    and not (ActionType in ("LogonFailed")) 
+    and TimeGenerated >= datetime(2025-01-01 00:00:00)
+    ;
+let JoinOnAccountUpn = IdentityLogonEventsFiltered
+    | join kind=leftouter (
+        IdentityInfo | 
+        where isnotempty(AccountObjectId) 
+        and TimeGenerated >= datetime(2020-01-01 00:00:00)
+        | extend AcctInfo = dynamic_to_json(UserAccountControl)
+        | summarize arg_max(TimeGenerated, *) by AccountObjectId
+        | project TimeGen = TimeGenerated, EmpID = EmployeeId, email = AccountUPN, Dept = Department, IIAcctName = AccountName, IIAcctDisplayName = AccountDisplayName, IIMailAddress = MailAddress, AccountObjectId, AcctInfo
+    ) on $left.AccountObjectId == $right.AccountObjectId;
+JoinOnAccountUpn | 
+    where not (EmpID in ("CONSULTANT", "CONTRACTOR")) 
+    and isnotempty(email)
+| summarize count(), LastLogin = max(TimeGenerated), AcctName = max(AccountName), email = max(AccountUpn), DisplayName = max(AccountDisplayName), AcctInfo = max(AcctInfo) by IPAddress, Location, EmpID, Dept
+| project-reorder DisplayName, email, AcctName, AcctInfo, Dept, Location, LastLogin, IPAddress, EmpID
+| order by DisplayName asc, email asc, Location asc, count_ desc

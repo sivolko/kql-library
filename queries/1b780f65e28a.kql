@@ -1,0 +1,30 @@
+// Source: https://github.com/CyberAutomationX/SecureAzCloud-Scripts
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let RecentWindow = 1d;
+let BaselineWindow = 30d;
+let AIApps = dynamic(["openai", "chatgpt", "claude", "anthropic", "gemini", "copilot", "copilot studio", "azure ai", "azure openai", "cognitive services", "ai foundry", "perplexity", "mistral"]);
+let Recent =
+    AuditLogs
+    | where TimeGenerated > ago(RecentWindow)
+    | where ActivityDisplayName has_any (dynamic(["consent to application", "grant consent to application", "add delegated permission grant", "add app role assignment to service principal"]))
+    | mv-expand TargetResources
+    | extend TargetDisplayName = tolower(tostring(TargetResources.displayName)),
+             Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName)),
+             ActorIP = tostring(InitiatedBy.user.ipAddress),
+             Modified = tolower(tostring(TargetResources.modifiedProperties))
+    | where isnotempty(Actor) and isnotempty(ActorIP)
+    | where TargetDisplayName has_any (AIApps) or Modified has_any (AIApps)
+    | summarize RecentCount = count(), Targets = make_set(TargetDisplayName, 20), Activities = make_set(ActivityDisplayName, 10) by Actor, ActorIP;
+let Baseline =
+    AuditLogs
+    | where TimeGenerated between (ago(BaselineWindow) .. ago(RecentWindow))
+    | extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName)),
+             ActorIP = tostring(InitiatedBy.user.ipAddress)
+    | where isnotempty(Actor) and isnotempty(ActorIP)
+    | summarize BaselineCount = count() by Actor, ActorIP;
+Recent
+| join kind=leftouter Baseline on Actor, ActorIP
+| where coalesce(BaselineCount, 0) == 0
+| sort by RecentCount desc

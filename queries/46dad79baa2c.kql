@@ -1,0 +1,50 @@
+// Source: https://github.com/frances-saunders/cybersecurity-portfolio
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let lookback = 14d;
+let evalWindow = 24h;
+let minEvents = 30;          // baseline minimum
+let spikeFactor = 5.0;       // how many times over baseline to alert
+let minSpikeCount = 200;     // absolute floor for last 24h events
+
+let OfficeFileOps = (
+  OfficeActivity
+  | where TimeGenerated > ago(lookback)
+  | where Operation in ("FileDownloaded","FileAccessed","FileSyncDownloadedFull","FilePreviewed","FileUploaded")
+  | extend User = tostring(UserId), Action = tostring(Operation), Target = tostring(SourceFileName), Workload = tostring(Workload)
+  | project TimeGenerated, User, Action, Target, Workload
+);
+
+let CloudApp = (
+  CloudAppEvents
+  | where TimeGenerated > ago(lookback)
+  | extend User = tostring(User), Action = tostring(ActivityType), Target = tostring(ObjectName), Workload = tostring(AppName)
+  | project TimeGenerated, User, Action, Target, Workload
+);
+
+let Dlp = (
+  InformationProtectionLogs_CL
+  | where TimeGenerated > ago(lookback)
+  | extend User = tostring(User_s), Action = tostring(Operation_s), Target = tostring(FileName_s), Workload = tostring(Workload_s)
+  | project TimeGenerated, User, Action, Target, Workload
+);
+
+// Build baseline per user
+let AllEvents = union isfuzzy=true OfficeFileOps, CloudApp, Dlp;
+let Baseline =
+    AllEvents
+    | summarize BaselineCountPerDay = count() / 14.0 by User
+    | where BaselineCountPerDay >= minEvents;
+
+let Current =
+    AllEvents
+    | where TimeGenerated > ago(evalWindow)
+    | summarize CurrentCount = count(), Actions=make_set(Action, 20), Targets=make_set(Target, 20), Apps=make_set(Workload, 20) by User;
+
+Current
+| join kind=inner Baseline on User
+| extend Spike = CurrentCount / BaselineCountPerDay
+| where CurrentCount >= minSpikeCount and Spike >= spikeFactor
+| project TimeGenerated=now(), User, CurrentCount, BaselineCountPerDay, Spike, Actions, Apps, Targets
+| order by Spike desc

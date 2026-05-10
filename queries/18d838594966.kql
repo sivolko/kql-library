@@ -1,0 +1,8 @@
+// Source: https://github.com/ehabSaad01/azure-administrator-labs
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AzureActivity
+| where OperationNameValue =~ "Microsoft.Resources/subscriptions/resourceGroups/delete"
+| project TimeGenerated, Caller, ResourceGroup, ActivityStatusValue
+| order by TimeGenerated desc

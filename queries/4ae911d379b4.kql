@@ -1,0 +1,44 @@
+// Source: https://github.com/jasonachkar/microsoft-sentinel-siem-detection
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+/*
+RuleId: d0fa0869-a23c-4a16-a154-80123250b257
+Name: Suspicious Inbox Rule External Forward
+Category: email
+Severity: High
+Tactics: Collection
+Techniques: T1114.003
+DataSources: OfficeActivity (Office 365)
+QueryFrequency: PT5M
+QueryPeriod: PT1H
+TriggerOperator: GreaterThan
+TriggerThreshold: 0
+Version: 1.0.0
+Author: Jason Achkar Diab (template)
+Status: Production
+Description: Detects inbox rules that forward or redirect mail to external domains.
+FalsePositives: Approved mail routing to partners; user-requested forwarding; mailbox migrations
+*/
+
+let QueryPeriod = 1h;
+let BinSize = 15m;
+let AllowedDomains = dynamic([]); // Add trusted external domains
+let AllowedUsers = dynamic([]); // Optional allowlist for approved mailboxes
+OfficeActivity
+| where TimeGenerated >= ago(QueryPeriod)
+| where Operation in ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules")
+| extend Account = tostring(UserId)
+| extend ClientIP = tostring(ClientIP)
+| where isempty(AllowedUsers) or Account !in (AllowedUsers)
+| extend Parameters = todynamic(Parameters)
+| mv-expand Parameters
+| extend ParamName = tostring(Parameters.Name), ParamValue = tostring(Parameters.Value)
+| where ParamName in ("ForwardTo", "RedirectTo", "ForwardingSmtpAddress", "RecipientAddress")
+| extend ForwardAddress = tostring(ParamValue)
+| extend ForwardDomain = tolower(extract(@"@([^;>]+)$", 1, ForwardAddress))
+| where isnotempty(ForwardDomain)
+| where ForwardDomain !in (AllowedDomains)
+| summarize ForwardCount=count(), ForwardAddresses=make_set(ForwardAddress, 10), ForwardDomains=make_set(ForwardDomain, 10)
+  by bin(TimeGenerated, BinSize), Account, ClientIP, Operation, MailboxOwnerUPN
+| project TimeGenerated, Account, ClientIP, Operation, MailboxOwnerUPN, ForwardCount, ForwardAddresses, ForwardDomains

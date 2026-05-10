@@ -1,0 +1,10 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+union isfuzzy=true (WireData
+| where Direction == 'Outbound'), (WindowsFirewall
+| where CommunicationDirection == 'SEND'), (CommonSecurityLog
+| where CommunicationDirection == 'Outbound')
+| where isnotempty(MaliciousIP)
+| summarize by MaliciousIP

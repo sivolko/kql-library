@@ -1,0 +1,9 @@
+// Source: https://github.com/TreadSoftly/Net-Sec-HoneyPot
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+CommonSecurityLog
+| where DeviceVendor == "pfSense" or SourceSystem == "SecurityEvents"
+| where Message has "block" and SourceIP startswith "10.20."
+| summarize count() by SourceIP, DestinationIP, DestinationPort, bin(TimeGenerated, 15m)
+| order by TimeGenerated desc

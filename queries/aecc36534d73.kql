@@ -1,0 +1,29 @@
+// Source: https://github.com/zerocmd/customer-questions
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let startTime=ago(90d);
+let endTime=ago(0d);
+// Normalize all "USB drive mounted" events and pull fields from AdditionalFields JSON
+let UsbMounts =
+    DeviceEvents
+    | where Timestamp between (startTime .. endTime)
+    | where ActionType == "UsbDriveMounted"
+    | extend af = parse_json(AdditionalFields)
+    | extend
+        SerialNumber  = tostring(af.SerialNumber),
+        ProductName   = tostring(af.ProductName),
+        Manufacturer  = tostring(af.Manufacturer),
+        BusType       = tostring(af.BusType),
+        DriveLetter   = tostring(af.DriveLetter)
+    | where isnotempty(SerialNumber)
+    | project Timestamp, DeviceName, DeviceId, SerialNumber, ProductName, Manufacturer, BusType, DriveLetter;
+// Per‑serial rollup: when first/last seen and on which hosts
+UsbMounts
+| summarize
+    FirstSeen = min(Timestamp),
+    LastSeen  = max(Timestamp),
+    HostCount = dcount(DeviceName),
+    Hosts     = make_set(DeviceName, 100)
+  by SerialNumber, ProductName, Manufacturer, BusType
+| order by LastSeen desc

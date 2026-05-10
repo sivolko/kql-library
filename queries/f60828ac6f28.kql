@@ -1,0 +1,125 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceProcessEvents
+| where FileName =~ "quickassist.exe"
+| extend HourOfDay = hourofday(TimeGenerated)
+| where HourOfDay < 7 or HourOfDay > 19  // outside 07:00-19:00 UTC
+| extend
+    DayOfWeek       = dayofweek(TimeGenerated),
+    IsWeekend       = dayofweek(TimeGenerated) in (0d, 6d)  // Sun=0, Sat=6
+| project TimeGenerated, DeviceName, AccountName, HourOfDay, IsWeekend,
+          ProcessCommandLine, InitiatingProcessFileName
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: QuickAssist Spawning Shell or Installer Processes
+//
+// Rationale: Attacker keyboard control via QuickAssist produces a distinctive
+// process tree: quickassist.exe → cmd.exe / powershell.exe / msiexec.exe.
+// This is rare in legitimate IT support and warrants investigation.
+// ============================================================================
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "quickassist.exe"
+| where FileName in~ (
+    "cmd.exe", "powershell.exe", "pwsh.exe",
+    "msiexec.exe", "wscript.exe", "cscript.exe",
+    "regsvr32.exe", "rundll32.exe",
+    "net.exe", "net1.exe",
+    "whoami.exe", "systeminfo.exe"
+)
+| extend
+    ActivityType = case(
+        FileName in~ ("cmd.exe", "powershell.exe", "pwsh.exe"), "Shell Execution",
+        FileName in~ ("msiexec.exe"),                            "Software Installation",
+        FileName in~ ("net.exe", "net1.exe"),                    "Network/User Recon",
+        "System Utility"
+    )
+| project TimeGenerated, DeviceName, AccountName, ActivityType, FileName,
+          ProcessCommandLine, InitiatingProcessCommandLine
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 3: New Local Admin Account or RDP Enabled During QuickAssist Session
+//
+// Rationale: A key Scattered Spider persistence technique is creating a local
+// admin account or enabling RDP via QuickAssist keyboard control before ending
+// the session. Correlate account creation / RDP registry changes with an active
+// QuickAssist session on the same host.
+// ============================================================================
+let QuickAssistSessions = DeviceProcessEvents
+    | where FileName =~ "quickassist.exe"
+    | project SessionStart = TimeGenerated, DeviceName, AccountName;
+let AdminAccountCreation = DeviceProcessEvents
+    | where ProcessCommandLine has "net user" and ProcessCommandLine has "/add"
+    | project EventTime = TimeGenerated, DeviceName, CommandLine = ProcessCommandLine;
+let RDPEnable = DeviceRegistryEvents
+    | where RegistryKey has "Terminal Server" and RegistryKey has "fDenyTSConnections"
+    | where RegistryValueData == "0"
+    | project EventTime = TimeGenerated, DeviceName, RegChange = RegistryKey;
+QuickAssistSessions
+| join kind=inner (
+    AdminAccountCreation
+    | union (RDPEnable | extend CommandLine = RegChange)
+) on DeviceName
+| where EventTime between (SessionStart .. SessionStart + 30min)
+| extend TimeDeltaMinutes = datetime_diff('minute', EventTime, SessionStart)
+| project SessionStart, EventTime, TimeDeltaMinutes, DeviceName,
+          AccountName, CommandLine
+| order by SessionStart desc
+
+
+// ============================================================================
+// Query 4: QuickAssist Session Duration Outlier
+//
+// Rationale: Legitimate IT helpdesk QuickAssist sessions typically last 5-15
+// minutes. Attacker sessions may be shorter (quick credential theft) or longer
+// (thorough hands-on-keyboard operation). Sessions over 30 minutes from external
+// IPs are a stronger indicator.
+// ============================================================================
+DeviceProcessEvents
+| where FileName =~ "quickassist.exe"
+| where ActionType == "ProcessCreated"
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName =~ "quickassist.exe"
+    | where ActionType == "ProcessTerminated"
+    | project EndTime = TimeGenerated, DeviceName, ProcessId
+) on DeviceName, ProcessId
+| extend SessionDurationMinutes = datetime_diff('minute', EndTime, TimeGenerated)
+| where SessionDurationMinutes > 20 or SessionDurationMinutes < 2
+| extend
+    AnomalyType = case(
+        SessionDurationMinutes > 20, "Unusually Long Session",
+        SessionDurationMinutes < 2,  "Suspiciously Short Session",
+        "Normal"
+    )
+| project TimeGenerated, EndTime, DeviceName, AccountName,
+          SessionDurationMinutes, AnomalyType
+| order by SessionDurationMinutes desc
+
+
+// ============================================================================
+// Query 5: QuickAssist Session Followed by RMM Tool Installation
+//
+// Rationale: The standard Scattered Spider kill chain is: QuickAssist session →
+// install ScreenConnect or AnyDesk for persistent access. Correlating QuickAssist
+// with subsequent RMM service installation on the same host within 1 hour is
+// a high-confidence kill-chain detection.
+// ============================================================================
+let QuickAssistSessions = DeviceProcessEvents
+    | where FileName =~ "quickassist.exe"
+    | project SessionTime = TimeGenerated, DeviceName;
+let RMMInstalls = SecurityEvent
+    | where EventID == 7045
+    | where ServiceName has_any ("ScreenConnect", "AnyDesk", "TeamViewer", "Splashtop")
+    | project InstallTime = TimeGenerated, Computer, RMMService = ServiceName;
+QuickAssistSessions
+| join kind=inner RMMInstalls on $left.DeviceName == $right.Computer
+| where InstallTime between (SessionTime .. SessionTime + 1h)
+| extend TimeDeltaMinutes = datetime_diff('minute', InstallTime, SessionTime)
+| project SessionTime, InstallTime, TimeDeltaMinutes, DeviceName, RMMService
+| order by TimeDeltaMinutes asc

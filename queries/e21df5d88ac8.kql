@@ -1,0 +1,11 @@
+// Source: https://github.com/hchiphong/KQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AzureActivity
+| where TimeGenerated >ago(30d)
+| where OperationNameValue == 'MICROSOFT.COMPUTE/VIRTUALMACHINES/WRITE'
+| where ActivitySubstatusValue == 'Created'
+| project EventSubmissionTimestamp, Caller, CallerIpAddress, OperationNameValue,CorrelationId, RequestBody=parse_json(Properties).requestbody, RespondBody=tostring(parse_json(Properties).responseBody),  Level,ActivityStatusValue,ResourceProviderValue, Authorization,Claims,Properties, _ResourceId
+| extend vmSize = parse_json(RespondBody).properties.hardwareProfile.vmSize
+| where vmSize contains "_N"

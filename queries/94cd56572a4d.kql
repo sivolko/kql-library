@@ -1,0 +1,12 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let timerange=7d;
+Syslog
+| where TimeGenerated > ago(timerange)
+//| where Computer startswith "GTM" // Uncomment to specify host group. 
+| summarize CountPerGroup = count() by Facility, SeverityLevel
+| extend TotalCount = toscalar(Syslog | where TimeGenerated > ago(timerange) | summarize count())
+| extend Percentage = round((CountPerGroup * 100.0) / TotalCount, 2)
+| order by Percentage desc

@@ -1,0 +1,147 @@
+// Source: https://github.com/slothgar/sentinal
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let IPList = dynamic(["104.156.233.219",
+"131.153.16.198",
+"134.209.97.239",
+"138.197.204.4",
+"139.59.90.114",
+"144.202.85.4",
+"154.16.136.100",
+"159.203.29.101",
+"167.172.36.95",
+"172.86.75.49",
+"172.86.75.7",
+"172.86.75.86",
+"193.187.173.38",
+"194.36.191.227",
+"194.71.130.113",
+"198.255.66.27",
+"206.189.180.4",
+"206.189.98.83",
+"23.228.74.58",
+"31.214.157.153",
+"43.231.77.218",
+"45.125.192.221",
+"45.153.231.121",
+"45.63.41.207",
+"5.188.37.38",
+"5.8.8.9",
+"54.78.227.17",
+"79.134.235.87",
+"79.134.235.89",
+"81.194.38.139",
+"92.38.188.85",
+"94.103.95.25",
+"139.99.237.34",
+"194.71.130.115",
+"139.99.153.190",
+"194.71.130.119",
+"139.99.237.34",
+"45.32.246.32",
+"45.32.246.35",
+"45.67.228.99",
+"45.67.229.64",
+"45.67.231.20",
+"45.137.155.227",
+"146.185.253.118",
+"185.228.233.95",
+"139.99.153.187",
+"217.138.205.149")]
+
+let domains = dynamic(["mailguardonline.net","cybersecuritiesinc.net"]);  
+let IPRegex = '[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}';
+let sha256Hashes = dynamic(["0f56c703e9b7ddeb90646927bac05a5c6d95308c8e13b88e5d4f4b572423e036",
+"e84badc0eeacf3bf3a9e562662f05ebf05ab19196b740566a4e72a469460a55d",
+"b094a8616804fbd5ff21b9c8153622eca7909b9f35251579ba383e16de11c0ed",
+"2d0a8de63a33dc30a102d5e8f41999cf239f323ee35cc71e11eb9d6a7e7e4373", 
+"4fc27fc85d2a37eaefb61e2350907aafc27a11084c8f19d66ee9b044cd29e006",
+"733054a5ca9a4ad732c5dee9a12a94b9306e3f69cb3930c02fbdafc1b0f499bd", 
+"a1900f7a85f39a3ab9a9079115d55d2d14b55f6cc774346d6375f10589cea770", 
+"183328d94bbb13a6fd13d0b9f4401157ff666956a3accabce8c72822ef9e2a24",
+"2b71dd245520d9eb5f1e4c633fee61c7d83687591d9f64f9390c26dc95057c3c",
+"a5c8934836f5b36bba3a722eab691a9f1f926c138fefe5bae07e9074e7c49ae3",
+"eb2c2516a518381d5c5727d6d7c6de5ea6acd614e437099a0ded24dc851afc55",
+"b0d2980b40bb0e59fa8b1982f5cf7768bb4bd6e8c5e20addf4333de59bc372d4",
+"10162feb5f063ea09c6a3d275f31abf0fe8a9e4e36fded0053b1f8e054da8161",
+"f2e94285fd5ecd1952b2a2b3031f5bc188a6f25867ca8cdda14ae95902e6a7cc",
+"95395b254bf02f157a60fa604679efc1f8c5912cf633ff33216ce43df47fca15",
+"3e2605056cf3f55e47679ea414d14d455dbff58fdfe5de9bc837479c8fa3b1de"]);
+  (union isfuzzy=true
+  (CommonSecurityLog
+  | where SourceIP in (IPList) or DestinationIP in (IPList) or DestinationHostName in~ (domains) or RequestURL has_any (domains) or Message has_any (IPList)
+  | parse Message with * '(' DNSName ')' * 
+  | extend MessageIP = extract(IPRegex, 0, Message)
+  | extend IPMatch = case(SourceIP in (IPList), "SourceIP", DestinationIP in (IPList), "DestinationIP", MessageIP in (IPList), "Message", RequestURL in (domains), "RequestUrl", MessageIP in (IPList), "Message", "NoMatch") 
+  | extend timestamp = TimeGenerated, IPCustomEntity = case(IPMatch == "SourceIP", SourceIP, IPMatch == "DestinationIP", DestinationIP, IPMatch == "Message", MessageIP, "NoMatch"), AccountCustomEntity = SourceUserID
+  ),
+  (DnsEvents
+  | where IPAddresses in (IPList) or Name in~ (domains)  
+  | extend DestinationIPAddress = IPAddresses, DNSName = Name, Host = Computer
+  | extend timestamp = TimeGenerated, IPCustomEntity = DestinationIPAddress, HostCustomEntity = Host
+  ),
+  (VMConnection
+  | where SourceIp in (IPList) or DestinationIp in (IPList) or RemoteDnsCanonicalNames has_any (domains)
+  | parse RemoteDnsCanonicalNames with * '["' DNSName '"]' *
+  | extend IPMatch = case( SourceIp in (IPList), "SourceIP", DestinationIp in (IPList), "DestinationIP", "DestinationIP", "None") 
+  | extend timestamp = TimeGenerated, IPCustomEntity = case(IPMatch == "SourceIP", SourceIp, IPMatch == "DestinationIP", DestinationIp, "NoMatch"), HostCustomEntity = Computer
+  ),
+  (Event
+  //This query uses sysmon data depending on table name used this may need updating
+  | where Source == "Microsoft-Windows-Sysmon"
+  | where EventID == 3
+  | extend EvData = parse_xml(EventData)
+  | extend EventDetail = EvData.DataItem.EventData.Data
+  | extend SourceIP = EventDetail.[9].["#text"], DestinationIP = EventDetail.[14].["#text"]
+  | where SourceIP in (IPList) or DestinationIP in (IPList)
+  | extend IPMatch = case( SourceIP in (IPList), "SourceIP", DestinationIP in (IPList), "DestinationIP", "None")
+  | extend timestamp = TimeGenerated, AccountCustomEntity = UserName, HostCustomEntity = Computer , IPCustomEntity = case(IPMatch == "SourceIP", SourceIP, IPMatch == "DestinationIP", DestinationIP, "None")
+  ),  
+  (OfficeActivity
+  | where ClientIP in (IPList) or ClientIP in (ips)
+  | extend timestamp = TimeGenerated, IPCustomEntity = ClientIP, AccountCustomEntity = UserId
+  ),
+  (DeviceNetworkEvents
+  | where RemoteUrl has_any (domains) or RemoteIP in (IPList)
+  | extend timestamp = TimeGenerated, DNSName = RemoteUrl, IPCustomEntity = RemoteIP, HostCustomEntity = DeviceName
+  ),
+  (WindowsFirewall
+  | where SourceIP in (IPList) or DestinationIP in (IPList)
+  | extend IPMatch = case( SourceIP in (IPList), "SourceIP", DestinationIP in (IPList), "DestinationIP", "DestinationIP", "None")
+  ),
+  (AzureDiagnostics
+  | where ResourceType == "AZUREFIREWALLS"
+  | where Category == "AzureFirewallDnsProxy"
+  | parse msg_s with "DNS Request: " ClientIP ":" ClientPort " - " QueryID " " Request_Type " " Request_Class " " Request_Name ". " Request_Protocol " " Request_Size " " EDNSO_DO " " EDNS0_Buffersize " " Responce_Code " " Responce_Flags " " Responce_Size " " Response_Duration
+  | where Request_Name has_any (domains)  
+  | extend timestamp = TimeGenerated, DNSName = Request_Name, IPCustomEntity = ClientIP
+  ),
+  (AzureDiagnostics 
+  | where ResourceType == "AZUREFIREWALLS"
+  | where Category == "AzureFirewallApplicationRule"
+  | parse msg_s with Protocol 'request from ' SourceHost ':' SourcePort 'to ' DestinationHost ':' DestinationPort '. Action:' Action
+  | where isnotempty(DestinationHost)
+  | where DestinationHost has_any (domains)  
+  | extend timestamp = TimeGenerated, DNSName = DestinationHost, IPCustomEntity = SourceHost
+  ),
+  (Event
+  //This query uses sysmon data depending on table name used this may need updating
+  | where Source == "Microsoft-Windows-Sysmon"
+  | extend EvData = parse_xml(EventData)
+  | extend EventDetail = EvData.DataItem.EventData.Data
+  | where EventDetail has_any (sha256Hashes)
+  | parse EventDetail with * 'SHA256=' SHA256 '",' *
+  | extend Type = strcat(Type, ": ", Source), Account = UserName, FileHash = SHA256
+  | project Type, TimeGenerated, Computer, Account, FileHash
+  ),
+  (DeviceFileEvents
+  | where SHA256 in~ (sha256Hashes)
+  | extend Account = RequestAccountName, Computer = DeviceName, IPAddress = RequestSourceIP, CommandLine = InitiatingProcessCommandLine, FileHash = SHA256
+  | project Type, TimeGenerated, Computer, Account, IPAddress, CommandLine, FileHash
+  ),
+  (CommonSecurityLog
+  | where FileHash in (sha256Hashes)
+  | extend timestamp = TimeGenerated
+  )
+  )

@@ -1,0 +1,32 @@
+// Source: https://github.com/griffin31-lab/Griffin31-ToolKit
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let startdate  = 21d;
+let enddate    = 1d;
+let timeframe  = 1h;
+let sensitivity = 2;      // lower = more anomalies detected
+let threshold   = 100;    // minimum downloads in a bin to qualify as "bulk"
+let outlierusers =
+    OfficeActivity
+    | where TimeGenerated between (startofday(ago(startdate)) .. startofday(ago(enddate)))
+    | where Operation in ("FileSyncDownloadedFull", "FileDownloaded", "FileAccessed")
+    | make-series Downloads = count()
+               on TimeGenerated from startofday(ago(startdate)) to startofday(ago(enddate)) step timeframe
+               by UserId
+    | extend outliers = series_decompose_anomalies(Downloads, sensitivity)
+    | mv-expand TimeGenerated, Downloads, outliers
+    | where outliers == 1 and toint(Downloads) > threshold
+    | project UserId = tostring(UserId),
+              BinTime = todatetime(TimeGenerated),
+              AnomalyDownloads = toint(Downloads);
+outlierusers
+| join kind=inner (
+    OfficeActivity
+    | where TimeGenerated > startofday(ago(startdate))
+    | where Operation in ("FileSyncDownloadedFull", "FileDownloaded", "FileAccessed")
+    | project UAL_Time = TimeGenerated, UserId, ClientIP, UserAgent, OfficeWorkload, Site_Url, SourceFileName
+) on UserId
+| where UAL_Time between (BinTime .. (BinTime + timeframe))
+| project BinTime, UserId, AnomalyDownloads, UAL_Time, ClientIP, UserAgent, OfficeWorkload, Site_Url, SourceFileName
+| sort by BinTime desc, UserId asc

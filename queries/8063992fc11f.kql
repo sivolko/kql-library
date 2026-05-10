@@ -1,0 +1,33 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let Lookback = 3d;
+let TopN = 50;
+let TargetAppDisplayName = "";
+let TargetUserPrincipalName = "";
+let TargetResultType = "";
+SigninLogs
+| where TimeGenerated >= ago(Lookback)
+| where tolower(tostring(_IsBillable)) == "true"
+| where isempty(TargetAppDisplayName) or AppDisplayName =~ TargetAppDisplayName
+| where isempty(TargetUserPrincipalName) or UserPrincipalName =~ TargetUserPrincipalName
+| where isempty(TargetResultType) or tostring(ResultType) == TargetResultType
+| summarize
+    Rows = count(),
+    GB = sum(_BilledSize) / 1e9,
+    AvgKB = avg(_BilledSize) / 1024.0
+  by AppDisplayName, ResourceDisplayName, UserPrincipalName, ResultType = tostring(ResultType), ResultDescription, ClientAppUsed, ConditionalAccessStatus, Location
+| top TopN by GB desc
+| project
+    AppDisplayName,
+    ResourceDisplayName,
+    UserPrincipalName,
+    ResultType,
+    ResultDescription,
+    ClientAppUsed,
+    ConditionalAccessStatus,
+    Location,
+    GB = round(GB, 3),
+    Rows,
+    AvgKB = round(AvgKB, 2)

@@ -1,0 +1,527 @@
+// Source: https://github.com/themodernhacker/avars-purpleteam-ai-soc-lab
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+union *
+| where
+    // Azure Firewall logs
+    (
+        $table == "AzureDiagnostics"
+        and ResourceType == "FIREWALLS"
+        and OperationName == "AzureFirewallApplicationRuleLog" or OperationName == "AzureFirewallNetworkRuleLog"
+    )
+    or
+    // Palo Alto integration (via CEF)
+    (
+        $table == "CommonSecurityLog"
+        and DeviceProduct == "PAN-OS"
+    )
+    or
+    // Cisco ASA logs
+    (
+        $table == "CommonSecurityLog"
+        and DeviceProduct == "ASA"
+    )
+    or
+    // AWS VPC Flow Logs
+    (
+        $table == "AWSVPCFlow"
+    )
+| extend
+    // ASIM Normalized Schema - Network Session
+    EventType = case(
+        OperationName == "AzureFirewallNetworkRuleLog" and msg_s contains "DENY", "NetworkSessionEnd",
+        OperationName == "AzureFirewallNetworkRuleLog" and msg_s contains "ALLOW", "NetworkSessionEnd",
+        "NetworkSession"
+    ),
+    EventAction = case(
+        msg_s contains "DENY" or Action == "drop", "Drop",
+        msg_s contains "ALLOW" or Action == "accept", "Allow",
+        "Unknown"
+    ),
+    EventStartTime = case(
+        isnotempty(TimeGenerated), TimeGenerated,
+        tostring(eventTime_d)
+    ),
+    EventEndTime = case(
+        isnotempty(TimeGenerated), TimeGenerated,
+        tostring(eventTime_d)
+    ),
+    SrcIpAddr = case(
+        isnotempty(SourceIP), SourceIP,
+        isnotempty(src_ip), src_ip,
+        isnotempty(srcIp), srcIp,
+        ""
+    ),
+    DstIpAddr = case(
+        isnotempty(DestinationIP), DestinationIP,
+        isnotempty(dst_ip), dst_ip,
+        isnotempty(dstIp), dstIp,
+        ""
+    ),
+    SrcPortNumber = case(
+        isnotempty(SourcePort), toint(SourcePort),
+        isnotempty(src_port), toint(src_port),
+        isnotempty(srcPort), toint(srcPort),
+        0
+    ),
+    DstPortNumber = case(
+        isnotempty(DestinationPort), toint(DestinationPort),
+        isnotempty(dst_port), toint(dst_port),
+        isnotempty(dstPort), toint(dstPort),
+        0
+    ),
+    IpProtocol = case(
+        isnotempty(Protocol), Protocol,
+        isnotempty(proto), proto,
+        isnotempty(ipProtocol), ipProtocol,
+        ""
+    ),
+    EventVendor = case(
+        $table == "AzureDiagnostics", "Microsoft",
+        $table == "CommonSecurityLog" and DeviceProduct == "PAN-OS", "Paloaltonetworks",
+        $table == "CommonSecurityLog" and DeviceProduct == "ASA", "Cisco",
+        $table == "AWSVPCFlow", "AWS",
+        "Unknown"
+    ),
+    EventProduct = case(
+        $table == "AzureDiagnostics", "Azure Firewall",
+        $table == "CommonSecurityLog" and DeviceProduct == "PAN-OS", "PAN-OS",
+        $table == "CommonSecurityLog" and DeviceProduct == "ASA", "ASA",
+        $table == "AWSVPCFlow", "VPC Flow Logs",
+        ""
+    ),
+    // Risk scoring based on destination
+    RiskScore_Network = case(
+        DstPortNumber in (22, 3389, 5985, 5986), 95,  // RDP/SSH/WinRM = high risk
+        DstPortNumber in (80, 8080), 65,               // HTTP = medium risk
+        DstPortNumber == 443 or IpProtocol == "https", 25, // HTTPS = low risk
+        DstPortNumber in (445, 139), 90,               // SMB = high risk
+        90  // Default
+    )
+| project-away
+    SourceIP, DestinationIP, SourcePort, DestinationPort, Protocol,
+    src_ip, dst_ip, src_port, dst_port, proto, srcIp, dstIp, srcPort, dstPort, ipProtocol
+| sort by EventStartTime desc;
+
+// ============================================================================
+// 2. ASIM Web Session Parser (HTTP/HTTPS Traffic)
+// ============================================================================
+// Normalizes web traffic logs (WAF, proxy, firewall) from multiple vendors
+
+union *
+| where
+    // Azure WAF logs
+    (
+        $table == "AzureDiagnostics"
+        and ResourceType == "APPLICATIONGATEWAYS"
+        and OperationName == "ApplicationGatewayFirewallLog"
+    )
+    or
+    // Web Application Firewall (WAF)
+    (
+        $table == "AzureDiagnostics"
+        and Category == "ApplicationGatewayAccessLog"
+    )
+    or
+    // Proxy/Firewall web logs (CEF format)
+    (
+        $table == "CommonSecurityLog"
+        and Protocol in ("http", "https")
+    )
+    or
+    // Microsoft Cloud App Security logs
+    (
+        $table == "McasShadowItReporting"
+    )
+| extend
+    // ASIM Web Session Normalized Schema
+    EventType = "WebSessionEnd",
+    EventAction = case(
+        HttpStatusCode startswith "2", "Allowed",
+        HttpStatusCode startswith "3", "Allowed",
+        HttpStatusCode startswith "4", "Blocked",
+        HttpStatusCode startswith "5", "Error",
+        "Unknown"
+    ),
+    EventStartTime = case(
+        isnotempty(TimeGenerated), TimeGenerated,
+        tostring(eventTime_d)
+    ),
+    HttpRequestMethod = case(
+        isnotempty(RequestMethod), RequestMethod,
+        isnotempty(httpMethod), httpMethod,
+        RequestLine contains "POST", "POST",
+        RequestLine contains "GET", "GET",
+        RequestLine contains "PUT", "PUT",
+        RequestLine contains "DELETE", "DELETE",
+        ""
+    ),
+    HttpStatusCode = case(
+        isnotempty(HttpStatus), tostring(HttpStatus),
+        isnotempty(statusCode), tostring(statusCode),
+        ""
+    ),
+    Url = case(
+        isnotempty(RequestUrl), RequestUrl,
+        isnotempty(originalRequestUrl), originalRequestUrl,
+        isnotempty(RequestUri), RequestUri,
+        ""
+    ),
+    HttpUserAgent = case(
+        isnotempty(UserAgent), UserAgent,
+        isnotempty(userAgent), userAgent,
+        ""
+    ),
+    SrcIpAddr = case(
+        isnotempty(ClientIP), ClientIP,
+        isnotempty(SourceIP), SourceIP,
+        isnotempty(src_ip), src_ip,
+        ""
+    ),
+    DstIpAddr = case(
+        isnotempty(DestinationIP), DestinationIP,
+        isnotempty(ServerIP), ServerIP,
+        isnotempty(dst_ip), dst_ip,
+        ""
+    ),
+    HttpContentType = case(
+        isnotempty(ContentType), ContentType,
+        isnotempty(contentType), contentType,
+        ""
+    ),
+    HttpResponseBytes = case(
+        isnotempty(SentBytes), toint(SentBytes),
+        isnotempty(sent_bytes), toint(sent_bytes),
+        0
+    ),
+    HttpRequestBytes = case(
+        isnotempty(ReceivedBytes), toint(ReceivedBytes),
+        isnotempty(received_bytes), toint(received_bytes),
+        0
+    ),
+    // Risk Score for Web Traffic
+    RiskScore_Web = case(
+        HttpStatusCode in ("403", "404"), 0,  // Normal denies
+        HttpRequestMethod == "POST" and Url contains "admin", 85,  // Admin POST = suspicious
+        HttpUserAgent contains "sqlmap" or HttpUserAgent contains "nikto", 95,  // SQL injection/web scanner
+        Url contains "../" or Url contains "..\\", 90,  // Path traversal
+        Url contains "union select" or Url contains "1=1", 95,  // SQL injection
+        HttpStatusCode startswith "5", 50,  // Server error
+        25  // Default low risk
+    ),
+    AttackType = case(
+        Url contains "union select" or Url contains "1=1", "SqlInjection",
+        Url contains "../" or Url contains "..\\", "PathTraversal",
+        HttpRequestMethod == "POST" and HttpRequestBytes > 10000000, "DataExfiltration",
+        HttpUserAgent contains "sqlmap" or HttpUserAgent contains "nikto", "VulnerabilityScanning",
+        ""
+    ),
+    EventVendor = case(
+        $table == "AzureDiagnostics", "Microsoft",
+        $table == "CommonSecurityLog", "Fortinet",
+        $table == "McasShadowItReporting", "Microsoft",
+        "Unknown"
+    )
+| where
+    isnotempty(Url) and isnotempty(SrcIpAddr)
+| sort by EventStartTime desc;
+
+// ============================================================================
+// 3. ASIM Process Creation Parser
+// ============================================================================
+// Normalizes process creation logs from endpoints (Windows, Linux, Mac)
+
+union *
+| where
+    // Windows Security Event 4688 (Process Creation)
+    (
+        $table == "SecurityEvent"
+        and EventID == 4688
+    )
+    or
+    // Sysmon Event 1 (Process Create)
+    (
+        $table == "SecurityEvent"
+        and EventID == 1
+    )
+    or
+    // Defender for Endpoint DeviceProcessEvents
+    (
+        $table == "DeviceProcessEvents"
+    )
+    or
+    // Linux auditd - execve
+    (
+        $table == "Syslog"
+        and ProcessName contains "auditd"
+        and SyslogMessage contains "execve"
+    )
+| extend
+    // ASIM Process Creation Normalized Schema
+    EventType = "ProcessCreate",
+    EventStartTime = case(
+        isnotempty(TimeGenerated), TimeGenerated,
+        tostring(eventTime_d)
+    ),
+    Process = case(
+        isnotempty(NewProcessName), NewProcessName,
+        isnotempty(ProcessName), ProcessName,
+        tostring(ImageName)
+    ),
+    ProcessId = case(
+        isnotempty(NewProcessId), toint(NewProcessId),
+        toint(ProcessId)
+    ),
+    ProcessName = extractfilename(case(
+        isnotempty(NewProcessName), NewProcessName,
+        isnotempty(ProcessName), ProcessName,
+        tostring(ImageName)
+    )),
+    CommandLine = case(
+        isnotempty(CommandLine), CommandLine,
+        isnotempty(ProcessCommandLine), ProcessCommandLine,
+        ""
+    ),
+    ParentProcessId = case(
+        isnotempty(ParentProcessId), ParentProcessId,
+        toint(InitiatingProcessId)
+    ),
+    ParentProcess = case(
+        isnotempty(ParentImage), ParentImage,
+        isnotempty(InitiatingProcessName), InitiatingProcessName,
+        ""
+    ),
+    TargetUsername = case(
+        isnotempty(TargetUserName), TargetUserName,
+        isnotempty(AccountName), AccountName,
+        isnotempty(InitiatingProcessAccountName), InitiatingProcessAccountName,
+        ""
+    ),
+    TargetUserType = case(
+        TargetUsername contains "$", "Machine",
+        TargetUsername == "SYSTEM" or TargetUsername == "root", "System",
+        "User"
+    ),
+    // Risk Score for Process Creation
+    RiskScore_Process = case(
+        ProcessName in ("mimikatz.exe", "psexec.exe", "laZagne.exe"), 95,  // Credential theft tools
+        ProcessName in ("reg.exe", "at.exe", "taskkill.exe") and TargetUserType == "System", 85,  // Privilege escalation indicators
+        CommandLine contains "powershell" and CommandLine contains "-nop" and CommandLine contains "-enc", 90,  // Obfuscated PS
+        CommandLine contains "c:\\windows\\temp" or CommandLine contains "/tmp/", 75,  // Suspicious directory
+        CommandLine contains "whoami" or CommandLine contains "ipconfig", 40,  // Reconnaissance
+        TargetUserType == "System" and ProcessName notin ("services.exe", "lsass.exe", "winlogon.exe"), 80,  // Unexpected system process
+        25  // Default low risk
+    ),
+    AttackStage = case(
+        ProcessName in ("whoami.exe", "ipconfig.exe", "systeminfo.exe"), "Reconnaissance",
+        ProcessName in ("mimikatz.exe", "laZagne.exe", "procdump.exe"), "CredentialAccess",
+        ProcessName in ("psexec.exe", "PsExec64.exe"), "LateralMovement",
+        CommandLine contains "powershell" and CommandLine contains "-nop", "DefenseEvasion",
+        ""
+    ),
+    EventVendor = case(
+        $table == "SecurityEvent", "Microsoft",
+        $table == "DeviceProcessEvents", "Microsoft",
+        $table == "Syslog", "Linux",
+        "Unknown"
+    ),
+    EventProduct = case(
+        $table == "SecurityEvent", "Windows Security",
+        $table == "DeviceProcessEvents", "Defender for Endpoint",
+        $table == "Syslog", "Linux Audit",
+        ""
+    )
+| where
+    isnotempty(Process) and isnotempty(ProcessId)
+| sort by EventStartTime desc;
+
+// ============================================================================
+// 4. Threat Hunting Query: Detect C2 Communication via ASIM
+// ============================================================================
+// Uses _Im_NetworkSession to detect command & control patterns
+// Works across ANY firewall vendor (Azure Firewall, Palo Alto, Cisco)
+
+_Im_NetworkSession
+| where EventAction == "Allow" and RiskScore_Network > 80
+| where DstPortNumber in (80, 443, 8080, 8443)
+| where tolong((EventEndTime - EventStartTime) / 1000) > 30  // Long-lived connection
+| where DstIpAddr !in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")  // Exclude internal
+| extend
+    IsKnownTor = ipv4_is_in_range(DstIpAddr, "91.199.119.0/24") or isin(DstIpAddr, dynamic(["150.101.246.0/23"])),
+    IsKnownProxy = DstPortNumber in (8080, 3128),
+    IsBeaconing = EventStartTime + 60s == EventStartTime  // Check for periodic patterns
+| where IsKnownTor or IsKnownProxy
+| project
+    EventStartTime,
+    SrcIpAddr,
+    DstIpAddr,
+    DstPortNumber,
+    IpProtocol,
+    RiskScore_Network,
+    IsKnownTor,
+    EventVendor,
+    EventProduct
+| sort by EventStartTime desc;
+
+// ============================================================================
+// 5. Threat Hunting: SQL Injection Detection via ASIM Web Sessions
+// ============================================================================
+// Detects SQL injection attempts across any WAF/proxy
+
+_Im_WebSession
+| where AttackType == "SqlInjection" or RiskScore_Web >= 95
+| extend
+    SqlInjectionKeywords = dynamic([
+        "union select",
+        "union all select",
+        "concat(",
+        "char(",
+        "substring(",
+        "ascii(",
+        "--",
+        "/*",
+        "*/",
+        "xp_",
+        "sp_",
+        "exec(",
+        "execute("
+    ])
+| where
+    Url has_any (SqlInjectionKeywords)
+    or HttpRequestMethod == "POST" and has_any(HttpUserAgent, dynamic(["sqlmap", "nikto", "burp", "zaproxy"]))
+| project
+    EventStartTime,
+    SrcIpAddr,
+    Url,
+    HttpRequestMethod,
+    HttpStatusCode,
+    HttpUserAgent,
+    RiskScore_Web,
+    AttackType,
+    EventVendor
+| sort by RiskScore_Web desc;
+
+// ============================================================================
+// 6. Threat Hunting: Lateral Movement via ASIM
+// ============================================================================
+// Detects SMB/WinRM/SSH activity indicating lateral movement
+
+_Im_NetworkSession
+| where DstPortNumber in (139, 445, 22, 5985, 5986)  // SMB, SSH, WinRM
+| where RiskScore_Network >= 90
+| where SrcIpAddr != DstIpAddr
+| extend
+    Protocol_Name = case(
+        DstPortNumber == 445, "SMB (File Sharing)",
+        DstPortNumber == 139, "NetBIOS",
+        DstPortNumber == 22, "SSH",
+        DstPortNumber in (5985, 5986), "WinRM",
+        ""
+    ),
+    IsInternal_Src = ipv4_is_in_range(SrcIpAddr, "10.0.0.0/8") or ipv4_is_in_range(SrcIpAddr, "172.16.0.0/12"),
+    IsInternal_Dst = ipv4_is_in_range(DstIpAddr, "10.0.0.0/8") or ipv4_is_in_range(DstIpAddr, "172.16.0.0/12")
+| where IsInternal_Src and IsInternal_Dst  // Both internal = lateral movement
+| project
+    EventStartTime,
+    SrcIpAddr,
+    DstIpAddr,
+    Protocol_Name,
+    RiskScore_Network,
+    EventVendor,
+    EventProduct
+| sort by EventStartTime desc;
+
+// ============================================================================
+// 7. ASIM Multi-Vendor Threat Detection (Normalized)
+// ============================================================================
+// Single query working across Azure Firewall, Palo Alto, Cisco, AWS, Fortinet
+
+let NetworkEvents = _Im_NetworkSession;
+let WebEvents = _Im_WebSession;
+let ProcessCreation = _Im_ProcessCreate;
+
+NetworkEvents
+| where RiskScore_Network > 80
+| extend ThreatType = "Network"
+| union (
+    WebEvents
+    | where RiskScore_Web > 80
+    | extend ThreatType = "Web"
+)
+| union (
+    ProcessCreation  
+    | where RiskScore_Process > 80
+    | extend ThreatType = "Process"
+)
+| summarize
+    ThreatCount = count(),
+    HighestRiskScore = max(case(ThreatType == "Network", RiskScore_Network, ThreatType == "Web", RiskScore_Web, RiskScore_Process)),
+    Vendors = make_set(EventVendor),
+    AttackTypes = make_set(case(ThreatType == "Web", AttackType, ThreatType == "Process", AttackStage, ""))
+    by SrcIpAddr, bin(EventStartTime, 1m)
+| where ThreatCount >= 2  // 2+ threats from same source in 1 min
+| extend IncidentSeverity = case(
+    HighestRiskScore >= 95, "Critical",
+    HighestRiskScore >= 85, "High",
+    HighestRiskScore >= 75, "Medium",
+    "Low"
+)
+| sort by HighestRiskScore desc;
+
+// ============================================================================
+// 8. SC-200 Hunting: Impossible Travel Detection
+// ============================================================================
+// Uses normalized data to detect impossible travel (geographic anomaly)
+
+let MaxMilesPerHour = 500;  // Max travel speed (airplane ~500 mph)
+let NetworkSessions = _Im_NetworkSession;
+
+NetworkSessions
+| extend
+    Country = tostring(geo_ip_to_country(SrcIpAddr)),
+    Latitude = toint(geo_ip_to_latitude(SrcIpAddr)),
+    Longitude = toint(geo_ip_to_longitude(SrcIpAddr))
+| where isnotempty(Country)
+| sort by SrcIpAddr, EventStartTime desc
+| serialize
+    PreviousCountry = prev(Country),
+    PreviousLatitude = prev(Latitude),
+    PreviousLongitude = prev(Longitude),
+    PreviousTime = prev(EventStartTime)
+| where PreviousCountry != Country and PreviousCountry != ""
+| extend
+    DistanceMiles = geo_distance_2points(Longitude, Latitude, PreviousLongitude, PreviousLatitude) / 1000 * 0.621371,
+    TimeDiffHours = (EventStartTime - PreviousTime) / 1h,
+    RequiredMph = DistanceMiles / TimeDiffHours
+| where RequiredMph > MaxMilesPerHour
+| project
+    EventStartTime,
+    SrcIpAddr,
+    Country,
+    PreviousCountry,
+    DistanceMiles,
+    RequiredMph,
+    MaxMilesPerHour,
+    IsImpossibleTravel = RequiredMph > MaxMilesPerHour
+| where IsImpossibleTravel
+| sort by RequiredMph desc;
+
+// ============================================================================
+// 9. SC-200 Certification Skills Applied
+// ============================================================================
+// These ASIM-based queries demonstrate:
+//
+// 1. **Vendor Normalization**: One query works with Azure, Palo Alto, Cisco, AWS, Fortinet
+// 2. **Schema Understanding**: ASIM standard fields (_Im_NetworkSession, _Im_WebSession)
+// 3. **Threat Hunting**: C2 detection, SQL injection, lateral movement, credential theft
+// 4. **Advanced Analytics**: Impossible travel, beaconing patterns, anomaly detection
+// 5. **Risk Scoring**: Quantified threat assessment across different log types
+//
+// SC-200 Exam Topics Covered:
+// - Log source normalization (ASIM)
+// - Multi-vendor threat hunting
+// - Advanced KQL queries
+// - Sentinel analytics rule authoring
+// - Threat intelligence integration
+// ============================================================================

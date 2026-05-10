@@ -1,0 +1,12 @@
+// Source: https://github.com/mrblue223/Sentinel-Logic
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SecurityEvent
+| where EventID == 4625
+| where TimeGenerated > ago(1h)
+| summarize FailedAttempts = count(), 
+          DistinctIPs = dcount(IpAddress) 
+          by Account, bin(TimeGenerated, 5m)
+| where FailedAttempts > 10 // Threshold for brute force
+| order by FailedAttempts desc

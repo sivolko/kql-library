@@ -1,0 +1,100 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where AuthenticationRequirement == "multiFactorAuthentication"
+| where ResultType == "0"
+| summarize
+    MFACount    = count(),
+    IPSet       = make_set(IPAddress, 10),
+    IPCount     = dcount(IPAddress),
+    TimeSpanSec = datetime_diff("second", max(TimeGenerated), min(TimeGenerated))
+    by UserPrincipalName, UserId, bin(TimeGenerated, 1m)
+| where IPCount > 1 and TimeSpanSec <= 60
+| order by IPCount desc
+
+
+// ── Query 2: Email Click to Cloudflare Pages Domain Followed by Sign-in ──
+// Rationale: Rockstar2FA uses Cloudflare Pages for kit hosting. A URL click
+// log showing a user navigating to *.pages.dev immediately before an Entra
+// sign-in from the same device is a strong kill-chain indicator.
+let cloudflare_clicks =
+    UrlClickEvents
+    | where TimeGenerated > ago(7d)
+    | where Url has "pages.dev" or Url has "r2.dev" or Url has "workers.dev"
+    | where ActionType != "ClickBlocked"
+    | project AccountUpn, ClickTime = TimeGenerated, ClickUrl = Url;
+let signin_events =
+    SigninLogs
+    | where TimeGenerated > ago(7d)
+    | where ResultType == "0"
+    | project UserPrincipalName, SigninTime = TimeGenerated, IPAddress, AppDisplayName;
+cloudflare_clicks
+| join kind=inner signin_events
+    on $left.AccountUpn == $right.UserPrincipalName
+| where SigninTime between (ClickTime .. ClickTime + 5m)
+| project
+    AccountUpn,
+    ClickUrl,
+    ClickTime,
+    SigninTime,
+    DeltaSeconds = datetime_diff("second", SigninTime, ClickTime),
+    IPAddress,
+    AppDisplayName
+| order by DeltaSeconds asc
+
+
+// ── Query 3: Telegram Bot IP in Token Exchange Path ──
+// Rationale: Rockstar2FA's Telegram bot integration may result in token
+// exchange requests originating from Telegram infrastructure IP ranges
+// (91.108.4.0/22, 149.154.160.0/20). This is a high-confidence IoC when
+// correlated with a prior MFA relay event.
+let telegram_ranges = datatable(CIDRBlock:string)[
+    "91.108.4.0/22",
+    "91.108.8.0/22",
+    "91.108.16.0/22",
+    "91.108.56.0/22",
+    "149.154.160.0/20",
+    "149.154.164.0/22",
+    "149.154.168.0/22"
+];
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where ResultType == "0"
+| extend IPBytes = split(IPAddress, ".")
+| where array_length(IPBytes) == 4
+// Approximate Telegram range check (first two octets)
+| where IPAddress startswith "91.108." or IPAddress startswith "149.154."
+| project
+    TimeGenerated,
+    UserPrincipalName,
+    IPAddress,
+    AuthenticationRequirement,
+    AppDisplayName,
+    RiskLevelDuringSignIn,
+    ConditionalAccessStatus
+| order by TimeGenerated desc
+
+
+// ── Query 4: Payroll / HR Lure Email with External Link to Non-Org Domain ──
+// Rationale: Rockstar2FA payroll lure campaigns impersonate HR notifications.
+// Inbound emails with payroll-themed subjects containing links to external
+// domains (not the org's own domain) are worth escalating.
+EmailEvents
+| where TimeGenerated > ago(7d)
+| where Subject has_any ("payroll", "direct deposit", "W-2", "compensation", "pay stub")
+| where EmailDirection == "Inbound"
+| join kind=leftouter EmailUrlInfo on NetworkMessageId
+| where isnotempty(Url)
+| where Url !has tostring(RecipientEmailAddress | parse_csv | last)  // crude org domain check
+| project
+    TimeGenerated,
+    SenderFromAddress,
+    RecipientEmailAddress,
+    Subject,
+    Url,
+    DeliveryAction,
+    NetworkMessageId
+| order by TimeGenerated desc

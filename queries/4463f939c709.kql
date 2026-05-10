@@ -1,0 +1,14 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let DCs = IdentityDirectoryEvents
+| where isnotempty(DestinationDeviceName)
+| distinct DestinationDeviceName;
+IdentityLogonEvents
+| where LogonType == "Remote desktop"
+| where AccountUpn !contains "<Naming Scheme/Account to Exclude"
+| where TargetDeviceName in (DCs)
+| summarize arg_max(Timestamp, *) by DestinationDeviceName, AccountUpn, bin(Timestamp, 1d)
+| project Timestamp, ActionType, LogonType, AccountUpn, AccountDisplayName, DeviceName, TargetDeviceName
+| sort by Timestamp desc

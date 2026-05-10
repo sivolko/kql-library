@@ -1,0 +1,6 @@
+// Source: https://github.com/Crimson7research/C7SigmaTools
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceProcessEvents
+| where ProcessCommandLine contains "rm /var/log/syslog" or ProcessCommandLine contains "rm -r /var/log/syslog" or ProcessCommandLine contains "rm -f /var/log/syslog" or ProcessCommandLine contains "rm -rf /var/log/syslog" or ProcessCommandLine contains "unlink /var/log/syslog" or ProcessCommandLine contains "unlink -r /var/log/syslog" or ProcessCommandLine contains "unlink -f /var/log/syslog" or ProcessCommandLine contains "unlink -rf /var/log/syslog" or ProcessCommandLine contains "mv /var/log/syslog" or ProcessCommandLine contains " >/var/log/syslog" or ProcessCommandLine contains " > /var/log/syslog"

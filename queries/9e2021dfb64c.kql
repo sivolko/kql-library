@@ -1,0 +1,19 @@
+// Source: https://github.com/DGovEnterprise/wasoc-notebook
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let asrdevices=
+    DeviceEvents
+    | where TimeGenerated > ago (30d)
+    | where ActionType startswith "Asr"
+    | distinct DeviceName;
+//Find all devices and exclude those that have previously triggered a rule
+DeviceInfo
+| where isnotempty(OSPlatform)
+| distinct DeviceName, OSPlatform
+| project
+    DeviceName,
+    OSPlatform,
+    ASREvents = toint(DeviceName in (asrdevices))
+| summarize devices = dcount(DeviceName), ASREnabled = sum(ASREvents) by OSPlatform
+| order by devices

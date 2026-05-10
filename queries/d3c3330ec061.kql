@@ -1,0 +1,17 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceEvents
+| where ActionType == "MemoryRemoteProtect"
+| where AdditionalFields has "PAGE_EXECUTE_READWRITE"
+| where AdditionalFields has_any ("PAGE_EXECUTE", "Execute")
+| where not (InitiatingProcessFileName in~ ("node.exe", "dotnet.exe", "java.exe", "python.exe", "ruby.exe"))
+| summarize
+    ProtectCount = count(),
+    Processes = make_set(InitiatingProcessFileName, 5),
+    LastSeen = max(Timestamp)
+    by DeviceId, DeviceName, InitiatingProcessId, bin(Timestamp, 5m)
+| where ProtectCount >= 2
+| project Timestamp, DeviceName, InitiatingProcessId, ProtectCount, Processes, LastSeen
+| order by ProtectCount desc

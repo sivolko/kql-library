@@ -1,0 +1,10 @@
+// Source: https://github.com/jkerai1/KQL-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where ActionType startswith "AppLocker" //or ActionType startswith "AppControl" //for WDAC
+//See all the events using the inbuilt portal schema reference: https://learn.microsoft.com/en-us/defender-xdr/advanced-hunting-schema-tables#get-schema-information-in-the-security-center
+//Action Types include AppLockerBlockExecutable, AppLockerBlockPackagedApp, AppLockerBlockPackagedAppInstallation, AppLockerBlockScript
+// You may also want to exclude AppControlExecutableBlocked which is WDAC.

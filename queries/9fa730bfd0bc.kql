@@ -1,0 +1,16 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let NationStateIP = 
+SigninLogs
+| where TimeGenerated > ago(90d)
+| where RiskEventTypes_V2 has "estsNationStateIP"
+| project IPAddress;
+BehaviorAnalytics
+| where SourceIPAddress has_any(NationStateIP)
+| where DevicesInsights.ThreatIntelIndicatorDescription has "Storm-1575"
+| project TimeGenerated, UserPrincipalName, ActivityType, 
+SourceIPAddress, SourceIPLocation, DevicesInsights.ThreatIntelIndicatorDescription
+
+// MITRE ATT&CK

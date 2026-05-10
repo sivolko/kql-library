@@ -1,0 +1,31 @@
+// Source: https://github.com/dstreefkerk/kql
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where AuthenticationProtocol =~ "deviceCode" 
+    or OriginalTransferMethod =~ "deviceCodeFlow"
+| project TimeGenerated,
+    UserPrincipalName,
+    UserDisplayName,
+    UserId,
+    IPAddress,
+    Location,
+    AppDisplayName,
+    ClientAppUsed,
+    AuthenticationProtocol,
+    OriginalTransferMethod,
+    DeviceDetail,
+    Status,
+    ResourceDisplayName
+| extend AlertDetails = pack(
+    "UserId", UserId,
+    "ClientApp", ClientAppUsed,
+    "AppDisplayName", AppDisplayName,
+    "Protocol", AuthenticationProtocol,
+    "TransferMethod", OriginalTransferMethod,
+    "DeviceInfo", DeviceDetail
+)
+| extend Reason = "Device Code Authentication Flow detected which may indicate unauthorized access if not used with input-constrained devices"
+| extend timestamp = TimeGenerated, AccountCustomEntity = UserPrincipalName, IPCustomEntity = IPAddress

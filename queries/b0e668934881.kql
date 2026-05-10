@@ -1,0 +1,22 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+CloudAppEvents
+| where TimeGenerated > ago(1h)
+| where ActionType == @"CopilotInteraction"
+| extend UserID = tostring(RawEventData.UserId)
+| extend CopilotData = todynamic(RawEventData.CopilotEventData)
+| extend CopilotPlugin = tostring(CopilotData.AISystemPlugin[0].Id)
+| where isnotempty(CopilotPlugin)
+| extend PluginAccessURL = tostring(CopilotData.AccessedResources)
+| mv-expand todynamic(PluginAccessURL)
+| where PluginAccessURL has "SiteUrl"
+| extend Url = tostring(PluginAccessURL.SiteUrl)
+| extend Domain = tostring(parse_url(Url).Host)
+| extend Action = tostring(PluginAccessURL.Action)
+| join ThreatIntelligenceIndicator on $left.Domain == $right.DomainName
+
+
+// MITRE ATT&CK
+// T1116 Browser Extensions

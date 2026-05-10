@@ -1,0 +1,10 @@
+// Source: https://github.com/rod-trent/SentinelKQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let startDate = datetime(2024-07-01);
+let endDate = datetime(2024-07-05);
+union AADNonInteractiveUserSignInLogs, PowerBIActivity, AWSGuardDuty, ThreatIntelligenceIndicator, CloudAppEvents, BehaviorAnalytics, Dynamics365Activity, AzureActivity, DeviceEvents, DeviceLogonEvents, Anomalies, AppTraces, AADUserRiskEvents, IdentityInfo
+| where TimeGenerated between (startDate .. endDate)
+| summarize count() by bin(TimeGenerated, 1d)
+| render timechart

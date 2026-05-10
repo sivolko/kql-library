@@ -1,0 +1,18 @@
+// Source: https://github.com/3ltrashpanda/sentinel-log-analytics-collections
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let StartDate = startofday(ago(1d));
+let EndDate = startofday(now());
+union DeviceRegistryEvents,DeviceProcessEvents,DeviceNetworkEvents,DeviceLogonEvents,DeviceImageLoadEvents,DeviceEvents,
+DeviceFileEvents,BehaviorEntities,BehaviorInfo,EmailPostDeliveryEvents,UrlClickEvents,IdentityDirectoryEvents,IdentityQueryEvents,
+IdentityLogonEvents,CloudAppEvents,DeviceCustomFileEvents,DeviceCustomNetworkEvents,AADRiskyUsers,DeviceCustomScriptEvents,
+AzureActivity,AADUserRiskEvents,SecurityEvent,AADManagedIdentitySignInLogs,BehaviorAnalytics,SigninLogs,
+AADNonInteractiveUserSignInLogs,SentinelHealth,MicrosoftServicePrincipalSignInLogs,AADServicePrincipalSignInLogs,
+AzureDiagnostics,IntuneDevices,AuditLogs,IntuneDeviceComplianceOrg 
+| where TimeGenerated between (StartDate .. EndDate)
+| extend Action = coalesce(OperationName, OperationNameValue, ActionType, tostring(EventID)) 
+| where isnotempty(Action) 
+| summarize TotalEvents = count() by Type, Action
+| extend RetrievalDate = StartDate, TableName = Type
+| sort by TableName

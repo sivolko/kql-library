@@ -1,0 +1,11 @@
+// Source: https://github.com/Te-k/intrusion_detection_response
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceEvents
+| where ActionType == "NamedPipeEvent"
+| extend FileOperation=parse_json(AdditionalFields)["FileOperation"]
+| extend Pipename=parse_json(AdditionalFields)["PipeName"]
+| where Pipename contains "IMpService"
+and InitiatingProcessFileName !in ("MsMpEng.exe", "MpCmdRun.exe", "NisSrv.exe", "MpSigStub.exe", "svchost.exe", "SecurityHealthService.exe") // legit processes
+Now

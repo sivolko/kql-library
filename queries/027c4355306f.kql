@@ -1,0 +1,22 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let NaiveUser =
+IdentityInfo
+| where isempty(AssignedRoles) // Non Technical Naive Users ;P
+| summarize arg_max(Timestamp, *) by AccountUpn
+| distinct AccountUpn;
+let UserEPPSExec =
+DeviceEvents 
+| where ActionType == @"GetClipboardData" // Execute PowerShell command from clipboard paste
+| where InitiatingProcessFileName == @"powershell.exe"
+| join NaiveUser on $left.InitiatingProcessAccountUpn == $right.AccountUpn
+| distinct DeviceName;
+DeviceProcessEvents
+| where InitiatingProcessFileName has "powershell.exe" and InitiatingProcessCommandLine has "-EncodedCommand"
+| where AccountName != "system" and AccountName !="local service" and AccountName !="administrator"
+| where DeviceName has_any(UserEPPSExec) // User execute a encoded powershell command to evade detection
+
+
+//

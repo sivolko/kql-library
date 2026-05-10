@@ -1,0 +1,57 @@
+// Source: https://github.com/83avenger/azure-sentinel-defender-lab
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let LookbackDays = 1d;
+
+// Part 1: Malicious IP correlation against sign-ins
+let MaliciousIPs = ThreatIntelligenceIndicator
+| where TimeGenerated > ago(30d)
+| where Active == true
+| where IndicatorType == "NetworkIP"
+| where ConfidenceScore >= 70
+| summarize
+    ThreatTypes  = make_set(ThreatType),
+    MaxConfidence= max(ConfidenceScore),
+    TISource     = make_set(SourceSystem)
+    by NetworkIP;
+
+// Correlate against successful logins
+SigninLogs
+| where TimeGenerated > ago(LookbackDays)
+| where ResultType == "0"
+| join kind=innerunique MaliciousIPs on $left.IPAddress == $right.NetworkIP
+| extend AlertType = "TI-Match: Malicious IP Login"
+| project
+    TimeGenerated,
+    AlertType,
+    UserPrincipalName,
+    IPAddress,
+    AppDisplayName,
+    ThreatTypes,
+    MaxConfidence,
+    TISource,
+    LocationDetails
+
+// Part 2: Malicious domain correlation against firewall logs
+// Uncomment when CommonSecurityLog (CEF) connector is configured
+/*
+| union (
+    let MaliciousDomains = ThreatIntelligenceIndicator
+    | where TimeGenerated > ago(30d) and Active == true
+    | where IndicatorType == "DomainName"
+    | summarize ThreatTypes = make_set(ThreatType) by DomainName;
+
+    CommonSecurityLog
+    | where TimeGenerated > ago(LookbackDays)
+    | where DeviceAction !in ("deny", "block", "drop")     // Only allowed traffic
+    | join kind=innerunique MaliciousDomains
+        on $left.DestinationHostName == $right.DomainName
+    | extend AlertType = "TI-Match: Malicious Domain Access"
+    | project
+        TimeGenerated, AlertType,
+        SourceUserName, SourceIP, DestinationHostName,
+        ThreatTypes, DeviceVendor
+)
+*/
+| sort by TimeGenerated desc

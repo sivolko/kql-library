@@ -1,0 +1,22 @@
+// Source: https://github.com/rod-trent/SentinelKQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SecurityEvent
+| where CommandLine has "ux=copilot"
+| where Process == "msedge.exe"
+
+//Copilot in Excel
+SecurityEvent
+| where CommandLine has "copilot"
+| where NewProcessName has "EXCEL.EXE"
+
+//Copilot in PowerPoint
+SecurityEvent
+| where CommandLine has "copilot"
+| where NewProcessName has "POWERPNT.EXE"
+
+//Copilot in Visual Studio
+SecurityEvent
+| where CommandLine has "copilot"
+| where NewProcessName has "vsce-sign.exe"

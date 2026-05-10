@@ -1,0 +1,48 @@
+// Source: https://github.com/n1ops/sentinel-detection-lab
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let timeframe = 1h;
+let host_threshold = 3;
+SecurityEvent
+| where TimeGenerated >= ago(timeframe)
+| where EventID == 4672  // Special privileges assigned to new logon
+| where Account !endswith "$"  // Exclude machine accounts
+| where Account !in~ ("NT AUTHORITY\\SYSTEM", "NT AUTHORITY\\LOCAL SERVICE", "NT AUTHORITY\\NETWORK SERVICE")
+| extend
+    AccountDomain = extract("^(.+)\\\\", 1, Account),
+    AccountName = extract("\\\\(.+)$", 1, Account)
+| summarize
+    DistinctHosts = dcount(Computer),
+    TargetHosts = make_set(Computer, 50),
+    TotalLogons = count(),
+    FirstLogon = min(TimeGenerated),
+    LastLogon = max(TimeGenerated),
+    PrivilegeList = make_set(PrivilegeList, 10),
+    LogonTypes = make_set(LogonType, 10)
+    by Account, AccountDomain, AccountName
+| where DistinctHosts > host_threshold
+| extend
+    SweepDurationMinutes = datetime_diff('minute', LastLogon, FirstLogon),
+    HostsPerMinute = iff(
+        datetime_diff('minute', LastLogon, FirstLogon) > 0,
+        round(toreal(DistinctHosts) / toreal(datetime_diff('minute', LastLogon, FirstLogon)), 2),
+        toreal(DistinctHosts)
+    ),
+    Entity_Account = Account,
+    Entity_IP = IpAddress
+| project
+    FirstLogon,
+    LastLogon,
+    Account,
+    AccountDomain,
+    AccountName,
+    DistinctHosts,
+    TargetHosts,
+    TotalLogons,
+    SweepDurationMinutes,
+    HostsPerMinute,
+    LogonTypes,
+    Entity_Account,
+    Entity_IP
+| order by DistinctHosts desc

@@ -1,0 +1,10 @@
+// Source: https://github.com/rod-trent/SentinelKQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+CommonSecurityLog
+| where TimeGenerated > ago(2h)
+    | where DeviceVendor == "Palo Alto Networks"
+    | where DeviceProduct has "PAN-OS"
+| summarize count()
+ where count_ == 0

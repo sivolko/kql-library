@@ -1,0 +1,63 @@
+// Source: https://github.com/azdabat/Minimum-Truth-Detection-Framework-ADX-Validated-Composite-Rules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let lookback = 7d;
+let burstWindow = 10m;
+let StopThreshold = 5;
+
+let SecurityKeywords = dynamic([
+  "defend","sense","crowdstrike","carbonblack",
+  "veeam","backup","sophos"
+]);
+
+// Service stop anchor
+let Stops =
+DeviceProcessEvents
+| where Timestamp >= ago(lookback)
+| extend Cmd = tolower(ProcessCommandLine)
+| where Cmd has_any ("net stop","sc stop")
+| where Cmd has_any (SecurityKeywords)
+
+| summarize
+    StopCount = count(),
+    SampleCmds = make_set(ProcessCommandLine, 5),
+    FirstSeen = min(Timestamp),
+    LastSeen  = max(Timestamp)
+  by DeviceName, AccountName,
+     bin(Timestamp, burstWindow)
+
+| where StopCount >= StopThreshold;
+
+// Reinforcement: driver/EDR tamper near window
+let Tamper =
+DeviceEvents
+| where Timestamp >= ago(lookback)
+| where ActionType has_any ("DriverLoad","Tampering","SecurityTool")
+| project TamperTime=Timestamp, DeviceName;
+
+Stops
+| join kind=leftouter Tamper on DeviceName
+| extend TamperNear =
+    isnotempty(TamperTime) and abs(datetime_diff("minute", FirstSeen, TamperTime)) <= 30
+
+| extend FinalScore =
+      70
+    + iif(TamperNear, 25, 0)
+
+| extend Severity = case(
+    FinalScore >= 90, "CRITICAL",
+    "HIGH"
+)
+
+| extend HuntingDirectives = pack_array(
+    "[SUMMARY] Defense disablement wave detected (service stop + tamper).",
+    strcat("[STOP COUNT] ", StopCount),
+    iif(TamperNear, "[SIGNAL] Driver/EDR tamper observed near window.", ""),
+    "[NEXT] Treat as active ransomware staging. Isolate immediately.",
+    "[IR] Acquire memory + check for encryption velocity cousins."
+)
+
+| project FirstSeen, DeviceName, AccountName,
+          Severity, HuntingDirectives
+| order by FinalScore desc

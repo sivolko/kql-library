@@ -1,0 +1,10 @@
+// Source: https://github.com/rod-trent/SentinelKQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AzureDiagnostics
+| join AzureActivity on ResourceGroup
+| where ResourceProvider == "MICROSOFT.LOGIC"
+| extend PlaybookName = resource_workflowName_s
+| extend Action = Resource
+| distinct Caller, PlaybookName, Action, CallerIpAddress

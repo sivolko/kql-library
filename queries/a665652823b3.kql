@@ -1,0 +1,9 @@
+// Source: https://github.com/rod-trent/Sentinel-SOC-101
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+OfficeActivity
+| where TimeGenerated > ago(1h)
+| where Operation =~ \"TeamDeleted\"
+| summarize count() by UserId
+| where count_ > 5

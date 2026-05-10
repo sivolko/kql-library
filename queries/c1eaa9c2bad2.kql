@@ -1,0 +1,13 @@
+// Source: https://github.com/ava-orange-education/Ultimate-Microsoft-XDR-for-Full-Spectrum-Cyber-Defence
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let timeframe = 7d;
+let TI = ThreatIntelligenceIndicator
+| where TimeGenerated > ago(timeframe)
+| where Active == true and ExpirationDateTime > now();
+CommonSecurityLog
+| where TimeGenerated > ago(timeframe)
+| join kind=inner (
+    TI
+) on $left.DestinationIP == $right.NetworkIP 

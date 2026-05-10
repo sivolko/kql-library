@@ -1,0 +1,13 @@
+// Source: https://github.com/DancinDinoo/KQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AuditLogs
+| extend Hour = datetime_part('hour', TimeGenerated)
+| where Hour between (00 .. 09) or Hour between (17 .. 24)
+| extend Role = TargetResources[0].displayName
+| extend TargetUser = TargetResources[2].displayName
+| where OperationName in~("Add member to role completed (PIM activation)", "Add eligible member to role in PIM completed (permanent)")
+| where Role in~ ("Security Administator", "Global Administrator", "Privileged Role Administrator")
+| project TimeGenerated, InitiatedByUser=Identity, TargetUser, OperationName, Role, Result
+| sort by TimeGenerated

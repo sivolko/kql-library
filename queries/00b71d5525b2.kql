@@ -1,0 +1,10 @@
+// Source: https://github.com/jsmallwood/LogAnalyticsAnalysis
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+SecurityEvent
+| where TimeGenerated > ago(31d)
+| where _IsBillable == true
+| summarize GBytes=round(sum(_BilledSize/1024/1024/1024),2) by _IsBillable, EventID, Activity, Channel, EventSourceName
+| order by GBytes, EventID, Activity, Channel, EventSourceName
+| project EventID, Activity, Channel, EventSourceName, GBytes

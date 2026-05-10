@@ -1,0 +1,10 @@
+// Source: https://github.com/chadmcox/Sentinel-and-Defender-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceEvents
+| where Timestamp >= ago(14d)
+| where ActionType == "ServiceInstalled"
+| extend ServiceName = tostring(parse_json(AdditionalFields).ServiceName)
+| project Timestamp, DeviceName, ServiceName, FolderPath, InitiatingProcessAccountName
+| order by Timestamp desc

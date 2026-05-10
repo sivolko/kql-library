@@ -1,0 +1,10 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+DeviceEvents
+| where ActionType == "NamedPipeEvent"
+| extend PipeName = tostring(parse_json(AdditionalFields)["PipeName"])
+| where isnotempty(PipeName)
+| where PipeName matches regex 
+@"\\\\\.\\pipe\\1\.[0-9A-Fa-f]{32}"

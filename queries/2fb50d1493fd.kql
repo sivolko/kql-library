@@ -1,0 +1,93 @@
+// Source: https://github.com/ep3p/Sentinel_KQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let query_frequency = 1h;
+let query_period = 14d;
+let _DomainControllers = toscalar(
+    _GetWatchlist("Service-PrivateCorporateServices")
+    | where Service == "DomainController"
+    | summarize make_list(HostName)
+);
+let _ExpectedRemoteSessionAccounts = toscalar(
+    _GetWatchlist("Activity-ExpectedSignificantActivity")
+    | where Activity == "DomainControllerRemoteSession"
+    | summarize make_list(ActorPrincipalName)
+);
+let _ExpectedIPs = toscalar(
+    _GetWatchlist("Service-PrivateCorporateServices")
+    | where Notes has "[PAM]"
+    | summarize make_list(IPAddress)
+);
+union
+    (
+    SecurityEvent
+    | where TimeGenerated > ago(query_period)
+    | where EventID == 4673 and Computer has_any (_DomainControllers)// and Process has "svchost.exe"
+    | summarize
+        Count = count(),
+        arg_min(TimeGenerated, *)
+        by Computer, Account, Process
+    | where TimeGenerated > ago(query_frequency)
+    ),
+    (
+    SecurityEvent
+    | where TimeGenerated > ago(query_period)
+    | where EventID == 4674 and Computer has_any (_DomainControllers)
+    | where (ObjectType has "Key" and (
+            ObjectName has_all (@"\REGISTRY\USER\", @"_Classes\Local Settings\MuiCache\")
+            or ObjectName has_all (@"\REGISTRY\USER\", @"\Software\Microsoft\Windows\CurrentVersion\CloudStore")
+            or ObjectName has @"\REGISTRY\MACHINE\SYSTEM\ControlSet001\Services\WinSock2\Parameters"))
+        or ObjectName has_all (@"\BaseNamedObjects\", @"WilStaging")
+    | summarize
+        Count = count(),
+        ObjectNames = array_sort_asc(make_set(ObjectName, 50)),
+        arg_min(TimeGenerated, *)
+        by Computer, Account, ObjectType
+    | where TimeGenerated > ago(query_frequency)
+    ),
+    (
+    SecurityEvent
+    | where TimeGenerated > ago(query_period)
+    | where EventID == 4688 and Computer has_any (_DomainControllers) and not(TargetAccount has_any (@"Window Manager\DWM-", @"Font Driver Host\UMFD-"))// and NewProcessName has "wsmprovhost.exe"
+    | summarize
+        Count = count(),
+        NewProcessNames = array_sort_asc(make_set(NewProcessName, 50)),
+        arg_min(TimeGenerated, *)
+        by Computer, Account, TargetAccount
+    | where TimeGenerated > ago(query_frequency)
+    )
+| join kind=leftouter (
+    SecurityEvent
+    | where TimeGenerated > ago(query_period)
+    | where Computer has_any (_DomainControllers) and EventID == 4624 and not(LogonType in (3))
+    | project
+        Logon_TimeGenerated = TimeGenerated,
+        Computer,
+        Account,
+        Logon_IpAddress = IpAddress,
+        TargetLogonId
+    ) on Computer, Account, $left.SubjectLogonId == $right.TargetLogonId
+| project-away *1
+| where not(Account in (_ExpectedRemoteSessionAccounts) and Logon_IpAddress in (_ExpectedIPs))
+| where not(EventID == 4688 and TargetAccount in (_ExpectedRemoteSessionAccounts))
+| sort by Activity asc, Computer asc, Account asc, TargetAccount asc, TimeGenerated asc
+| project
+    TimeGenerated,
+    Computer,
+    AccountType,
+    Account,
+    TargetAccount,
+    Activity,
+    Count,
+    ObjectType,
+    ObjectNames,
+    NewProcessNames,
+    AccessMask,
+    ProcessName,
+    PrivilegeList,
+    SubjectLogonId,
+    TargetLogonId,
+    Logon_TimeGenerated,
+    Logon_IpAddress,
+    EventData

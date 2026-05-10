@@ -1,0 +1,19 @@
+// Source: https://github.com/tgs3c/Incident-Response-Hunting
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let targetdevice = "device";
+let SearchWindow = 48h; //Customizable h = hours, d = days
+DeviceEvents
+| where Timestamp > ago(SearchWindow)
+| where DeviceName == targetdevice
+| where ActionType startswith "ASR"
+| project
+     Timestamp,
+     ActionType,
+     FileName,
+     FolderPath,
+     ProcessCommandLine,
+     InitiatingProcessCommandLine,
+     AccountDomain,
+     AccountName

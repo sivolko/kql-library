@@ -1,0 +1,18 @@
+// Source: https://github.com/dCloser/SentinelAnalyticRules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+# detect muddywater bugsleep backdoor
+let DeviceAccessIOCDomain = DeviceFileEvents
+| where Time Generated > (90d)
+| where actionType == "FileCreated"
+| where FileOriginURl contains "egnyte.com" and fileName contains "zip"
+| distinct DeviceName;
+let DevicewithScheduledTask = DeviceEvents
+| where ActionType == "ScheduledTaskCreated"
+| where DeviceName has_any(DeviceAccessIOCDomain)
+| distint DeviceName;
+
+DeviceNetworkEvents
+| where RemoteIP == "146.19.143.14" or RemoteIP == "91.235.234.202" or RemoteIP == "85.239.61.97"
+| where DeviceName has_any(DevicewithScheduledTask)

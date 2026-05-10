@@ -1,0 +1,143 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let DriverLoadEvents = DeviceEvents
+    | where Timestamp > ago(7d)
+    | where ActionType == "DriverLoad"
+    | extend DriverPath = tostring(AdditionalFields.DriverPath)
+    | where DriverPath has_any (
+        "RTCore64", "gdrv", "DBUtil_2_3", "WinRing0x64",
+        "LenovoHECI", "MsIo64", "AsIO64", "InpoutX64",
+        "Speedfan", "GDrv3", "AsrDrv106", "RtkHDAud64"
+    )
+    | project DriverLoadTime=Timestamp, DeviceName, DriverPath;
+let EDRSilence = DeviceProcessEvents
+    | where Timestamp > ago(7d)
+    | where ActionType == "ProcessTerminated"
+    | where FileName has_any (
+        "MsMpEng.exe", "csagent.exe", "SentinelAgent.exe",
+        "SentinelOne.exe", "cb.exe", "CylanceSvc.exe",
+        "mfefire.exe", "bdagent.exe", "avgnt.exe", "ekrn.exe"
+    )
+    | project SilenceTime=Timestamp, DeviceName, EDRProcess=FileName;
+DriverLoadEvents
+| join kind=inner EDRSilence on DeviceName
+| where SilenceTime between (DriverLoadTime .. (DriverLoadTime + 10m))
+| project DriverLoadTime, SilenceTime, DeviceName, DriverPath, EDRProcess
+| extend KillChainGap = datetime_diff('second', SilenceTime, DriverLoadTime)
+| extend Confidence = "HIGH — driver load immediately preceded EDR silence"
+| sort by DriverLoadTime desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 2: Security service stops via sc.exe — rapid succession pattern
+// ─────────────────────────────────────────────────────────────────────────────
+DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where FileName in ("sc.exe", "net.exe", "net1.exe")
+| where ProcessCommandLine has "stop"
+| where ProcessCommandLine has_any (
+    "WinDefend", "Sense", "SentinelAgent", "CSFalconService",
+    "carbonblack", "CylanceSvc", "McAfeeFramework", "mfemms",
+    "bdagent", "wdnissvc", "wscsvc", "MBAMService"
+)
+| summarize
+    ServiceStopCount = count(),
+    Services = make_set(ProcessCommandLine),
+    FirstStop = min(Timestamp),
+    LastStop = max(Timestamp)
+    by DeviceName, bin(Timestamp, 10m), AccountName
+| where ServiceStopCount >= 2
+| extend Duration = datetime_diff('second', LastStop, FirstStop)
+| project FirstStop, DeviceName, AccountName, ServiceStopCount, Duration, Services
+| extend Confidence = "HIGH — multiple security services stopped in rapid succession"
+| sort by FirstStop desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 3: LSASS access following driver load (credential harvest after EDR kill)
+// ─────────────────────────────────────────────────────────────────────────────
+let SuspiciousDriverLoads = DeviceEvents
+    | where Timestamp > ago(7d)
+    | where ActionType == "DriverLoad"
+    | extend DriverPath = tostring(AdditionalFields.DriverPath)
+    | where DriverPath has_any (
+        "RTCore64", "gdrv", "DBUtil_2_3", "LenovoHECI",
+        "MsIo64", "AsIO64", "InpoutX64"
+    )
+    | project DriverLoadTime=Timestamp, DeviceName, DriverPath;
+let LsassAccess = DeviceEvents
+    | where Timestamp > ago(7d)
+    | where ActionType == "OpenProcessApiCall"
+    | where FileName == "lsass.exe"
+    | where ProcessTokenElevationType == "TokenElevationTypeFull"
+    | project LsassTime=Timestamp, DeviceName, AccessingProcess=InitiatingProcessFileName,
+              AccessingCmd=InitiatingProcessCommandLine;
+SuspiciousDriverLoads
+| join kind=inner LsassAccess on DeviceName
+| where LsassTime between (DriverLoadTime .. (DriverLoadTime + 15m))
+| project DriverLoadTime, LsassTime, DeviceName, DriverPath,
+          AccessingProcess, AccessingCmd
+| extend KillChainStage = "driver_load → lsass_access (EDR likely killed)"
+| sort by DriverLoadTime desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 4: EDR cloud heartbeat gap detection
+// Devices where the EDR sensor has not reported for > 5 minutes during business hours
+// Adjust the threshold and time window to your environment's normal beacon interval
+// ─────────────────────────────────────────────────────────────────────────────
+DeviceEvents
+| where Timestamp > ago(24h)
+| summarize LastSeen = max(Timestamp) by DeviceName
+| where LastSeen < ago(5m)
+| join kind=inner (
+    DeviceEvents
+    | where Timestamp > ago(48h)
+    | summarize EarlierSeen = max(Timestamp) by DeviceName
+    | where EarlierSeen between (ago(48h) .. ago(25h))
+) on DeviceName
+| project DeviceName, LastSeen, EarlierSeen
+| extend SilenceDuration = datetime_diff('minute', now(), LastSeen)
+| where SilenceDuration > 5
+| extend Alert = "EDR sensor silence — potential kill or system offline"
+| sort by SilenceDuration desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 5: PPL bypass indicator — high-access process open on EDR process
+// A PROCESS_TERMINATE access succeeding against a PPL process indicates PPL was stripped
+// ─────────────────────────────────────────────────────────────────────────────
+DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType == "OpenProcessApiCall"
+| where FileName has_any (
+    "MsMpEng.exe", "csagent.exe", "SentinelAgent.exe",
+    "cb.exe", "bdagent.exe"
+)
+| where GrantedAccess has_any ("0x1f0fff", "0x001", "0x0020")
+| where InitiatingProcessFileName !in ("services.exe", "smss.exe", "wininit.exe")
+| project Timestamp, DeviceName, FileName, GrantedAccess,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          AccountName
+| extend Interpretation = "PPL bypass suspected — access mask inconsistent with PPL protection"
+| sort by Timestamp desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 6: Driver loaded from unexpected path (anomaly — not system32\drivers)
+// ─────────────────────────────────────────────────────────────────────────────
+DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType == "DriverLoad"
+| extend DriverPath = tostring(AdditionalFields.DriverPath)
+| where DriverPath !startswith @"C:\Windows\System32\drivers\"
+      and DriverPath !startswith @"C:\Windows\SysWOW64\drivers\"
+      and DriverPath !startswith @"C:\Program Files\"
+      and DriverPath !startswith @"C:\Program Files (x86)\"
+| project Timestamp, DeviceName, DriverPath,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          AccountName
+| extend Anomaly = "Driver loaded from unexpected path — common in BYOVD dropper"
+| sort by Timestamp desc

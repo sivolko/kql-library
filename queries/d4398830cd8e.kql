@@ -1,0 +1,23 @@
+// Source: https://github.com/KenBab/sentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+CommonSecurityLog
+| where DeviceVendor == "Check Point" and DeviceProduct == "VPN-1 & FireWall-1"
+| extend LayerName = extract(@"layer_name=([^;]+)\;",1,AdditionalExtensions)
+| extend LayerUUID = extract(@"layer_uuid=([^;]+)\;",1,AdditionalExtensions)
+| extend MatchID = extract(@"match_id=([^;]+)\;",1,AdditionalExtensions)
+| extend ParentRule = extract(@"parent_rule=([^;]+)\;",1,AdditionalExtensions)
+| extend RuleAction = extract(@"rule_action=([^;]+)\;",1,AdditionalExtensions)
+| extend RuleUID = extract(@"rule_uid=([^;]+)\;",1,AdditionalExtensions)
+| extend ifName = extract(@"ifname=([^;]+)\;",1,AdditionalExtensions)
+| extend LogID = extract(@"logid=([^;]+)\;",1,AdditionalExtensions)
+| extend LogUID = extract(@"loguid=([^;]+)\;",1,AdditionalExtensions)
+| extend Origin = extract(@"origin=([^;]+)\;",1,AdditionalExtensions)
+| extend OriginICName = extract(@"originsicname=([^;]+)\;",1,AdditionalExtensions)
+| extend SequenceNum = extract(@"sequencenum=([^;]+)\;",1,AdditionalExtensions)
+| extend Version = extract(@"version=([^;]+)\;",1,AdditionalExtensions)
+| extend InZone = extract(@"inzone=([^;]+)\;",1,AdditionalExtensions)
+| extend OutZone = extract(@"outzone=([^;]+)\;",1,AdditionalExtensions)
+| extend Product = extract(@"product=([^;]+)\;",1,AdditionalExtensions)
+| extend ServiceID = extract(@"service_id=([^;]+)\;",1,AdditionalExtensions)

@@ -1,0 +1,23 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+IdentityLogonEvents
+| where TimeGenerated > ago(7d)
+| where ActionType == "LogonSuccess"
+| where Protocol =~ "Ntlm"
+| where LogonType == "Credentials validation"
+| summarize ['Target Device List']=make_set(DestinationDeviceName), ['Target Device Count']=dcount(DestinationDeviceName) by DeviceName, AccountName
+| sort by ['Target Device Count'] desc 
+
+//Advanced Hunting query
+IdentityLogonEvents
+
+//Data connector required for this query - Advanced Hunting license
+
+| where Timestamp > ago(7d)
+| where ActionType == "LogonSuccess"
+| where Protocol =~ "Ntlm"
+| where LogonType == "Credentials validation"
+| summarize ['Target Device List']=make_set(DestinationDeviceName), ['Target Device Count']=dcount(DestinationDeviceName) by DeviceName, AccountName
+| sort by ['Target Device Count'] desc 

@@ -1,0 +1,12 @@
+// Source: https://github.com/le0li9ht/Microsoft-Sentinel-Queries
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AzureActivity 
+| where Caller contains "<migrationperson mail>" //Give the migration person e-mail 
+| where OperationNameValue contains "microsoft.insights/workbooks/write"  // workbook creation 
+| summarize arg_max(TimeGenerated, *) by Resource //summarize by the resource
+| extend WorkbookID=Resource  
+| where ActivityStatus contains "Succeeded"
+| where isnotempty(WorkbookID) 
+| project TimeGenerated,Caller,WorkbookID, ActivityStatus

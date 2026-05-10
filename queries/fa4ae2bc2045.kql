@@ -1,0 +1,25 @@
+// Source: https://github.com/ep3p/Sentinel_KQL
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AuditLogs
+| where LoggedByService == "B2C" and OperationName has_any ("B2C", "CIAM", "Guest Usages") and OperationName has_any ("Create", "Update", "Delete")
+| extend
+    Initiator = iif(isnotempty(InitiatedBy["app"]), tostring(InitiatedBy["app"]["displayName"]), tostring(InitiatedBy["user"]["userPrincipalName"])),
+    InitiatorId = iif(isnotempty(InitiatedBy["app"]), tostring(InitiatedBy["app"]["servicePrincipalId"]), tostring(InitiatedBy["user"]["id"])),
+    IPAddress = tostring(InitiatedBy[tostring(bag_keys(InitiatedBy)[0])]["ipAddress"])
+| project
+    TimeGenerated,
+    LoggedByService,
+    Category,
+    AADOperationType,
+    Initiator,
+    IPAddress,
+    OperationName,
+    Result,
+    ResultDescription,
+    AdditionalDetails,
+    InitiatorId,
+    InitiatedBy,
+    TargetResources,
+    CorrelationId

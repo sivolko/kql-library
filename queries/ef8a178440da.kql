@@ -1,0 +1,9 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+AuditLogs
+| where TimeGenerated > ago(1h)
+| where Category == "UserManagement"
+| where ActivityDisplayName == "Admin updated security info"
+| where ResultDescription == "Admin changed QRcode Pin Authentication Method for user"

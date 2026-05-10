@@ -1,0 +1,6 @@
+// Source: https://github.com/dCloser/SentinelAnalyticRules
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+Syslog
+| where SyslogMessage has 'threat'

@@ -1,0 +1,134 @@
+// Source: https://github.com/mattu0119/Sentinel
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+CommonSecurityLog
+| where DeviceVendor == "Fortinet"
+| where DeviceProduct == "Fortigate"
+// --- 標準 CEF フィールドのリネーム ---
+| extend
+    EventTime        = TimeGenerated,
+    SrcIP            = SourceIP,
+    DstIP            = DestinationIP,
+    SrcPort          = SourcePort,
+    DstPort          = DestinationPort,
+    SrcMAC           = SourceMACAddress,
+    DstMAC           = DestinationMACAddress,
+    Protocol         = coalesce(ApplicationProtocol, Protocol),
+    Action           = DeviceAction,
+    Severity         = LogSeverity,
+    EventClassID     = DeviceEventClassID,
+    FirewallName     = DeviceName,
+    Direction        = CommunicationDirection,
+    BytesSent        = SentBytes,
+    BytesReceived    = ReceivedBytes,
+    UserName         = DestinationUserName,
+    EventMessage     = Message
+// --- AdditionalExtensions から Fortigate 固有フィールドを展開 ---
+| extend
+    // ポリシー・ルール
+    PolicyID         = extract(@"FTNTFGTpolicyid=(\d+)",       1, AdditionalExtensions),
+    PolicyName       = extract(@"FTNTFGTpolicyname=([^;]+)",    1, AdditionalExtensions),
+    PolicyType       = extract(@"FTNTFGTpolicytype=([^;]+)",    1, AdditionalExtensions),
+    // ゾーン
+    SrcZone          = extract(@"FTNTFGTsrcintfrole=([^;]+)",   1, AdditionalExtensions),
+    DstZone          = extract(@"FTNTFGTdstintfrole=([^;]+)",   1, AdditionalExtensions),
+    SrcInterface     = extract(@"FTNTFGTsrcintf=([^;]+)",       1, AdditionalExtensions),
+    DstInterface     = extract(@"FTNTFGTdstintf=([^;]+)",       1, AdditionalExtensions),
+    // セッション
+    SessionID        = extract(@"FTNTFGTsessionid=(\d+)",       1, AdditionalExtensions),
+    Duration         = extract(@"FTNTFGTduration=(\d+)",        1, AdditionalExtensions),
+    // UTM (IPS / AV / WebFilter / AppControl)
+    AttackName       = extract(@"FTNTFGTattack=([^;]+)",        1, AdditionalExtensions),
+    AttackID         = extract(@"FTNTFGTattackid=(\d+)",        1, AdditionalExtensions),
+    VirusName        = extract(@"FTNTFGTvirus=([^;]+)",         1, AdditionalExtensions),
+    WebCategory      = extract(@"FTNTFGTcatdesc=([^;]+)",       1, AdditionalExtensions),
+    WebDomain        = extract(@"FTNTFGThostname=([^;]+)",      1, AdditionalExtensions),
+    AppCategory      = extract(@"FTNTFGTappcat=([^;]+)",        1, AdditionalExtensions),
+    AppName          = extract(@"FTNTFGTapp=([^;]+)",           1, AdditionalExtensions),
+    // VPN
+    VPNTunnel        = extract(@"FTNTFGTtunnelip=([^;]+)",      1, AdditionalExtensions),
+    VPNType          = extract(@"FTNTFGTtunneltype=([^;]+)",    1, AdditionalExtensions),
+    // ログサブタイプ
+    LogType          = extract(@"FTNTFGTtype=([^;]+)",          1, AdditionalExtensions),
+    LogSubType       = extract(@"FTNTFGTsubtype=([^;]+)",       1, AdditionalExtensions),
+    LogLevel         = extract(@"FTNTFGTlevel=([^;]+)",         1, AdditionalExtensions),
+    // 国情報
+    SrcCountry       = extract(@"FTNTFGTsrccountry=([^;]+)",   1, AdditionalExtensions),
+    DstCountry       = extract(@"FTNTFGTdstcountry=([^;]+)",   1, AdditionalExtensions),
+    // NAT
+    NatSrcIP         = extract(@"FTNTFGTtransip=([^;]+)",      1, AdditionalExtensions),
+    NatSrcPort       = extract(@"FTNTFGTtransport=(\d+)",      1, AdditionalExtensions),
+    NatDstIP         = extract(@"FTNTFGTtrandisp=([^;]+)",     1, AdditionalExtensions),
+    NatDstPort       = extract(@"FTNTFGTtrandport=(\d+)",      1, AdditionalExtensions),
+    // その他
+    ServiceName      = extract(@"FTNTFGTservice=([^;]+)",       1, AdditionalExtensions),
+    SrcUserGroup     = extract(@"FTNTFGTgroup=([^;]+)",         1, AdditionalExtensions),
+    Reference        = extract(@"FTNTFGTref=([^;]+)",           1, AdditionalExtensions),
+    VDOM             = extract(@"FTNTFGTvd=([^;]+)",            1, AdditionalExtensions)
+// --- 型変換 ---
+| extend
+    PolicyID         = toint(PolicyID),
+    SessionID        = tolong(SessionID),
+    Duration         = toint(Duration),
+    AttackID         = toint(AttackID),
+    NatSrcPort       = toint(NatSrcPort),
+    NatDstPort       = toint(NatDstPort)
+// --- 出力列の整理 ---
+| project
+    EventTime,
+    FirewallName,
+    VDOM,
+    LogType,
+    LogSubType,
+    LogLevel,
+    Action,
+    Severity,
+    EventClassID,
+    // ネットワーク
+    SrcIP,
+    SrcPort,
+    SrcMAC,
+    SrcZone,
+    SrcInterface,
+    SrcCountry,
+    DstIP,
+    DstPort,
+    DstMAC,
+    DstZone,
+    DstInterface,
+    DstCountry,
+    Protocol,
+    Direction,
+    ServiceName,
+    // トラフィック
+    BytesSent,
+    BytesReceived,
+    SessionID,
+    Duration,
+    PolicyID,
+    PolicyName,
+    PolicyType,
+    // NAT
+    NatSrcIP,
+    NatSrcPort,
+    NatDstIP,
+    NatDstPort,
+    // UTM
+    AttackName,
+    AttackID,
+    VirusName,
+    WebCategory,
+    WebDomain,
+    AppCategory,
+    AppName,
+    // VPN
+    VPNTunnel,
+    VPNType,
+    // ユーザー
+    UserName,
+    SrcUserGroup,
+    // メタ
+    EventMessage,
+    Reference,
+    AdditionalExtensions

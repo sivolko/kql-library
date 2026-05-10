@@ -1,0 +1,36 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-05-10
+// KQL Hunter - https://github.com/YOUR_USER/kql-hunter
+
+let Lookback = 3d;
+let TopN = 50;
+let TargetActivityDisplayName = "";
+let TargetResultType = "";
+let TargetLoggedByService = "";
+AuditLogs
+| where TimeGenerated >= ago(Lookback)
+| where tolower(tostring(_IsBillable)) == "true"
+| extend InitiatedByJson = todynamic(InitiatedBy)
+| extend InitiatedByUser = tostring(InitiatedByJson.user.userPrincipalName)
+| extend InitiatedByApp = tostring(InitiatedByJson.app.displayName)
+| extend Initiator = coalesce(InitiatedByUser, InitiatedByApp, Identity)
+| where isempty(TargetActivityDisplayName) or ActivityDisplayName =~ TargetActivityDisplayName
+| where isempty(TargetResultType) or ResultType =~ TargetResultType
+| where isempty(TargetLoggedByService) or LoggedByService =~ TargetLoggedByService
+| summarize
+    Rows = count(),
+    GB = sum(_BilledSize) / 1e9,
+    AvgKB = avg(_BilledSize) / 1024.0
+  by ActivityDisplayName, AADOperationType, Result, ResultType, LoggedByService, Initiator, Category
+| top TopN by GB desc
+| project
+    ActivityDisplayName,
+    AADOperationType,
+    Result,
+    ResultType,
+    LoggedByService,
+    Initiator,
+    Category,
+    GB = round(GB, 3),
+    Rows,
+    AvgKB = round(AvgKB, 2)
