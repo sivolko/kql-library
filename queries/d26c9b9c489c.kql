@@ -1,0 +1,15 @@
+// Source: https://github.com/krabelize/Palo-Alto-NGFW-Sentinel-SIEM
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| extend ThreatVaultBaseURL = 'https://threatvault.paloaltonetworks.com/?query='
+| where DeviceVendor == "Palo Alto Networks"
+| where DeviceEventClassID has_any ("ml-virus", "virus", "flood", "spyware" "wildfire-virus")
+| extend split(DeviceEventClassID,'(')
+| extend SignatureName=DeviceEventClassID[0]
+| extend SignatureIDcat=DeviceEventClassID[1]
+| extend SignatureID = substring(SignatureIDcat, 0, strlen(SignatureIDcat) - 1)
+| extend ThreatVaultURL = strcat(ThreatVaultBaseURL, SignatureID)
+| where isnotempty(RequestURL)
+| summarize Amount=count() by  RequestURL, DeviceName, tostring(SignatureName), ThreatVaultURL, ApplicationProtocol, DeviceEventCategory, Activity, DeviceAction, SourceIP, DestinationIP, DestinationPort, Protocol, LogSeverity

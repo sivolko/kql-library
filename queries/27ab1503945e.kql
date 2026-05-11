@@ -1,0 +1,242 @@
+// Source: https://github.com/kevinflint-cs2/sentinel-threat-hunting
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4656 // Handle to object requested
+| where ObjectType == "Process"
+| where ObjectName has "lsass.exe"
+| where AccessMask has_any ("0x1010", "0x1410", "0x1438") // PROCESS_VM_READ
+| where ProcessName !has_any ("svchost.exe", "wmiprvse.exe", "services.exe") // Exclude legitimate processes
+| summarize 
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated),
+    AttemptCount = count(),
+    Processes = make_set(ProcessName, 10),
+    Computers = make_set(Computer, 10)
+    by SubjectUserName, SubjectDomainName
+| extend Severity = case(
+    ProcessName has_any ("powershell", "cmd", "rundll32", "mimikatz"), "Critical",
+    "High"
+)
+| project-reorder FirstAttempt, LastAttempt, SubjectUserName, AttemptCount, Processes, Severity
+
+// ----------------------------------------------------------------------------
+// 2. Credential Dumping Tools Execution
+// ----------------------------------------------------------------------------
+// Detects execution of known credential dumping tools
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4688 // Process creation
+| where Process has_any (
+    "mimikatz.exe", "procdump.exe", "pwdump", "gsecdump",
+    "wce.exe", "fgdump.exe", "cachedump", "lslsass"
+)
+or CommandLine has_any (
+    "sekurlsa::logonpasswords", "privilege::debug",
+    "lsadump::sam", "lsadump::secrets", "lsadump::cache",
+    "Invoke-Mimikatz", "Out-Minidump", "comsvcs.dll,MiniDump"
+)
+| extend Tool = case(
+    Process has "mimikatz" or CommandLine has "mimikatz", "Mimikatz",
+    Process has "procdump" or CommandLine has "procdump", "ProcDump",
+    CommandLine has "comsvcs.dll", "Native LSASS Dump",
+    "Unknown Tool"
+)
+| project 
+    TimeGenerated,
+    Computer,
+    Account,
+    Tool,
+    Process,
+    CommandLine,
+    ParentProcessName
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 3. SAM/SYSTEM Registry Hive Access
+// ----------------------------------------------------------------------------
+// Detects access to SAM and SYSTEM registry hives containing credential hashes
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4663 // Object access
+| where ObjectName has_any (
+    "\\REGISTRY\\MACHINE\\SAM",
+    "\\REGISTRY\\MACHINE\\SECURITY",
+    "\\REGISTRY\\MACHINE\\SYSTEM"
+)
+| where AccessMask has "0x1" or AccessMask has "0x2" // Read or Write
+| where ProcessName !has_any ("services.exe", "svchost.exe", "lsass.exe", "System")
+| summarize 
+    FirstAccess = min(TimeGenerated),
+    LastAccess = max(TimeGenerated),
+    AccessCount = count(),
+    RegistryKeys = make_set(ObjectName, 10),
+    Processes = make_set(ProcessName, 10)
+    by SubjectUserName, Computer
+| project-reorder FirstAccess, LastAccess, SubjectUserName, Computer, AccessCount, Processes
+
+// ----------------------------------------------------------------------------
+// 4. Password Spray Attack Detection
+// ----------------------------------------------------------------------------
+// Detects password spraying attempts across multiple accounts
+let TimeWindow = 1h;
+let FailureThreshold = 5;
+let AccountThreshold = 10;
+SecurityEvent
+| where TimeGenerated > ago(TimeWindow)
+| where EventID == 4625 // Failed logon
+| where LogonType in (2, 3, 10) // Interactive, Network, or Remote
+| summarize 
+    FailedAttempts = count(),
+    TargetAccounts = dcount(TargetUserName),
+    Accounts = make_set(TargetUserName, 50),
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated)
+    by IpAddress, Computer
+| where TargetAccounts >= AccountThreshold
+| where FailedAttempts >= FailureThreshold * TargetAccounts
+| extend Severity = case(
+    TargetAccounts > 50, "Critical",
+    TargetAccounts > 25, "High",
+    "Medium"
+)
+| project 
+    IpAddress,
+    Computer,
+    TargetAccounts,
+    FailedAttempts,
+    FirstAttempt,
+    LastAttempt,
+    Severity
+| order by TargetAccounts desc
+
+// ----------------------------------------------------------------------------
+// 5. Kerberos Ticket Extraction (Kerberoasting)
+// ----------------------------------------------------------------------------
+// Detects requests for Kerberos service tickets for offline cracking
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4769 // Kerberos service ticket requested
+| where ServiceName !has "$" // Exclude computer accounts
+| where TicketEncryptionType in ("0x17", "0x18") // RC4 or AES
+| summarize 
+    TicketRequests = count(),
+    Services = make_set(ServiceName, 20),
+    FirstRequest = min(TimeGenerated),
+    LastRequest = max(TimeGenerated)
+    by TargetUserName, IpAddress
+| where TicketRequests > 10 // Multiple ticket requests
+| extend Severity = case(
+    TicketRequests > 50, "High",
+    "Medium"
+)
+| project-reorder FirstRequest, LastRequest, TargetUserName, IpAddress, TicketRequests, Severity
+
+// ----------------------------------------------------------------------------
+// 6. NTDS.dit Access Detection
+// ----------------------------------------------------------------------------
+// Detects access to Active Directory database file
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4663 // Object access
+| where ObjectName has_any ("ntds.dit", "ntds.jfm")
+| where AccessMask has "0x1" // Read access
+| where ProcessName !has "lsass.exe"
+| project 
+    TimeGenerated,
+    Computer,
+    Account = SubjectUserName,
+    ObjectName,
+    ProcessName,
+    AccessMask
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 7. Credential Manager Access
+// ----------------------------------------------------------------------------
+// Detects access to Windows Credential Manager
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4688
+| where CommandLine has_any (
+    "vaultcmd", "VaultCmd.exe /list",
+    "cmdkey /list",
+    "[Windows.Security.Credentials.PasswordVault]",
+    "Get-StoredCredential"
+)
+| project 
+    TimeGenerated,
+    Computer,
+    Account,
+    Process,
+    CommandLine,
+    ParentProcessName
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 8. Browser Credential Theft
+// ----------------------------------------------------------------------------
+// Detects access to browser credential stores
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4663
+| where ObjectName has_any (
+    "\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data",
+    "\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Login Data",
+    "\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*.default\\logins.json",
+    "\\AppData\\Local\\Packages\\Microsoft.MicrosoftEdge_"
+)
+| where ProcessName !has_any ("chrome.exe", "msedge.exe", "firefox.exe")
+| project 
+    TimeGenerated,
+    Computer,
+    Account = SubjectUserName,
+    ObjectName,
+    ProcessName,
+    AccessMask
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 9. DCSync Attack Detection
+// ----------------------------------------------------------------------------
+// Detects replication requests to domain controllers (DCSync)
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4662 // Operation performed on an object
+| where OperationType == "Object Access"
+| where Properties has_any (
+    "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2", // DS-Replication-Get-Changes
+    "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2", // DS-Replication-Get-Changes-All
+    "89e95b76-444d-4c62-991a-0facbeda640c"  // DS-Replication-Get-Changes-In-Filtered-Set
+)
+| where SubjectUserName !has "$" // Exclude computer accounts
+| where SubjectUserName != "Administrator"
+| summarize 
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated),
+    AttemptCount = count(),
+    Computers = make_set(Computer, 10)
+    by SubjectUserName, SubjectDomainName, IpAddress
+| project-reorder FirstAttempt, LastAttempt, SubjectUserName, SubjectDomainName, IpAddress, AttemptCount
+| order by AttemptCount desc
+
+// ----------------------------------------------------------------------------
+// 10. Credential Dumping via Task Manager
+// ----------------------------------------------------------------------------
+// Detects use of Task Manager to create LSASS dump files
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4688
+| where ParentProcessName has "Taskmgr.exe"
+| where Process has "rundll32.exe"
+| where CommandLine has "comsvcs.dll"
+| project 
+    TimeGenerated,
+    Computer,
+    Account,
+    CommandLine,
+    Process,
+    ParentProcessName
+| order by TimeGenerated desc

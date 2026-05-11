@@ -1,0 +1,13 @@
+// Source: https://github.com/Ascendstarcel/Hunting-with-KQL
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "UsbDriveMounted"
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName == "powershell.exe"
+    | project PowershellTime = Timestamp, DeviceName, ProcessCommandLine
+) on DeviceName
+| where PowershellTime between (Timestamp .. Timestamp + 30s)
+| project Timestamp, DeviceName, ProcessCommandLine

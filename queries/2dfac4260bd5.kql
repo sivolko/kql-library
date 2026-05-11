@@ -1,0 +1,13 @@
+// Source: https://github.com/brayanbenett/AKS-KQL
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity 
+| where OperationNameValue contains "Microsoft.SecurityInsights/alertRules/write"  //analytical rule write operation
+| where ActivityStatusValue contains "Success" 
+//| where Caller contains "<migration person mail> // give person's e-mail who is migrating 
+| extend Analytics_Rule_ID = tostring(parse_json(Properties).resource)  //extract ruleID
+| extend Rule_ID=split(Analytics_Rule_ID,'/') 
+| where isempty(Rule_ID[2])==false 
+| extend clientIP=split(Properties_d["httpRequest"], '"')[3] 
+| project TimeGenerated, Caller, OperationNameValue, RuleID=Rule_ID[2], clientIP

@@ -1,0 +1,8 @@
+// Source: https://github.com/yili6ms/kusto_gen
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| summarize Failures = count() by Account, bin(TimeGenerated, 5m)
+| where Failures > 10

@@ -1,0 +1,67 @@
+// Source: https://github.com/str4int/KQL-Repository
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceProcessEvents
+// Define timeframe
+| where Timestamp > ago(1d)
+| where FileName has_any (@"powershell.exe", @"pwsh.exe", @"powershell_ise.exe")
+| where ProcessCommandLine contains "base64"
+| summarize arg_max(Timestamp, *) by DeviceName
+
+
+// correlate user login activity from IP, countries & ISP
+IdentityLogonEvents
+| where AccountObjectId == "add_object_ID" // get object ID from defender user page
+| project Timestamp, DeviceType, OSPlatform, Application, ActionType, IPAddress, Location, ISP
+| order by Timestamp
+
+
+// Search for malicious links where user was allowed to proceed through. 
+UrlClickEvents
+| where ActionType == "ClickAllowed" or IsClickedThrough !="0"
+| where ThreatTypes has "Phish"
+| summarize by ReportId, IsClickedThrough, AccountUpn, NetworkMessageId, ThreatTypes, Timestamp
+
+
+// For email clicks, join URLClickEvents with EmailEvents and EmailPostDeliveryEvents based on NetworkMessageId to determine clickthroughs, potential deliveries through User/Tenant overrides and detection details
+UrlClickEvents
+| where ThreatTypes has "Phish"
+| join EmailEvents on NetworkMessageId,  $left.AccountUpn == $right.RecipientEmailAddress
+| project Timestamp, Url, ActionType, AccountUpn, ReportId, NetworkMessageId, ThreatTypes, IsClickedThrough, DeliveryLocation, OrgLevelAction, UserLevelAction
+
+
+// URL prevented by Attack surface reduction rules - incident ID 
+let url = "AddHereYourURL";
+search in (EmailUrlInfo,UrlClickEvents,DeviceNetworkEvents,DeviceFileEvents,DeviceEvents,BehaviorEntities)
+Timestamp between (ago(30d) .. now())
+and (RemoteUrl has url
+or FileOriginUrl has url
+or FileOriginReferrerUrl has url
+or Url has url
+)
+
+// confirm network connection to specific doamin by chonological order
+DeviceNetworkEvents
+| where RemoteUrl contains "myFirstDomain.com" or RemoteUrl contains "mySecondDomain.com"
+| project Timestamp, DeviceName, ActionType, RemoteIP, RemoteUrl, InitiatingProcessAccountName
+| sort by Timestamp asc 
+
+
+//USB connected check
+DeviceEvents
+| where DeviceName contains "deviceName1" or DeviceName contains "deviceName2"
+| extend details = todynamic(AdditionalFields)
+| mv-expand usb= details.IsOnRemovableMedia
+| where tostring(usb) contains "true"
+| summarize by Timestamp, FileName, FolderPath, DeviceName
+| sort by Timestamp asc 
+
+
+         .::                                  .::  
+         .::             .::     .:           .::  
+ .:::: .:.: .:.: .:::  . .::       .:: .::  .:.: .:
+.::      .::   .::    .: .::    .:: .::  .::  .::  
+  .:::   .::   .::  .::  .::    .:: .::  .::  .::  
+    .::  .::   .:: .:::: .: .:: .:: .::  .::  .::  
+.:: .::   .:: .:::       .::    .::.:::  .::   .:: 

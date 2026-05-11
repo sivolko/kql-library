@@ -1,0 +1,7 @@
+// Source: https://github.com/chadmcox/Azure_Active_Directory
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago(90d)
+| where OperationName == "ConfirmSafe"

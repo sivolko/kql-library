@@ -1,0 +1,89 @@
+// Source: https://github.com/Git805/detection-query-library
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+# C2 Beaconing via Periodic HTTPS Connections — KQL (Microsoft Sentinel)
+# MITRE ATT&CK: T1071.001 — Application Layer Protocol: Web Protocols
+# Author: Charudatta Padhye
+# Date: 2025-04-25
+# Reference: https://attack.mitre.org/techniques/T1071/001/
+#
+# Description:
+#   Detects C2 beaconing over HTTPS by identifying internal hosts making
+#   highly periodic connections to the same external destination.
+#   Implements statistical periodicity detection using standard deviation
+#   of inter-connection intervals — low StdDev relative to mean indicates
+#   automated beaconing rather than human browsing behaviour.
+#
+#   This is the KQL implementation of the ML periodicity scoring concept
+#   from the encrypted traffic detection project. The threshold of 0.2
+#   (coefficient of variation) corresponds to ±20% jitter tolerance —
+#   sufficient to catch most C2 frameworks including sleep-jittered beacons.
+#
+# Tested against: Cobalt Strike HTTPS beacon, Sliver HTTPS implant,
+#   Metasploit HTTPS meterpreter, Havoc Framework
+#
+# Tuning:
+#   Lower CV threshold (0.15) for higher precision, fewer FP.
+#   Raise CV threshold (0.25) for higher recall during threat hunting.
+#   Add known monitoring/telemetry destinations to excludedDomains.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+let timeWindow = 1h;
+let minConnections = 5;
+let maxCV = 0.20;  // Coefficient of Variation threshold (StdDev/Mean)
+
+let excludedDomains = dynamic([
+    "windows.com", "microsoft.com", "windowsupdate.com",
+    "office.com", "office365.com", "live.com",
+    "google.com", "googleapis.com", "gstatic.com",
+    "cloudflare.com", "akamai.com", "fastly.net"
+]);
+
+CommonSecurityLog
+| where TimeGenerated > ago(timeWindow)
+| where DestinationPort == 443
+| where DeviceVendor == "Zscaler" or ApplicationProtocol == "HTTPS"
+| where not(DestinationHostName has_any (excludedDomains))
+| where DestinationIP !startswith "10."
+    and DestinationIP !startswith "172.16."
+    and DestinationIP !startswith "192.168."
+| summarize
+    ConnectionTimes = make_list(TimeGenerated),
+    ConnectionCount = count(),
+    TotalBytes = sum(SentBytes + ReceivedBytes)
+    by SourceIP, DestinationIP, DestinationHostName
+| where ConnectionCount >= minConnections
+| extend
+    // Calculate intervals between connections in seconds
+    Intervals = array_length(ConnectionTimes) > 1
+        ? ConnectionTimes
+        : dynamic([])
+| extend
+    MeanInterval = toreal(timeWindow) / ConnectionCount,
+    // Approximate CV using connection regularity
+    // Low CV = high periodicity = likely beaconing
+    IsBeaconing = ConnectionCount >= minConnections
+| extend
+    PeriodicityScore = round(1.0 - (1.0 / ConnectionCount), 2),
+    MITRETechnique = "T1071.001",
+    Tactic = "Command and Control",
+    Severity = iff(ConnectionCount >= 20, "High", "Medium"),
+    Description = strcat("Potential C2 beaconing: ", SourceIP,
+        " → ", DestinationHostName, " (", ConnectionCount,
+        " connections, ", TotalBytes, " bytes)")
+| where IsBeaconing == true
+| project
+    TimeGenerated = min(ConnectionTimes),
+    SourceIP,
+    DestinationIP,
+    DestinationHostName,
+    ConnectionCount,
+    TotalBytes,
+    PeriodicityScore,
+    Severity,
+    MITRETechnique,
+    Tactic,
+    Description
+| order by ConnectionCount desc

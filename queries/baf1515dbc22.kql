@@ -1,0 +1,20 @@
+// Source: https://github.com/tgs3c/Incident-Response-Hunting
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let targetdevice = "";
+DeviceEvents
+| where DeviceName == targetdevice
+| where Timestamp > ago(7d)
+| where ActionType has_any('SmartScreenAppWarning', 
+'SmartScreenUrlWarning')
+| extend SmartScreenTrigger = iff(ActionType == "SmartScreenUrlWarning", 
+RemoteUrl, FileName)
+| extend ReasonForTrigger = parse_json(AdditionalFields).Experience
+| project
+     Timestamp,
+     DeviceName,
+     ActionType,
+     SmartScreenTrigger,
+     ReasonForTrigger,
+     InitiatingProcessCommandLine

@@ -1,0 +1,39 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod     = 30m;
+let UniqueUserThreshold = 3;   // minimum distinct users reporting same sender
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackPeriod)
+| where RecordType == "ExchangeAdmin"
+    or (RecordType == "ThreatIntelligence" and Operation has_any ("SubmitReport", "PhishReport"))
+| where Operation in (
+    "PhishingReported", "SubmitReport",
+    "Enable-AntiPhishRule", "New-AntiPhishPolicy",
+    "MessageTrace")
+| extend
+    ReportedSender = tostring(extract(@"SenderAddress.*?:([^\s,]+)", 1, tostring(Parameters))),
+    RecipientUser  = UserId
+| where isnotempty(ReportedSender)
+| summarize
+    UniqueReporters = dcount(RecipientUser),
+    Reporters       = make_set(RecipientUser, 20),
+    FirstReport     = min(TimeGenerated),
+    LastReport      = max(TimeGenerated)
+    by ReportedSender
+| where UniqueReporters >= UniqueUserThreshold
+| extend SenderDomain = tostring(split(ReportedSender, "@")[1])
+| extend AlertSeverity = case(
+    UniqueReporters >= 10, "Critical",
+    UniqueReporters >= 5,  "High",
+    "Medium")
+| project
+    TimeGenerated  = LastReport,
+    ReportedSender,
+    SenderDomain,
+    UniqueReporters,
+    Reporters,
+    FirstReport,
+    AlertSeverity

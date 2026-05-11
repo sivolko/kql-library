@@ -1,0 +1,115 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let SetContextCallers =
+    DeviceEvents
+    | where TimeGenerated > ago(1d)
+    | where ActionType == "DeviceIoControlRequest"
+    | where AdditionalFields has "\\Device\\Afd"
+    | where AdditionalFields has "0x12047"  // IOCTL_AFD_SET_CONTEXT
+    | where InitiatingProcessFileName !in~ (
+        "svchost.exe", "lsass.exe", "services.exe",
+        "iexplore.exe", "msedge.exe", "chrome.exe", "firefox.exe"
+        // Browsers legitimately use SET_CONTEXT via WinSock
+    )
+    | summarize
+        SetContextCount = count(),
+        FirstSeen = min(TimeGenerated),
+        LastSeen = max(TimeGenerated)
+        by DeviceName, ProcessId, InitiatingProcessFileName,
+           InitiatingProcessAccountName, InitiatingProcessIntegrityLevel
+    | where SetContextCount > 3
+    | project
+        DeviceName,
+        ProcessId,
+        ProcessName = InitiatingProcessFileName,
+        Account = InitiatingProcessAccountName,
+        IntegrityLevel = InitiatingProcessIntegrityLevel,
+        SetContextCount,
+        FirstSeen,
+        LastSeen;
+
+SetContextCallers
+| order by SetContextCount desc
+
+
+// ============================================================================
+// Query 2: Parameter anomaly — oversized context fields
+//
+// When ETW parameters are available, context lengths >64MB are anomalous
+// for all legitimate callers. The exploit uses values near UINT32_MAX/2.
+// ============================================================================
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType == "DeviceIoControlRequest"
+| where AdditionalFields has "\\Device\\Afd"
+| where AdditionalFields has "0x12047"
+| extend IoctlParams = parse_json(AdditionalFields)
+| extend ContextLength = tolong(IoctlParams.ContextLength)
+| extend ExtHeaderLength = tolong(IoctlParams.ExtHeaderLength)
+| where ContextLength > 0x4000000 or ExtHeaderLength > 0x4000000  // >64MB
+| project
+    TimeGenerated,
+    DeviceName,
+    ProcessId,
+    ProcessName = InitiatingProcessFileName,
+    Account = InitiatingProcessAccountName,
+    ContextLength,
+    ExtHeaderLength
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 3: Token elevation correlated with SET_CONTEXT anomaly
+// ============================================================================
+let ElevationWindow = 60s;
+
+let TokenElevations =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4672
+    | where PrivilegeList has_any ("SeDebugPrivilege", "SeTcbPrivilege")
+    | project ElevationTime = TimeGenerated, Computer, ElevatedAccount = Account, PrivilegeList;
+
+SetContextCallers
+| join kind=inner TokenElevations on $left.DeviceName == $right.Computer
+| where ElevationTime between (LastSeen .. (LastSeen + ElevationWindow))
+| project
+    DeviceName,
+    Account,
+    ProcessName,
+    SetContextCount,
+    ExploitEnd = LastSeen,
+    ElevationTime,
+    ElevatedAccount,
+    PrivilegeList,
+    LagSeconds = datetime_diff('second', ElevationTime, LastSeen)
+| order by ElevationTime desc
+
+
+// ============================================================================
+// Query 4: Cross-CVE AFD anomaly summary — all four 2026 CVEs in one view
+//
+// This query provides a unified view of AFD IOCTL anomalies regardless of
+// which specific CVE is being exploited. Use for triage/investigation.
+// ============================================================================
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType == "DeviceIoControlRequest"
+| where AdditionalFields has "\\Device\\Afd"
+| extend IoctlCode = tostring(parse_json(AdditionalFields).IoctlCode)
+| extend CveCoverage = case(
+    IoctlCode == "0x1201F", "CVE-2026-20831 (TransmitFile)",
+    IoctlCode == "0x12047", "CVE-2026-21241 (SetContext)",
+    IoctlCode == "0x1202B", "CVE-2026-20810/20860 (Disconnect/Cancel)",
+    "Other AFD IOCTL"
+)
+| where InitiatingProcessIntegrityLevel in ("Low", "Medium")
+| summarize
+    Count = count(),
+    UniqueIoctls = dcount(IoctlCode)
+    by DeviceName, InitiatingProcessFileName, InitiatingProcessAccountName,
+       CveCoverage, bin(TimeGenerated, 1m)
+| where Count > 50
+| order by Count desc

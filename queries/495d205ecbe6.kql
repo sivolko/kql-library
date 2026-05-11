@@ -1,0 +1,16 @@
+// Source: https://github.com/eskonr/MEMPowered
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let startDate = ago(30d);
+let endDate = now();
+AuditLogs | where OperationName =="Recover device local administrator password"
+ and todatetime(TimeGenerated) between (startDate .. endDate)
+| summarize arg_max(TimeGenerated,*) by CorrelationId 
+| extend parsedInitedBy= parse_json(InitiatedBy)
+| extend UserPrincipalName = tostring(parsedInitedBy.user.userPrincipalName)
+| extend parsedTargetResources= parse_json(TargetResources)
+| mv-expand parsedTargetResources // Expand the array into individual rows
+| extend DeviceName = tostring(parsedTargetResources.displayName)
+| extend Timestamp_HKT = format_datetime(datetime_utc_to_local(ActivityDateTime, 'Singapore'), 'dd/M/yyyy hh:mm:ss tt')
+| project Timestamp_HKT,DeviceName,UserPrincipalName,Result,CorrelationId

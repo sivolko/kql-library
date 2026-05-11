@@ -1,0 +1,36 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 3d;
+let TopN = 50;
+let TargetComputer = "";
+let TargetSource = "";
+let TargetEventID = int(-1);
+Event
+| where TimeGenerated >= ago(Lookback)
+| where tolower(tostring(_IsBillable)) == "true"
+| where EventLog =~ "Security"
+| where isempty(TargetComputer) or Computer =~ TargetComputer
+| where isempty(TargetSource) or Source =~ TargetSource
+| where TargetEventID == -1 or EventID == TargetEventID
+| summarize
+    Rows = count(),
+    GB = sum(_BilledSize) / 1e9,
+    AvgKB = avg(_BilledSize) / 1024.0,
+    DistinctUsers = dcountif(UserName, isnotempty(UserName)),
+    SampleDescription = any(RenderedDescription),
+    ExampleUser = any(UserName)
+  by EventID, EventLevelName, Source, Computer
+| top TopN by GB desc
+| project
+    EventID,
+    EventLevelName,
+    Source,
+    Computer,
+    ExampleUser,
+    GB = round(GB, 3),
+    Rows,
+    AvgKB = round(AvgKB, 2),
+    DistinctUsers,
+    SampleDescription

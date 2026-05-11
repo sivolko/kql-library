@@ -1,0 +1,13 @@
+// Source: https://github.com/weixian-zhang/Panorama
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| extend ResourceCategory = parse_json(Properties).resourceProviderValue
+| where
+        CategoryValue == "Administrative" and
+        ActivityStatusValue in ("Started", "Success") and
+        toupper(OperationNameValue) startswith toupper("Microsoft.Network/firewallPolicies") and //azfw policies
+        ResourceCategory !in ("MICROSOFT.RESOURCEHEALTH", "MICROSOFT.RESOURCES") and
+        TimeGenerated {TimeRange}
+| summarize dcount(CorrelationId) by ResourceGroup

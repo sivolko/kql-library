@@ -1,0 +1,15 @@
+// Source: https://github.com/mr-r3b00t/coldriver
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe = (30d);
+let domainlist = materialize (
+(externaldata(domain: string ) [@"https://raw.githubusercontent.com/mr-r3b00t/coldriver/refs/heads/main/domains01.txt"]
+with (format="txt"))
+| project domain
+| summarize by domain);
+search in (DeviceNetworkEvents, DeviceFileEvents, DeviceEvents)
+Timestamp > ago(timeframe)
+| where RemoteUrl != ""
+| where (RemoteUrl has_any(domainlist))
+| project Timestamp, DeviceName, RemoteIP, RemoteUrl, RemoteIPType, RemotePort, ActionType, FileOriginUrl

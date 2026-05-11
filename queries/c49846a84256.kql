@@ -1,0 +1,110 @@
+// Source: https://github.com/Cloud-Architekt/AzureSentinel
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let FociClientApplications = (externaldata(client_id: string)
+    [@"https://raw.githubusercontent.com/secureworks/family-of-client-ids-research/refs/heads/main/known-foci-clients.csv"] with (format="csv", ignoreFirstRecord=true)
+    | project-rename FociClientId = client_id
+    );
+// External lookup for ErrorCode description
+let ErrorCodes = (externaldata(ResultType: string, Message: string)
+    [@"https://raw.githubusercontent.com/f-bader/EntraID-ErrorCodes/refs/heads/main/EntraIDErrorCodes.csv"] with (format="csv", ignoreFirstRecord=true)
+    | project-rename ResultErrorDescription = Message
+    | project ResultType, ResultErrorDescription
+    );
+union SigninLogs, AADNonInteractiveUserSignInLogs
+// Optional: Filter for specific time window, user and only successful sign-ins
+// | where UserPrincipalName == "<UserPrincipalName>"
+//         and CreatedDateTime between ( todatetime('<StartTime>') .. todatetime('<EndTime>') )
+//         and ResultType == "0"
+// Filter for sign-ins to home tenant only
+| where HomeTenantId == ResourceTenantId
+// Enrichment of device details        
+| extend DeviceDetail = iff(isempty(DeviceDetail_dynamic), todynamic(DeviceDetail_string), DeviceDetail_dynamic)
+| extend DeviceId = tostring(tolower(DeviceDetail.deviceId))
+| extend DeviceName = tostring(toupper(DeviceDetail.displayName))
+// Enrichment of token protection details
+| extend TokenProtectionStatus = iff(isempty(TokenProtectionStatusDetails_dynamic), todynamic(TokenProtectionStatusDetails_string), TokenProtectionStatusDetails_dynamic)
+| extend SignInSessionStatus = TokenProtectionStatus.signInSessionStatus
+// Lookup for FOCI client
+| join kind=inner (FociClientApplications) on $left.AppId == $right.FociClientId
+| extend IsFoci = iff((AppId == FociClientId), "true", "false")
+| join kind = leftouter (NetworkAccessTraffic
+// Correlation with GSA network traffic
+    | project
+        TimeGenerated,
+        TransactionId,
+        ConnectionId,
+        IPAddress = SourceIp,
+        AgentVersion,
+        UserId,
+        DeviceId,
+        UniqueTokenIdentifier = UniqueTokenId,
+        InitiatingProcessName
+    )
+    on UserId, DeviceId, UniqueTokenIdentifier, IPAddress
+| extend TokenAcquiredThroughGsa = iff((isnotempty(ConnectionId)), "true", "false")
+// Lookup for Error Code
+| join kind=leftouter (ErrorCodes) on ResultType
+// Filtering for specific token properties
+| where IncomingTokenType == "none" and SignInSessionStatus == "bound"
+| project
+    StolenTokenType = IncomingTokenType,
+    StolenTokenApp = AppDisplayName,
+    StolenTokenFromGsa = TokenAcquiredThroughGsa,
+    StolenTokenStatus = SignInSessionStatus,
+    StolenTokenUniqueTokenId = UniqueTokenIdentifier,
+    StolenTokenProcessName = InitiatingProcessName,
+    StolenTokenIsFoci = IsFoci,
+    SessionId,
+    CorrelationId,
+    ResultType,
+    OriginalRequestId,
+    IPAddress,
+    StolenTimestamp = CreatedDateTime
+// Lookup to get error codes
+| join kind=leftouter (ErrorCodes) on ResultType
+// Get details of UniqueTokenIdentifier and TokenProtection for Diagnostic logs
+| join kind = inner (
+    union AADNonInteractiveUserSignInLogs, SigninLogs
+    // Enrichment of device details        
+    | extend DeviceDetail = iff(isempty(DeviceDetail_dynamic), todynamic(DeviceDetail_string), DeviceDetail_dynamic)
+    | extend DeviceId = tostring(tolower(DeviceDetail.deviceId))
+    | extend DeviceName = tostring(toupper(DeviceDetail.displayName))            
+    | extend TokenProtectionStatus = iff(isempty(TokenProtectionStatusDetails_dynamic), todynamic(TokenProtectionStatusDetails_string), TokenProtectionStatusDetails_dynamic)
+    | extend SignInSessionStatus = TokenProtectionStatus.signInSessionStatus
+    | join kind=leftouter (FociClientApplications) on $left.AppId == $right.FociClientId
+    | extend IsFoci = iff((AppId == FociClientId), "true", "false")
+    | project 
+        SessionId,
+        CorrelationId,
+        ErrorCode = ResultType,
+        ResultType,
+        OriginalRequestId,
+        IPAddress,
+        UniqueTokenIdentifier,
+        SignInSessionStatus,
+        IsFoci,
+        DeviceId,
+        CreatedDateTime,
+        AppDisplayName,
+        ResourceDisplayName,
+        UserId
+) on SessionId, CorrelationId, ResultType, OriginalRequestId, IPAddress
+// Remove tokens which has been issued from compliant network
+| join kind = anti (NetworkAccessTraffic
+    | where TimeGenerated >ago(1d)
+    | project
+        TimeGenerated,
+        TransactionId,
+        ConnectionId,
+        IPAddress = SourceIp,
+        AgentVersion,
+        UserId,
+        DeviceId,
+        UniqueTokenIdentifier = UniqueTokenId,
+        InitiatingProcessName
+) on UserId, DeviceId, UniqueTokenIdentifier, IPAddress
+| extend IsOutsideOfGsa = "true"
+| project UserPrincipalName, StolenTimestamp, StolenTokenType, StolenTokenApp, StolenTokenIsFoci, StolenTokenStatus, StolenTokenProcessName, SessionId, SignInTime = CreatedDateTime, AppDisplayName, ResourceDisplayName, SignInSessionStatus, IsFoci, IsOutsideOfGsa, UniqueTokenIdentifier, ErrorCode, ResultErrorDescription
+| sort by SignInTime asc

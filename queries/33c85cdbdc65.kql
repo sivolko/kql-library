@@ -1,0 +1,18 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe=30d;
+IdentityInfo
+| where TimeGenerated > ago(21d)
+| where AssignedRoles has_any ("Exchange Administrator", "Global Administrator")
+| summarize arg_max(TimeGenerated, *) by AccountUPN
+| project UserId=AccountUPN
+| join kind=inner (
+OfficeActivity
+| where TimeGenerated > ago(timeframe)
+| where OfficeWorkload == "Exchange"
+| where Operation == "MailItemsAccessed")
+on UserId
+| where UserId != MailboxOwnerUPN
+| project TimeGenerated, UserId, MailboxOwnerUPN, Operation, UserType, ResultStatus, Client_IPAddress, ExternalAccess, Logon_Type, OfficeWorkload

@@ -1,0 +1,20 @@
+// Source: https://github.com/mx-oss/KQL-DetectionRules-HuntingQueries
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let UserEPPSExec =
+DeviceEvents 
+| where ActionType == "GetClipboardData" // Commande PowerShell exécutée à partir du presse-papiers
+| where InitiatingProcessFileName == "powershell.exe"
+| distinct DeviceName;
+// Étape 2 : Identifier les commandes PowerShell encodées exécutées sur les appareils utilisés par des utilisateurs non technique
+DeviceProcessEvents
+| where InitiatingProcessFileName has "powershell.exe" and InitiatingProcessCommandLine has "-EncodedCommand"
+| where AccountName != "system" and AccountName != "local service" and AccountName != "administrator"
+| where DeviceName has_any(UserEPPSExec) // Appareil utilisé par un utilisateur exécutant une commande PowerShell encodée
+//
+// MITRE 
+// Execution (TA0002) : Les attaquants utilisent des scripts PowerShell pour exécuter du code malveillant
+// User Execution (T1204) : Les attaquants comptent sur les actions des utilisateurs, comme copier-coller des scripts malveillants, souvent via des techniques d'ingénierie sociale
+// Command and Scripting Interpreter: PowerShell (T1059.001) : Les attaquants abusent des commandes et scripts PowerShell pour exécuter des actions malveillantes
+//

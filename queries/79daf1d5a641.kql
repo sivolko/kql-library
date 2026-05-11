@@ -1,0 +1,21 @@
+// Source: https://github.com/ugurkocde/KQL_Intune
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where OperationName == "Sign-in activity"
+| where UserDisplayName != "On-Premises Directory Synchronization Service Account"
+| where isnotempty(Status)
+| extend Login_Status = tostring(todynamic(Status).errorCode) // Check the error code here: https://login.microsoftonline.com/error
+| extend Login_Status_Info = tostring(todynamic(Status).failureReason)
+| extend Device_Join_Status = tostring(todynamic(DeviceDetail).trustType)
+| extend location_country = tostring(todynamic(LocationDetails).countryOrRegion)
+| extend location_city = tostring(todynamic(LocationDetails).city)
+| extend location_state = tostring(todynamic(LocationDetails).state)
+| extend Location = strcat(location_country, " ", "/", " ", location_state, " ", "/"," ", location_city)
+| extend Authentication_Method = tostring(todynamic(AuthenticationDetails).[0].authenticationMethod)
+| extend Authentication_Detail = tostring(todynamic(AuthenticationDetails).[0].authenticationStepResultDetail)
+| extend Authentication_Success = tostring(todynamic(AuthenticationDetails).[0].succeeded)
+| where isnotempty(Device_Join_Status) 
+| where AppDisplayName == "Windows Sign In"
+| project TimeGenerated, UserDisplayName, AppDisplayName, Login_Status, Login_Status_Info, Device_Join_Status, Location,  Authentication_Method, Authentication_Detail, Authentication_Success

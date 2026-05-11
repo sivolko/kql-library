@@ -1,0 +1,78 @@
+// Source: https://github.com/lenoshz/active-directory-security-lab
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4624
+| where LogonType == 3  // Network logon
+| where AuthenticationPackageName == "NTLM"
+| where TargetUserName !endswith "$"  // Exclude machine accounts
+// Exclude known legitimate sources
+| where IpAddress !in ("192.168.1.100", "127.0.0.1", "-", "::1")
+| project 
+    TimeGenerated,
+    TargetUserName,
+    TargetDomainName,
+    IpAddress,
+    WorkstationName,
+    LogonProcessName,
+    AuthenticationPackageName
+| summarize 
+    LogonCount = count(),
+    SourceIPs = make_set(IpAddress, 10),
+    Workstations = make_set(WorkstationName, 10)
+  by TargetUserName, bin(TimeGenerated, 15m)
+| where LogonCount >= 1
+| extend AlertDescription = strcat("NTLM logon for ", TargetUserName, " from unusual source")
+| project TimeGenerated, TargetUserName, LogonCount, SourceIPs, Workstations, AlertDescription
+
+// Alternative: Detect explicit credential logon (common with PtH tools)
+/*
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4648
+| where TargetUserName !endswith "$"
+| project 
+    TimeGenerated,
+    SubjectUserName,
+    TargetUserName,
+    TargetServerName,
+    ProcessName,
+    IpAddress
+| where SubjectUserName != TargetUserName
+| summarize Count = count() by SubjectUserName, TargetUserName, TargetServerName
+| where Count >= 1
+*/
+
+// Detect NTLM validation events
+/*
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4776
+| where TargetUserName !endswith "$"
+| extend SourceWorkstation = Workstation
+| project TimeGenerated, TargetUserName, SourceWorkstation, Status
+| summarize 
+    SuccessCount = countif(Status == "0x0"),
+    FailCount = countif(Status != "0x0")
+  by TargetUserName, SourceWorkstation
+| where SuccessCount > 0
+*/
+
+// Comprehensive PtH detection
+/*
+let NTLMLogons = SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4624 and LogonType == 3 and AuthenticationPackageName == "NTLM"
+| project TimeGenerated, TargetUserName, IpAddress, EventType = "NTLM_Logon";
+
+let ExplicitCreds = SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4648
+| project TimeGenerated, TargetUserName, IpAddress, EventType = "Explicit_Creds";
+
+union NTLMLogons, ExplicitCreds
+| summarize EventCount = count() by TargetUserName, IpAddress, EventType
+| where EventCount >= 1
+*/

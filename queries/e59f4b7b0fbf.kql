@@ -1,0 +1,58 @@
+// Source: https://github.com/LaurieRhodes/kustainer-ui
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+.create-merge table SyslogRaw (records:dynamic)
+
+.create-or-alter table SyslogRaw ingestion json mapping 'SyslogRawMapping' '[{"column":"records","Properties":{"path":"$.records"}}]'
+
+.create-merge table Syslog(
+TenantId:string,
+SourceSystem:string,
+TimeGenerated:datetime,
+Computer:string,
+EventTime:datetime,
+Facility:string,
+HostName:string,
+SeverityLevel:string,
+SyslogMessage:string,
+ProcessID:int,
+HostIP:string,
+ProcessName:string,
+MG:string,
+CollectorHostName:string,
+Type:string,
+['_ItemId']:string,
+['_ResourceId']:string,
+['_SubscriptionId']:string,
+['_TimeReceived']:datetime)
+
+.create-or-alter function SyslogExpand {
+SyslogRaw
+//| extend events = records
+| mv-expand events = records
+| project
+TenantId=tostring(events.TenantId),
+SourceSystem=tostring(events.SourceSystem),
+TimeGenerated=todatetime(events.TimeGenerated),
+Computer=tostring(events.Computer),
+EventTime=todatetime(events.EventTime),
+Facility=tostring(events.Facility),
+HostName=tostring(events.HostName),
+SeverityLevel=tostring(events.SeverityLevel),
+SyslogMessage=tostring(events.SyslogMessage),
+ProcessID=toint(events.ProcessID),
+HostIP=tostring(events.HostIP),
+ProcessName=tostring(events.ProcessName),
+MG=tostring(events.MG),
+CollectorHostName=tostring(events.CollectorHostName),
+Type=tostring(events.Type),
+_ItemId=tostring(''),
+_ResourceId=tostring(''),
+_SubscriptionId=tostring(''),
+_TimeReceived=todatetime(now())}
+
+.alter table Syslog policy update @'[{"Source": "SyslogRaw", "Query": "SyslogExpand()", "IsEnabled": "False", "IsTransactional": true}]'
+
+.alter table Syslog policy update @'[{"Source": "SyslogRaw", "Query": "SyslogExpand()", "IsEnabled": "True", "IsTransactional": true}]'
+

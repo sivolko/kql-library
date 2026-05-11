@@ -1,0 +1,14 @@
+// Source: https://github.com/griffin31-lab/Griffin31-ToolKit
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| project LinkCreatedTime=TimeGenerated, Operation, UserWhoShared=UserId, OfficeObjectId
+| where Operation in ('AddedToSecureLink', 'SecureLinkCreated', 'SecureLinkUpdated', 'SharingInvitationCreated')
+| join kind=inner (
+    OfficeActivity
+    | project LinkClickedTime=TimeGenerated, Operation, UserWhoAccessed=UserId, OfficeObjectId
+  ) on OfficeObjectId
+| where UserWhoAccessed !endswith "yourdomain.com" and UserWhoAccessed != "app@sharepoint"
+| extend ExternalOperation=Operation1
+| summarize ExternalUsers=make_set(UserWhoAccessed) by UserWhoShared, OfficeObjectId, ExternalOperation

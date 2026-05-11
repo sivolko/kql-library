@@ -1,0 +1,9 @@
+// Source: https://github.com/DGovEnterprise/wasoc-notebook
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation in ("FileSyncDownloadedFull", "FileDownloaded")
+| where UserId contains "#ext#"
+| summarize Count=count() by FileUrl = OfficeObjectId
+| sort by Count desc

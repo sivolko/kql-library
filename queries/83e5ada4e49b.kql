@@ -1,0 +1,12 @@
+// Source: https://github.com/vboyev-MSFT/MITRE-aligned-Advanced-Hunting-KQL-library-Windows-
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let usbWindow = 10m;
+let usbMounts = DeviceEvents
+  | where ActionType in ("UsbDriveMount","UsbDriveDriveLetterChanged","UsbDriveUnmount");
+DeviceFileEvents
+| where ActionType in ("FileCreated","FileRenamed","FileModified")
+| join kind=inner usbMounts on DeviceId
+| where DeviceFileEvents.Timestamp between (usbMounts.Timestamp .. usbMounts.Timestamp + usbWindow)
+| project Timestamp=DeviceFileEvents.Timestamp, DeviceName, FileName, FolderPath, ActionType, usbEvent=usbMounts.ActionType

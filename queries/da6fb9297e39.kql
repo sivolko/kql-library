@@ -1,0 +1,14 @@
+// Source: https://github.com/frances-saunders/cybersecurity-portfolio
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeWindow = 15m;
+Zabbix_Events_CL
+| where TimeGenerated > ago(timeWindow)
+| where Severity == "High" or Severity == "Disaster"
+| join kind=inner (
+    SecurityEvent
+    | where TimeGenerated > ago(timeWindow)
+    | where EventID in (4688, 4625, 4624) // suspicious logons, process creation
+) on Computer
+| project TimeGenerated, Computer, Severity, Problem=ProblemName, SecurityEventID=EventID, Account, LogonType, Process

@@ -1,0 +1,28 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let starttime = 7d;
+let timeframe = 1h;
+let threshold = 30;
+let sensitivity = 2;
+let operations = dynamic(["FileSyncDownloadedFull","FileDownloaded"]);
+let outlierusers=
+OfficeActivity
+| where TimeGenerated > ago(starttime)
+| where Operation in (['operations'])
+| project TimeGenerated, UserId
+| order by TimeGenerated
+| summarize Events=count()by UserId, bin(TimeGenerated, timeframe)
+| where Events > threshold
+| summarize EventCount=make_list(Events),TimeGenerated=make_list(TimeGenerated) by UserId
+| extend outliers=series_decompose_anomalies(EventCount,sensitivity)
+| mv-expand TimeGenerated, EventCount, outliers
+| where outliers == 1
+| distinct UserId;
+OfficeActivity
+| where TimeGenerated > ago(starttime)
+| where Operation in (['operations'])
+| where UserId in (outlierusers)
+| summarize DownloadCount=count()by UserId, bin(TimeGenerated, timeframe)
+| render timechart

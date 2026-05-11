@@ -1,0 +1,6 @@
+// Source: https://github.com/Crimson7research/C7SigmaTools
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where ScriptBlockText contains "\\Comms\\Unistore\\data"

@@ -1,0 +1,7 @@
+// Source: https://github.com/hchiphong/KQL
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated >ago(30d)
+| where OperationNameValue  == 'MICROSOFT.WEB/SITES/CONFIG/SNAPSHOTS/LISTSECRETS/ACTION'

@@ -1,0 +1,15 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue startswith "Microsoft.SecurityInsights/watchlists"
+| where OperationName has_any ("delete", "write")
+| where ActivityStatus == "Succeeded"
+| extend URI = tostring(parse_json(HTTPRequest).uri)
+| parse URI with * '/workspaces/' Workspace: string '/' *
+| parse URI with * '/watchlists/' Delimiter1: string '/' *
+| parse URI with * '/watchlists/' Delimiter2: string '?' *
+| extend Watchlist = coalesce(Delimiter1, Delimiter2)
+| extend ChangedBy = Caller
+| project TimeGenerated, OperationName, Watchlist, Workspace, ResourceGroup, ChangedBy

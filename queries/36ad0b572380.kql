@@ -1,0 +1,11 @@
+// Source: https://github.com/chadmcox/Sentinel-and-Defender-Queries
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents 
+| where FailureReason == "WrongPassword"
+| where AccountName !has "$"
+| where Application == "Active Directory"
+| summarize hourlybadpassword =  count() by bin(Timestamp,1h) 
+| where hourlybadpassword > 20000
+| sort by Timestamp desc 

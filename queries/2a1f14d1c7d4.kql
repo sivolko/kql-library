@@ -1,0 +1,12 @@
+// Source: https://github.com/n3tsurge/Azure-Sentinel
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where RecordType in ("ExchangeAdmin") and Operation in ("Set-AuthenticationPolicy")
+| extend Params = todynamic(Parameters)
+| mv-expand Params
+| extend AuthMethod = parse_json(Params).Name
+| extend Value = parse_json(Params).Value
+| extend SourceUser = split(UserId, "@")[0]
+| where AuthMethod contains "AllowBasicAuth" and Value == "True"

@@ -1,0 +1,13 @@
+// Source: https://github.com/ugurkocde/kql_search_submissions
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(90d) and TimeGenerated < ago(7d)
+| distinct Operation
+| join kind=rightanti (
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | summarize NewOfficeOperations=count()by Operation, OfficeWorkload)
+    on Operation
+| sort by NewOfficeOperations desc 

@@ -1,0 +1,5 @@
+// Source: https://github.com/ge0mant1s/SOaC-Enterprise
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog | where DeviceVendor == "WAF" | where Activity contains "SQL" or Activity contains "../" or Activity contains "<script" or Activity contains "cmd.exe" | where RequestURL contains ".php" or RequestURL contains ".jsp" or RequestURL contains ".asp" | where LogSeverity >= 7 | project TimeGenerated, SourceIP, RequestURL, Activity, RequestMethod

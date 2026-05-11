@@ -1,0 +1,15 @@
+// Source: https://github.com/pirateape/Azure-Security
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TenantDomain = "contoso.com";  // EDIT: Replace with your organisation's primary UPN domain
+
+OfficeActivity
+| where TimeGenerated > ago(1h)
+| where OfficeWorkload == "MicrosoftTeams"
+| where Operation == "FileDownloaded"
+| where UserId contains "#EXT#" or UserId !contains strcat("@", TenantDomain)
+| project TimeGenerated, UserId, TeamName = tostring(parse_json(SourceRelativeUrl)[0]), FileName = SourceFileName, ClientIP
+| summarize DownloadCount = count(), Files = make_set(FileName), Teams = make_set(TeamName), IPs = make_set(ClientIP) by UserId, bin(TimeGenerated, 10m)
+| where DownloadCount > 20
+| order by DownloadCount desc

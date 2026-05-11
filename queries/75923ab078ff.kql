@@ -1,0 +1,179 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let CopilotWindow = 60s;
+let FileAccessThreshold = 10;  // flag if > 10 files accessed in window
+
+let CopilotSummarizationEvents =
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | where RecordType == "Copilot"
+    | where Operation in ("CopilotEmailSummarization", "CopilotDocumentSummarization",
+                          "CopilotInteraction")
+    | project CopilotTime = TimeGenerated, UserId, CopilotOp = Operation,
+              ClientIP, SessionId = tostring(parse_json(AdditionalInfo).sessionId);
+
+let OneDriveFileEvents =
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | where Workload in ("SharePoint", "OneDrive")
+    | where Operation in ("FileAccessed", "FileListed", "FolderListed",
+                          "SearchQueryPerformed", "FileDownloaded")
+    | project FileTime = TimeGenerated, UserId, FileOp = Operation, ObjectId;
+
+CopilotSummarizationEvents
+| join kind=inner (OneDriveFileEvents) on UserId
+| where (FileTime - CopilotTime) between (0s .. CopilotWindow)
+| summarize
+    CopilotTime = any(CopilotTime),
+    CopilotOp = any(CopilotOp),
+    FileAccessCount = count(),
+    FilesSampled = make_set(ObjectId, 5),
+    ClientIP = any(ClientIP)
+    by UserId, bin(CopilotTime, 1m)
+| where FileAccessCount > FileAccessThreshold
+| extend Severity = case(
+    FileAccessCount > 50, "High",
+    FileAccessCount > 20, "Medium",
+    "Low"
+)
+| project-reorder Severity, UserId, CopilotTime, CopilotOp, FileAccessCount, FilesSampled, ClientIP
+| sort by FileAccessCount desc
+
+
+// ============================================================================
+// Query 2: Copilot session triggering external share creation
+//
+// Rationale: Creating a SharePoint external share immediately after Copilot
+// summarization is the canonical EchoLeak exfil path via trusted domain
+// (sharepoint.com is allowlisted by corporate DLP). The tight temporal
+// correlation with a Copilot event is the distinguishing signal.
+// ============================================================================
+let ExfilWindow = 120s;
+
+let CopilotEvents =
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | where RecordType == "Copilot"
+    | where Operation has_any ("Summariz", "CopilotInteraction")
+    | project CopilotTime = TimeGenerated, UserId, ClientIP;
+
+let ExternalShareEvents =
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | where Workload == "SharePoint"
+    | where Operation in ("SharingInvitationCreated", "AnonymousLinkCreated",
+                          "CompanyShareableLinkCreated", "SecureLinkCreated")
+    | project ShareTime = TimeGenerated, UserId,
+              ShareTarget = tostring(parse_json(AdditionalInfo).targetUserOrGroupName),
+              SharedObject = ObjectId;
+
+CopilotEvents
+| join kind=inner (ExternalShareEvents) on UserId
+| where (ShareTime - CopilotTime) between (0s .. ExfilWindow)
+| extend SecondsBetween = datetime_diff('second', ShareTime, CopilotTime)
+| summarize
+    CopilotTime = any(CopilotTime),
+    ShareTime = any(ShareTime),
+    SecondsBetween = any(SecondsBetween),
+    ShareTarget = any(ShareTarget),
+    SharedObjects = make_set(SharedObject, 10)
+    by UserId, ClientIP
+| where isnotempty(ShareTarget)
+| extend IsExternalTarget = ShareTarget !endswith "corp.lab.local"
+| where IsExternalTarget == true
+| project-reorder UserId, CopilotTime, ShareTime, SecondsBetween, ShareTarget, SharedObjects
+| sort by SecondsBetween asc
+
+
+// ============================================================================
+// Query 3: HTML emails with hidden-text injection patterns triggering
+//          high Copilot summarization activity
+//
+// Rationale: Correlate email delivery (Defender for O365 logs) with
+// subsequent Copilot activity spike. An email with anomalous HTML structure
+// (hidden divs, zero-font-size) that precedes a Copilot exfil pattern is
+// strong evidence of EchoLeak delivery.
+// ============================================================================
+let EmailCopilotCorrelationWindow = 10m;
+
+// Emails with suspicious HTML (Defender for O365 / EmailEvents)
+let SuspiciousEmails =
+    EmailEvents
+    | where TimeGenerated > ago(7d)
+    | where EmailDirection == "Inbound"
+    | where isnotempty(RecipientEmailAddress)
+    // Flag emails with hidden HTML injection patterns
+    | where EmailBodyHtml has_any (
+        "display:none", "font-size:0", "color:white", "color:#fff",
+        "color:#ffffff", "line-height:0"
+    )
+    | where EmailBodyHtml has_any (
+        "SYSTEM", "OVERRIDE", "directive", "compliance", "audit mode",
+        "enumerate", "OneDrive", "SharePoint", "POST"
+    )
+    | project
+        EmailTime = TimeGenerated,
+        Recipient = RecipientEmailAddress,
+        Sender = SenderAddress,
+        Subject,
+        ThreatTypes;
+
+// Copilot activity for those recipients
+let CopilotActivity =
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | where RecordType == "Copilot"
+    | project CopilotTime = TimeGenerated, UserId, Operation;
+
+SuspiciousEmails
+| join kind=inner (
+    CopilotActivity
+    | extend NormalizedUser = tolower(UserId)
+) on $left.Recipient == $right.NormalizedUser
+| where (CopilotTime - EmailTime) between (0s .. EmailCopilotCorrelationWindow)
+| summarize
+    EmailTime = any(EmailTime),
+    Sender = any(Sender),
+    Subject = any(Subject),
+    FirstCopilotActivity = min(CopilotTime),
+    CopilotEventCount = count(),
+    Operations = make_set(Operation, 5)
+    by Recipient
+| extend MinutesBetweenEmailAndCopilot =
+    datetime_diff('minute', FirstCopilotActivity, EmailTime)
+| where MinutesBetweenEmailAndCopilot < 10
+| project-reorder Recipient, Sender, Subject, EmailTime, FirstCopilotActivity,
+                  MinutesBetweenEmailAndCopilot, CopilotEventCount, Operations
+| sort by MinutesBetweenEmailAndCopilot asc
+
+
+// ============================================================================
+// Query 4: Copilot-initiated Power Automate / Logic App webhook calls
+//
+// Rationale: Power Automate HTTP trigger URLs (*.logic.azure.com) are a known
+// EchoLeak exfil channel that bypasses DLP. An outbound POST to a Logic App
+// endpoint correlated with a Copilot session is a high-confidence indicator.
+// ============================================================================
+
+CloudAppEvents
+| where TimeGenerated > ago(7d)
+| where Application == "Microsoft Power Automate"
+| where ActionType in ("HttpTriggerReceived", "FlowRunStarted")
+| extend CallerInfo = parse_json(RawEventData)
+| extend CallerApp = tostring(CallerInfo.callerApplicationId)
+| where CallerApp has_any ("Copilot", "Microsoft.Copilot", "m365copilot")
+| join kind=leftouter (
+    OfficeActivity
+    | where TimeGenerated > ago(7d)
+    | where RecordType == "Copilot"
+    | project CopilotTime = TimeGenerated, UserId, CopilotOp = Operation
+) on $left.AccountObjectId == $right.UserId
+| where isnotempty(CopilotTime)
+| extend SecondsBetween =
+    abs(datetime_diff('second', TimeGenerated, CopilotTime))
+| where SecondsBetween < 60
+| project TimeGenerated, AccountDisplayName, CallerApp,
+          ActionType, CopilotOp, CopilotTime, SecondsBetween
+| sort by SecondsBetween asc

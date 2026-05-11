@@ -1,0 +1,8 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where (ActionType == "SmartScreenUrlWarning" and AdditionalFields.Experience == "CustomBlockList") or (AdditionalFields.ThreatName contains "EUS:Win32/Custom" and ActionType == "AntivirusDetection") or (AdditionalFields.ResponseCategory == "CustomBlockList" and ActionType == "ExploitGuardNetworkProtectionBlocked")
+| join kind=leftouter DeviceFileCertificateInfo on SHA1
+| summarize by FileName, RemoteUrl,DeviceName, Signer, InitiatingProcessAccountName, InitiatingProcessFileName, SHA1 

@@ -1,0 +1,22 @@
+// Source: https://github.com/lproux/azure-sre-agent-starter
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(##timeRange##)
+| where CategoryValue == "Alert"
+| summarize AlertCount = count(), LastAlert = max(TimeGenerated) by Resource, ResourceGroup, Level
+| order by AlertCount desc
+| take 30
+| project
+    Resource,
+    ResourceGroup,
+    AlertSeverity = Level,
+    AlertCount,
+    LastAlert,
+    Status = case(
+        Level == "Critical", "🔴 CRITICAL",
+        Level == "Error", "🟠 ERROR",
+        Level == "Warning", "🟡 WARNING",
+        "🔵 INFO"
+    )

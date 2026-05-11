@@ -1,0 +1,51 @@
+// Source: https://github.com/johnstel/azure-sre-agent-energy-grid
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TimeRange = 24h;           // Parameter: Time window
+let timeBin = 15m;             // Parameter: Time bucket granularity
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUERY LOGIC — Alert Rule Configuration Changes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Query alert rule configuration changes from Activity Log (via AzureActivity)
+// Shows when alert rules were created, updated, or deleted (NOT when alerts fired)
+AzureActivity
+| where TimeGenerated > ago(TimeRange)
+| where CategoryValue == "Administrative"
+| where OperationNameValue contains "MICROSOFT.INSIGHTS/SCHEDULEDQUERYRULES"
+| extend
+    AlertRuleName = tostring(split(ResourceId, "/")[-1]),
+    Operation = case(
+        OperationNameValue contains "WRITE", "CreateOrUpdate",
+        OperationNameValue contains "DELETE", "Delete",
+        "Other"
+    ),
+    ResourceId = column_ifexists("_ResourceId", ResourceId),
+    CorrelationId = column_ifexists("CorrelationId", "")
+| extend
+    TimeBucket = bin(TimeGenerated, timeBin)
+| project
+    TimeBucket,
+    TimeGenerated,
+    AlertRuleName,
+    Operation,
+    ActivityStatusValue,
+    ResourceGroup,
+    SubscriptionId,
+    ResourceId,
+    CorrelationId
+| order by TimeGenerated desc
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPECTED RESULTS
+// ─────────────────────────────────────────────────────────────────────────────
+// Shows when alert rules were created, updated, or deleted.
+// Does NOT show when alerts fired.
+//
+// For alert firing events, use:
+// - Azure Resource Graph: az graph query -q "alertsmanagementresources | where type == 'microsoft.alertsmanagement/alerts'"
+// - Or configure alert diagnostic settings (Wave 2) to send firing events to AlertEvidence table
+//
+// For Wave 1 UAT: Verify query syntax runs without error. Results show rule configuration changes only.

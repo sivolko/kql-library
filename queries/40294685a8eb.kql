@@ -1,0 +1,20 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TimeRoastingTrigger = 3;
+let NTPDeviceIPs =
+CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where ApplicationProtocol has "ntp"
+| where ipv4_is_private(DestinationIP)
+| distinct DestinationIP;
+DeviceNetworkEvents
+| where LocalIP has_any(NTPDeviceIPs)
+| where Protocol == "Udp"
+| summarize Count=count() by RemoteIP
+| sort by Count desc
+| where Count > TimeRoastingTrigger 
+
+
+// MITRE ATT&CK 

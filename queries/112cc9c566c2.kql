@@ -1,0 +1,16 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago (30d)
+| where OperationName == "Delete FIDO2 security key(s)"
+| parse AdditionalDetails with * 'AdditionalInfo","value":"' Result '"' * 
+| extend DeletedBy = iif(isnotnull((InitiatedBy.user).userPrincipalName),
+    InitiatedBy.user.userPrincipalName,
+    InitiatedBy.user.id)
+| extend IPAddress = (InitiatedBy.user).ipAddress
+| extend TargetAccount = iif(isnotnull(TargetResources[0].userPrincipalName),
+    TargetResources[0].userPrincipalName,
+    TargetResources[0].id)
+| project TimeGenerated, OperationName, Result, TargetAccount, DeletedBy, IPAddress

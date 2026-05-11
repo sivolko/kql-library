@@ -1,0 +1,51 @@
+// Source: https://github.com/robert-iw3/rnd_proto
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ics_networks = dynamic([
+    "192.168.1.0/24",
+    "10.100.0.0/16",
+    "172.16.100.0/24"
+]);
+// Define the list of authorized IT systems (e.g., management servers, engineering workstations) allowed to communicate with the ICS network.
+// This is a placeholder and MUST be populated with IPs/subnets of authorized systems to reduce false positives.
+let authorized_sources = dynamic([
+    "172.16.1.10", // Example: Engineering Workstation 1
+    "172.16.2.0/24", // Example: Management Subnet
+    "10.1.1.5" // Example: Data Historian
+]);
+
+// Combine network event data from common sources like firewalls and EDR.
+union isfuzzy=true CommonSecurityLog, DeviceNetworkEvents
+| where TimeGenerated > ago(1h)
+// Normalize IP address and port fields for consistency across data sources.
+| extend
+    SourceIp = iif(isnotempty(SourceIP), SourceIP, coalesce(SrcIpAddr, SourceIPAddress)),
+    DestinationIp = iif(isnotempty(DestinationIP), DestinationIP, coalesce(DstIpAddr, DestinationIPAddress)),
+    DestinationPort = iif(isnotempty(DestinationPort), DestinationPort, DstPortNumber)
+| where isnotempty(SourceIp) and isnotempty(DestinationIp)
+// Core detection logic: Identify traffic crossing the IT/OT boundary from/to an unauthorized source.
+| where
+    // Case 1: Traffic from an external, unauthorized source INTO the ICS network.
+    (
+        has_any_ipv4_prefix(DestinationIp, ics_networks) and
+        not(has_any_ipv4_prefix(SourceIp, ics_networks)) and
+        not(has_any_ipv4_prefix(SourceIp, authorized_sources))
+    ) or
+    // Case 2: Traffic FROM the ICS network to an external, unauthorized destination.
+    (
+        has_any_ipv4_prefix(SourceIp, ics_networks) and
+        not(has_any_ipv4_prefix(DestinationIp, ics_networks)) and
+        not(has_any_ipv4_prefix(DestinationIp, authorized_sources))
+    )
+// Summarize events to reduce alert volume and provide a concise overview.
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    TotalEvents = count(),
+    DestinationPorts = make_set(DestinationPort, 10),
+    Actions = make_set(coalesce(Action, DeviceAction, CommunicationDirection), 5)
+    by SourceIp, DestinationIp, DeviceName, InitiatingProcessAccountName, bin(TimeGenerated, 5m)
+| extend
+    RuleTitle = "Unusual Network Traffic to or from ICS/OT Network",
+    Description = strcat("Unauthorized network traffic detected between IP '", SourceIp, "' and ICS/OT IP '", DestinationIp, "'. This could indicate an unauthorized access attempt or policy violation.")

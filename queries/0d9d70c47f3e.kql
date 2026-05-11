@@ -1,0 +1,9 @@
+// Source: https://github.com/madhuperera/Microsoft_Sentinel
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where RecordType == "ExchangeItem"
+| where Operation contains "update"
+| where parse_json(tostring(parse_json(Item).ParentFolder)).Path == "\\Sent Items"
+| where isnotempty(parse_json(Item).Attachments)

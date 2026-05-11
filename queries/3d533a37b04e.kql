@@ -1,0 +1,61 @@
+// Source: https://github.com/83avenger/azure-sentinel-defender-lab
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4688                          // Process creation
+| where NewProcessName has_any ("powershell", "pwsh")
+| where isnotempty(CommandLine)
+// Exclude known management tools (adjust for your environment)
+| where SubjectUserName !in ("SYSTEM", "svc-sccm", "svc-wsus")
+| extend
+    // Obfuscation indicators
+    HasEncoded     = CommandLine has_any ("-EncodedCommand", "-enc ", "-e "),
+    HasIEX         = CommandLine has_any ("IEX", "Invoke-Expression"),
+    HasDownload    = CommandLine has_any ("DownloadString", "DownloadFile", "WebClient", "WebRequest", "curl", "wget"),
+    HasAMSIBypass  = CommandLine has_any ("AMSI", "AmsiScanBuffer", "amsiInitFailed"),
+    HasHidden      = CommandLine has_any ("-windowstyle hidden", "-w hidden", "-nop", "-NonInteractive"),
+    HasBypass      = CommandLine has_any ("Bypass", "Unrestricted", "-ExecutionPolicy bypass"),
+    HasReflection  = CommandLine has_any ("Reflection.Assembly", "[System.Reflection", "Load("),
+    CmdLength      = strlen(CommandLine),
+    ParentProcess  = tostring(ParentProcessName)
+// Dynamic risk scoring
+| extend RiskScore = toint(0)
+    + iff(HasEncoded,    3, 0)
+    + iff(HasIEX,        2, 0)
+    + iff(HasDownload,   2, 0)
+    + iff(HasAMSIBypass, 4, 0)
+    + iff(HasHidden,     1, 0)
+    + iff(HasBypass,     1, 0)
+    + iff(HasReflection, 2, 0)
+    + iff(CmdLength > 500, 1, 0)
+    + iff(CmdLength > 1000, 1, 0)
+| where RiskScore >= 3                           // Filter noise
+| extend
+    RiskLevel = case(
+        RiskScore >= 8, "CRITICAL",
+        RiskScore >= 5, "HIGH",
+        "MEDIUM"),
+    MitreTactic = "TA0002",
+    MitreTech   = case(
+        HasAMSIBypass, "T1562.001",
+        HasDownload,   "T1105",
+        HasEncoded,    "T1027",
+        "T1059.001")
+| project
+    TimeGenerated,
+    Computer,
+    Account,
+    SubjectUserName,
+    NewProcessName,
+    CommandLine,
+    ParentProcess,
+    RiskScore,
+    RiskLevel,
+    HasEncoded, HasIEX, HasDownload, HasAMSIBypass,
+    HasHidden, HasBypass, HasReflection,
+    CmdLength,
+    MitreTactic,
+    MitreTech
+| sort by RiskScore desc, TimeGenerated desc

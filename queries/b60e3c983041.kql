@@ -1,0 +1,112 @@
+// Source: https://github.com/hassiomqtt/sentinel
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let time_window = 24h;
+let large_transfer_threshold_mb = 100;
+
+// Unusual outbound data transfers
+let network_exfil = CommonSecurityLog
+| where TimeGenerated > ago(time_window)
+| where DeviceAction != "Deny"
+| where SentBytes > (large_transfer_threshold_mb * 1024 * 1024)
+| extend 
+    SentMB = round(SentBytes / 1024.0 / 1024.0, 2),
+    DestinationInfo = strcat(DestinationIP, ":", DestinationPort)
+| summarize
+    TotalSentMB = sum(SentMB),
+    UniqueDestinations = dcount(DestinationIP),
+    Destinations = make_set(DestinationInfo, 10)
+    by SourceUserName, SourceIP, DeviceProduct, bin(TimeGenerated, 1h)
+| where TotalSentMB > large_transfer_threshold_mb
+| project
+    TimeGenerated,
+    ExfiltrationType = "Network Transfer",
+    User = SourceUserName,
+    SourceIP,
+    DataVolumeMB = TotalSentMB,
+    UniqueDestinations,
+    Destinations,
+    Device = DeviceProduct;
+
+// Cloud storage uploads (SharePoint, OneDrive, etc.)
+let cloud_uploads = OfficeActivity
+| where TimeGenerated > ago(time_window)
+| where Operation in ("FileUploaded", "FileSyncUploadedFull", "FileModifiedExtended")
+| extend FileSizeMB = round(OfficeObjectId_int / 1024.0 / 1024.0, 2)
+| summarize
+    TotalFilesMB = sum(FileSizeMB),
+    FileCount = count(),
+    UniqueFiles = dcount(OfficeObjectId)
+    by UserId, ClientIP, Operation, bin(TimeGenerated, 1h)
+| where TotalFilesMB > 50 or FileCount > 100
+| project
+    TimeGenerated,
+    ExfiltrationType = "Cloud Upload",
+    User = UserId,
+    SourceIP = ClientIP,
+    DataVolumeMB = TotalFilesMB,
+    UniqueDestinations = 1,
+    Destinations = dynamic(["Cloud Storage"]),
+    Device = Operation;
+
+// Mass file downloads
+let mass_downloads = OfficeActivity
+| where TimeGenerated > ago(time_window)
+| where Operation in ("FileDownloaded", "FileSyncDownloadedFull")
+| summarize
+    DownloadCount = count(),
+    UniqueFiles = dcount(OfficeObjectId),
+    FileNames = make_set(OfficeObjectId, 20)
+    by UserId, ClientIP, bin(TimeGenerated, 1h)
+| where DownloadCount > 50
+| project
+    TimeGenerated,
+    ExfiltrationType = "Mass Download",
+    User = UserId,
+    SourceIP = ClientIP,
+    DataVolumeMB = toreal(DownloadCount), // Approximate
+    UniqueDestinations = UniqueFiles,
+    Destinations = FileNames,
+    Device = "Office365";
+
+// Email-based exfiltration (large attachments or many emails)
+let email_exfil = OfficeActivity
+| where TimeGenerated > ago(time_window)
+| where Operation == "Send"
+| where RecordType == "ExchangeItem"
+| summarize
+    EmailCount = count(),
+    UniqueRecipients = dcount(tostring(parse_json(AffectedItems)[0].RecipientAddress))
+    by UserId, ClientIP, bin(TimeGenerated, 1h)
+| where EmailCount > 50 or UniqueRecipients > 20
+| project
+    TimeGenerated,
+    ExfiltrationType = "Email Exfil",
+    User = UserId,
+    SourceIP = ClientIP,
+    DataVolumeMB = toreal(EmailCount),
+    UniqueDestinations = UniqueRecipients,
+    Destinations = dynamic(["Email Recipients"]),
+    Device = "Exchange";
+
+// Combine all exfiltration indicators
+union network_exfil, cloud_uploads, mass_downloads, email_exfil
+| extend
+    Severity = case(
+        DataVolumeMB > 1000, "Critical",
+        DataVolumeMB > 500, "High",
+        UniqueDestinations > 10, "High",
+        "Medium"
+    )
+| project
+    TimeGenerated,
+    Severity,
+    ExfiltrationType,
+    User,
+    SourceIP,
+    DataVolumeMB,
+    UniqueDestinations,
+    Destinations,
+    Device
+| order by DataVolumeMB desc

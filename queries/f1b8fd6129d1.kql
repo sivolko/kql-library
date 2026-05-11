@@ -1,0 +1,34 @@
+// Source: https://github.com/Lovedipsingh/sentinel-kql-detection-lab
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 1h;
+
+SecurityEvent
+| where TimeGenerated >= ago(Lookback)
+| where EventID == 4624
+// Exact match for SYSTEM account - do NOT use "contains" or "has"
+| where Account =~ @"NT AUTHORITY\SYSTEM"
+// LogonType 3 = Network, LogonType 10 = RemoteInteractive
+// Excluded LogonType 5 (Service) - legitimate and noisy
+| where LogonType in (3, 10)
+| where IpAddress !in ("-", "", "127.0.0.1", "::1")
+| extend Severity = "HIGH"
+| extend Description = case(
+    LogonType == 3,  "SYSTEM network logon detected - review for lateral movement or remote service activity",
+    LogonType == 10, "SYSTEM remote interactive logon detected - review for RDP abuse or session hijacking",
+    "SYSTEM logon detected"
+)
+| project TimeGenerated,
+          Account,
+          Computer,
+          IpAddress,
+          LogonType,
+          Severity,
+          Description
+
+// TUNING NOTES:
+// - Exclude approved management tooling: | where IpAddress !in ("10.0.1.5", "10.0.1.6")
+// - Exclude backup agents and remote admin platforms after validation
+// - LogonType 3 is common for legitimate remote service activity - review context carefully
+// - LogonType 10 is rare and high-confidence for SYSTEM - investigate immediately

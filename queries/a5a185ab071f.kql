@@ -1,0 +1,13 @@
+// Source: https://github.com/eshlomo1/Microsoft-Sentinel-SecOps
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs 
+| where TimeGenerated >= ago(1d)
+| where Category == "Policy" 
+| project ActivityDateTime, 
+        ActivityDisplayName, 
+        TargetResources[0].displayName, 
+        InitiatedBy.user.userPrincipalName,
+        InitiatedBy.user.roles,
+        InitiatedBy.user.ipAddress

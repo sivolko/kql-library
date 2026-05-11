@@ -1,0 +1,47 @@
+// Source: https://github.com/MBCloudTeck/NTLM-Must-Die
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID in (4624, 4776)
+| extend PackageName = tostring(parse_json(EventData).PackageName)
+| where PackageName contains "NTLM" or EventID == 4776
+| extend 
+    SourceSystem = tostring(parse_json(EventData).WorkstationName),
+    NTLMVersion = case(
+        PackageName contains "NTLM V1", "NTLMv1",
+        PackageName contains "NTLM V2", "NTLMv2",
+        "Unknown"
+    )
+| where isnotempty(SourceSystem)
+| summarize 
+    TotalAuthentications = count(),
+    NTLMv1Count = countif(NTLMVersion == "NTLMv1"),
+    NTLMv2Count = countif(NTLMVersion == "NTLMv2"),
+    UniqueAccounts = dcount(Account),
+    UniqueTargets = dcount(Computer),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Accounts = make_set(Account, 10),
+    Targets = make_set(Computer, 10)
+    by SourceSystem
+| extend RiskLevel = case(
+    NTLMv1Count > 0, "Critical - NTLMv1 in use",
+    TotalAuthentications > 1000, "High - Heavy NTLM usage",
+    TotalAuthentications > 100, "Medium - Moderate NTLM usage",
+    "Low"
+)
+| project 
+    SourceSystem,
+    TotalAuthentications,
+    NTLMv1Count,
+    NTLMv2Count,
+    UniqueAccounts,
+    UniqueTargets,
+    RiskLevel,
+    FirstSeen,
+    LastSeen,
+    TopAccounts = Accounts,
+    TopTargets = Targets
+| order by NTLMv1Count desc, TotalAuthentications desc

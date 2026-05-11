@@ -1,0 +1,106 @@
+// Source: https://github.com/LaurieRhodes/kustainer-ui
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+.create-merge table AzureActivityRaw (records:dynamic)
+
+.create-or-alter table AzureActivityRaw ingestion json mapping 'AzureActivityRawMapping' '[{"column":"records","Properties":{"path":"$.records"}}]'
+
+.create-merge table AzureActivity(
+OperationName:string,
+OperationNameValue:string,
+Level:string,
+ActivityStatus:string,
+ActivityStatusValue:string,
+ActivitySubstatus:string,
+ActivitySubstatusValue:string,
+ResourceGroup:string,
+SubscriptionId:string,
+CorrelationId:string,
+Caller:string,
+CallerIpAddress:string,
+Category:string,
+CategoryValue:string,
+HTTPRequest:string,
+Properties:string,
+EventSubmissionTimestamp:datetime,
+Authorization:string,
+ResourceId:string,
+OperationId:string,
+ResourceProvider:string,
+ResourceProviderValue:string,
+Resource:string,
+EventDataId:string,
+TenantId:string,
+TimeGenerated:datetime,
+SourceSystem:string,
+Authorization_d:dynamic,
+Claims:string,
+Claims_d:dynamic,
+Properties_d:dynamic,
+Hierarchy:string,
+Type:string,
+['_ItemId']:string,
+['_ResourceId']:string,
+['_SubscriptionId']:string,
+['_TimeReceived']:datetime)
+
+// AzureActivityExpand
+// Maps from native Azure Activity Log blob JSON (camelCase) to AzureActivity table (PascalCase).
+// Azure exports: operationName, callerIpAddress, resultType, category, identity, properties, time
+// Sentinel uses:  OperationNameValue, CallerIpAddress, ActivityStatusValue, CategoryValue, TimeGenerated
+//
+// Key mappings:
+//   resultType          → ActivityStatus/ActivityStatusValue (e.g. "Success", "Failure", "Start")
+//   resultSignature     → ActivitySubstatus (raw), after-dot portion → ActivitySubstatusValue
+//     "Succeeded."        → ActivitySubstatusValue = ""
+//     "Succeeded.OK"      → ActivitySubstatusValue = "OK"
+//     "Failed.BadRequest"  → ActivitySubstatusValue = "BadRequest"
+//   resourceId          → ResourceId, with keyword-based extraction for ResourceGroup/ResourceProvider
+//   identity.claims.upn → Caller (falls back to appid for service principals)
+.create-or-alter function AzureActivityExpand {
+AzureActivityRaw
+| mv-expand events = records
+| project
+    OperationName=tostring(events.operationName),
+    OperationNameValue=tostring(events.operationName),
+    Level=tostring(events.level),
+    ActivityStatus=tostring(events.resultType),
+    ActivityStatusValue=tostring(events.resultType),
+    ActivitySubstatus=tostring(events.resultSignature),
+    ActivitySubstatusValue=tostring(split(tostring(events.resultSignature), ".")[1]),
+    ResourceGroup=iff(tostring(events.resourceId) has "/resourceGroups/" or tostring(events.resourceId) has "/RESOURCEGROUPS/", tostring(split(tostring(events.resourceId), "/")[4]), ""),
+    SubscriptionId=tostring(split(tostring(events.resourceId), "/")[2]),
+    CorrelationId=tostring(events.correlationId),
+    Caller=coalesce(tostring(todynamic(todynamic(events.identity).claims).['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn']), tostring(todynamic(todynamic(events.identity).claims).upn), tostring(todynamic(todynamic(events.identity).claims).appid), ''),
+    CallerIpAddress=tostring(events.callerIpAddress),
+    Category=tostring(events.category),
+    CategoryValue=tostring(events.category),
+    HTTPRequest=tostring(events.httpRequest),
+    Properties=tostring(events.properties),
+    EventSubmissionTimestamp=datetime(null),
+    Authorization=tostring(todynamic(events.identity).authorization),
+    ResourceId=tostring(events.resourceId),
+    OperationId=tostring(events.correlationId),
+    ResourceProvider=iff(tostring(events.resourceId) has "/resourceGroups/" or tostring(events.resourceId) has "/RESOURCEGROUPS/", tostring(split(tostring(events.resourceId), "/")[6]), tostring(split(tostring(events.resourceId), "/")[4])),
+    ResourceProviderValue=iff(tostring(events.resourceId) has "/resourceGroups/" or tostring(events.resourceId) has "/RESOURCEGROUPS/", tostring(split(tostring(events.resourceId), "/")[6]), tostring(split(tostring(events.resourceId), "/")[4])),
+    Resource=tostring(split(tostring(events.resourceId), "/")[-1]),
+    EventDataId=tostring(todynamic(events.properties).eventDataId),
+    TenantId=tostring(events.tenantId),
+    TimeGenerated=todatetime(events.['time']),
+    SourceSystem='Azure',
+    Authorization_d=todynamic(todynamic(events.identity).authorization),
+    Claims=tostring(todynamic(events.identity).claims),
+    Claims_d=todynamic(todynamic(events.identity).claims),
+    Properties_d=todynamic(events.properties),
+    Hierarchy=tostring(todynamic(events.properties).hierarchy),
+    Type='AzureActivity',
+    _ItemId=tostring(events.['_ItemId']),
+    _ResourceId=tostring(events.resourceId),
+    _SubscriptionId=tostring(split(tostring(events.resourceId), "/")[2]),
+    _TimeReceived=now()
+}
+
+.alter table AzureActivity policy update @'[{"Source": "AzureActivityRaw", "Query": "AzureActivityExpand()", "IsEnabled": "False", "IsTransactional": true}]'
+
+.alter table AzureActivity policy update @'[{"Source": "AzureActivityRaw", "Query": "AzureActivityExpand()", "IsEnabled": "True", "IsTransactional": true}]'

@@ -1,0 +1,97 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let VIPUPNs = _GetWatchlist('ExchangeVIP')
+    | project userPrincipalName;
+let VIPACCTs = _GetWatchlist('ExchangeVIP')
+    | project sAMAccountName;
+let lookback = 14d;
+let CloudLockouts =
+SigninLogs
+| where UserPrincipalName in (VIPUPNs)
+| where TimeGenerated >= ago(lookback)
+| where ResultType == "50053" or tostring(Status.errorCode) == "50053"
+| extend Account = coalesce(UserPrincipalName, tostring(Identity))
+| extend ErrorCode = tostring(Status.errorCode)
+| extend FailureReason = coalesce(tostring(Status.failureReason), ResultDescription)
+| extend Reason = iff(isnotempty(FailureReason), FailureReason, "Account locked due to too many failed sign-ins")
+| extend Location = trim(" ,", strcat(tostring(LocationDetails.state), ", ", tostring(LocationDetails.countryOrRegion)))
+| project
+    TimeGenerated,
+    Account,
+    Source = "AzureAD",
+    Reason,
+    ErrorCode,
+    IPAddress,
+    ClientAppUsed,
+    AppDisplayName,
+    Location,
+    CallerComputer = tostring(""),
+    TargetDomain  = tostring(""),
+    Computer      = tostring("");
+let OnPremLockouts =
+SecurityEvent
+| where Account has_any (VIPACCTs)
+| where TimeGenerated >= ago(lookback)
+| where EventID == 4740
+| extend CallerComputer = tostring(extract(@"<Data Name=""CallerComputerName"">([^<]*)</Data>", 1, EventData))
+| extend TargetDomain  = tostring(extract(@"<Data Name=""TargetDomainName"">([^<]*)</Data>", 1, EventData))
+| extend Account       = tostring(TargetUserName)
+| extend Reason = iff(isnotempty(CallerComputer),
+                      strcat("AD lockout observed. Likely repeated bad password from ", CallerComputer),
+                      "AD lockout observed. Likely repeated bad password, cached creds, or service logon")
+| project
+    TimeGenerated,
+    Account,
+    Source = "OnPremAD",
+    Reason,
+    ErrorCode = tostring("4740"),
+    IPAddress = tostring(""),
+    ClientAppUsed = tostring(""),
+    AppDisplayName = tostring(""),
+    Location = tostring(""),
+    CallerComputer,
+    TargetDomain,
+    Computer;
+let RecentFailedLogons =
+SecurityEvent
+| where TimeGenerated >= ago(lookback)
+| where EventID == 4625
+| extend SubStatus = tostring(extract(@"<Data Name=""SubStatus"">([^<]*)</Data>", 1, EventData))
+| extend FailureHint =
+    case(
+        SubStatus == "0xC0000234", "Account is locked (0xC0000234)",
+        SubStatus == "0xC000006A", "Bad password (0xC000006A)",
+        SubStatus == "0xC000006F", "Attempted logon during restriction (0xC000006F)",
+        SubStatus == "0xC0000070", "Workstation restriction (0xC0000070)",
+        SubStatus == "0xC0000072", "Account disabled (0xC0000072)",
+        SubStatus == "0xC0000193", "Account expired (0xC0000193)",
+        SubStatus == "0xC0000224", "User must change password (0xC0000224)",
+        SubStatus == "0xC0000380", "Smartcard required (0xC0000380)",
+        isnotempty(SubStatus), strcat("Failed logon (", SubStatus, ")"),
+        "Failed logon"
+    )
+| project TimeGenerated, TargetUserName, Computer, SubStatus, FailureHint
+| summarize arg_max(TimeGenerated, *) by TargetUserName, Computer;
+let OnPremEnriched =
+OnPremLockouts
+| join kind=leftouter RecentFailedLogons
+    on $left.Account == $right.TargetUserName and $left.Computer == $right.Computer
+| extend Reason = strcat(Reason, iff(isnotempty(FailureHint), strcat(" | Last 4625: ", FailureHint), ""))
+| project
+    TimeGenerated,
+    Account,
+    Source,
+    Reason,
+    ErrorCode,
+    IPAddress,
+    ClientAppUsed,
+    AppDisplayName,
+    Location,
+    CallerComputer,
+    TargetDomain,
+    Computer;
+CloudLockouts
+| union OnPremEnriched
+| order by TimeGenerated desc

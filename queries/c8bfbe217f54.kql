@@ -1,0 +1,10 @@
+// Source: https://github.com/kcl-ghas-org/KevsKQL
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType in ("AntivirusScanCompleted")
+| extend ScanType = extract(@"ScanType"":""([^""]+)", 1, tostring(AdditionalFields))
+| summarize LastScan = max(Timestamp) by DeviceName, ScanType
+| order by LastScan desc

@@ -1,0 +1,130 @@
+// Source: https://github.com/t-granlund/ctu-dashboard
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ApprovedFederationDomains = dynamic([
+    "httbrands.com",
+    "bishops.co",
+    "frenchiesnails.com",
+    "thelashlounge.com",
+    "deltacrown.com"
+]);
+// Approved tenant IDs (same as cross-tenancy alert — belt and suspenders).
+let ApprovedTenantIds = dynamic([
+    "0c0e35dc-188a-4eb3-b8ba-61752154b407",  // HTT
+    "b5380912-79ec-452d-a6ca-6d897b19b294",  // BCC
+    "98723287-044b-4bbb-9294-19857d4128a0",  // FN
+    "3c7d2bf3-b597-4766-b5cb-2b489c2904d6",  // TLL
+    "ce62e17d-2feb-4e67-a115-8ea4af68da30"   // DCE
+]);
+// --- Part A: Federation Configuration Changes ---
+// Detect admin operations that modify Teams federation settings.
+let FederationConfigChanges = AuditLogs
+    | where TimeGenerated > ago(15m)
+    | where LoggedByService == "Teams" or Category == "Policy"
+    | where OperationName in (
+        "Set-CsTenantFederationConfiguration",
+        "Set federation configuration",
+        "Update federation settings",
+        "New-CsAllowedDomain",
+        "Remove-CsAllowedDomain",
+        "New-CsBlockedDomain",
+        "Remove-CsBlockedDomain",
+        "Set-CsExternalAccessPolicy",
+        "Set-CsTenantFederationConfiguration -AllowTeamsConsumer",
+        "Set-CsTenantFederationConfiguration -AllowPublicUsers"
+    )
+    // Capture what changed.
+    | mv-expand ModifiedProperty = TargetResources[0].modifiedProperties
+    | extend PropertyName = tostring(ModifiedProperty.displayName)
+    | extend OldValue = tostring(ModifiedProperty.oldValue)
+    | extend NewValue = tostring(ModifiedProperty.newValue)
+    | extend InitiatedByUPN = tostring(InitiatedBy.user.userPrincipalName)
+    | extend InitiatedByApp = tostring(InitiatedBy.app.displayName)
+    // Flag dangerous changes: enabling consumer access, switching to open federation, etc.
+    | extend IsDangerous = (
+        (PropertyName has "AllowTeamsConsumer" and NewValue has "True")
+        or (PropertyName has "AllowPublicUsers" and NewValue has "True")
+        or (PropertyName has "AllowFederatedUsers" and NewValue has "True")
+        or (OperationName has "Remove-CsBlockedDomain")
+    )
+    | extend AlertLevel = iff(IsDangerous,
+        "CRITICAL — Dangerous federation config change",
+        "HIGH — Federation config modified"
+    )
+    | project
+        TimeGenerated,
+        AlertLevel,
+        EventType            = "ConfigChange",
+        OperationName,
+        PropertyName,
+        OldValue,
+        NewValue,
+        Domain               = "",
+        InitiatedBy          = coalesce(InitiatedByUPN, InitiatedByApp, "Unknown"),
+        IsDangerous,
+        CorrelationId
+    ;
+// --- Part B: New Domain Added to Federation Allowlist ---
+// Detect when a new domain is added that isn't in our approved list.
+let NewDomainAdded = AuditLogs
+    | where TimeGenerated > ago(15m)
+    | where OperationName in (
+        "New-CsAllowedDomain",
+        "Add allowed domain",
+        "Add federated domain"
+    )
+    | extend DomainAdded = tostring(TargetResources[0].displayName)
+    | where DomainAdded !in (ApprovedFederationDomains)
+    | extend InitiatedByUPN = tostring(InitiatedBy.user.userPrincipalName)
+    | project
+        TimeGenerated,
+        AlertLevel           = "CRITICAL — Unapproved domain added to federation",
+        EventType            = "UnapprovedDomain",
+        OperationName,
+        PropertyName         = "AllowedDomain",
+        OldValue             = "",
+        NewValue             = DomainAdded,
+        Domain               = DomainAdded,
+        InitiatedBy          = coalesce(InitiatedByUPN, "Unknown"),
+        IsDangerous          = true,
+        CorrelationId
+    ;
+// --- Part C: Teams Communication with Unapproved External Tenants ---
+// Detect actual Teams conversations or meetings with non-approved external users.
+// Uses OfficeActivity table (Teams workload).
+let UnapprovedTeamsActivity = OfficeActivity
+    | where TimeGenerated > ago(24h)
+    | where OfficeWorkload == "MicrosoftTeams"
+    | where Operation in (
+        "MemberAdded",
+        "ChatCreated",
+        "MeetingParticipantDetail"
+    )
+    | mv-expand Member = parse_json(Members)
+    | extend MemberUPN = tostring(Member.UPN)
+    | extend MemberRole = tostring(Member.Role)
+    // Extract domain from UPN.
+    | extend MemberDomain = tostring(split(MemberUPN, "@")[1])
+    | where isnotempty(MemberDomain)
+    | where MemberDomain !in (ApprovedFederationDomains)
+    // Exclude common Microsoft service domains (noise).
+    | where MemberDomain !in ("microsoft.com", "microsoftsupport.com")
+    | project
+        TimeGenerated,
+        AlertLevel           = "HIGH — Teams activity with unapproved domain",
+        EventType            = "UnapprovedActivity",
+        OperationName        = Operation,
+        PropertyName         = "ExternalParticipant",
+        OldValue             = "",
+        NewValue             = MemberUPN,
+        Domain               = MemberDomain,
+        InitiatedBy          = tostring(UserId),
+        IsDangerous          = false,
+        CorrelationId        = tostring(OfficeObjectId)
+    ;
+// Union all three signal types.
+FederationConfigChanges
+| union NewDomainAdded
+| union UnapprovedTeamsActivity
+| sort by IsDangerous desc, TimeGenerated desc

@@ -1,0 +1,39 @@
+// Source: https://github.com/robert-iw3/rnd_proto
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe = 1h;
+
+// **CRITICAL TUNING STEP**: Populate this list with the IP addresses of your PLCs.
+// An accurate asset inventory is key to the success of this rule.
+let plc_ips = dynamic(["192.168.100.10", "192.168.100.11", "10.10.0.5", "x.x.x.x"]);
+
+// Define your OT network segments. Traffic from a PLC to a destination outside these ranges will be considered suspicious.
+let ot_subnets = dynamic(["192.168.100.0/24", "10.10.0.0/16"]);
+
+// **TUNING REQUIRED**: Add any known-good IT destinations that your PLCs are authorized to communicate with (e.g., data historians, MES servers, specific EWS).
+let authorized_it_destinations = dynamic(["172.16.5.10", "10.1.1.25", "y.y.y.y"]);
+
+// Using DeviceNetworkEvents as it provides rich context. CommonSecurityLog from a firewall can also be used, but field names will differ.
+DeviceNetworkEvents
+| where TimeGenerated > ago(timeframe)
+// Filter for traffic originating from a known PLC.
+| where DeviceIP in (plc_ips)
+// Filter for traffic going to a destination that is NOT in the defined OT subnets.
+| where not(ipv4_is_in_any_range(RemoteIP, ot_subnets))
+// Exclude traffic to known-good IT destinations.
+| where not(RemoteIP in (authorized_it_destinations))
+// Optional: Filter out expected broadcast/multicast traffic if noisy.
+| where not(ipv4_is_in_any_range(RemoteIP, dynamic(["224.0.0.0/4", "ff00::/8"])))
+// Summarize the anomalous connections to create a single alert per unique flow.
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    ConnectionCount = count(),
+    DestinationPorts = make_set(RemotePort),
+    Processes = make_set(InitiatingProcessFileName)
+    by PlcIP = DeviceIP, DestinationIP = RemoteIP, DestinationCountry = RemoteIPCountry
+| extend
+    timestamp = StartTime,
+    HostCustomEntity = PlcIP,
+    IPCustomEntity = DestinationIP

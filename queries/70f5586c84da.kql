@@ -1,0 +1,8 @@
+// Source: https://github.com/wagov/wasoc-globalqueries
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (4688)
+| where ParentProcessName contains "w3wp"
+| where NewProcessName contains "cmd.exe" or NewProcessName contains "powershell"

@@ -1,0 +1,21 @@
+// Source: https://github.com/julianobarbosa/claude-code-skills
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeRange = 24h;
+let failureThreshold = 10;
+SigninLogs
+| where TimeGenerated > ago(timeRange)
+| where ResultType != 0  // non-zero = failure
+| extend City = tostring(LocationDetails.city),
+         Country = tostring(LocationDetails.countryOrRegion),
+         Lat = todouble(LocationDetails.geoCoordinates.latitude),
+         Lon = todouble(LocationDetails.geoCoordinates.longitude)
+| summarize
+    FailureCount = count(),
+    DistinctUsers = dcount(UserPrincipalName),
+    Users = make_set(UserPrincipalName, 10),
+    ErrorCodes = make_set(ResultType, 5)
+    by Country, City, Lat, Lon
+| where FailureCount >= failureThreshold
+| sort by FailureCount desc

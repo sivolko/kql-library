@@ -1,0 +1,37 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 1h;
+let port_count_threshold = 160;
+let minConfidenceScore = 50;
+let ignoredactivity = dynamic(["deny","drop"]);
+let gpip = _GetWatchlist("gpgateway") | project GPGatewayIP;
+let siteip = _GetWatchlist("sitepubip") | project SitePublicIP;
+let dastip = _GetWatchlist("dastips") | project DastIP;
+let qualys_ips = _GetWatchlist("qualysips") | project QualysIP;
+let qualys_ranges = toscalar(_GetWatchlist("qualysips") | summarize make_set(QualysCIDR));
+let PortScanningIPs = CommonSecurityLog
+| where TimeGenerated > ago(lookback)
+| where DeviceVendor contains "Palo"
+| where Activity =~ 'TRAFFIC'
+| where isnotempty(DestinationPort) and isnotempty(SourceIP)
+| where not(ipv4_is_private(SourceIP))
+| where SourceIP !in (gpip)
+| where SourceIP !in (siteip)
+| where SourceIP !in (qualys_ips)
+| where SourceIP !in (dastip)
+| where not(ipv4_is_in_any_range(SourceIP, qualys_ranges))
+| where not(DeviceAction has_any (ignoredactivity))
+| summarize PortSet = make_set(DestinationPort) by SourceIP, bin(TimeGenerated, 15m)
+| where array_length(PortSet) > port_count_threshold
+| extend PortCount = array_length(PortSet);
+PortScanningIPs
+| join kind=leftouter (
+    ThreatIntelligenceIndicator
+    | where TimeGenerated > ago(14d)
+    | where ConfidenceScore >= minConfidenceScore
+    | project ThreatIP = NetworkIP, ThreatType, Description, ConfidenceScore
+) on $left.SourceIP == $right.ThreatIP
+| extend ThreatMatch = iff(isnotempty(ThreatType), "Yes", "No")
+| order by ThreatMatch desc, ConfidenceScore desc, PortCount desc

@@ -1,0 +1,5 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TI_Bag = ThreatIntelligenceIndicator | where isnotempty(NetworkSourceIP) | project NetworkSourceIP;

@@ -1,0 +1,33 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let idinfo=
+    IdentityInfo
+    | where TimeGenerated > ago(21d)
+    | summarize arg_max (TimeGenerated, *) by AccountUPN
+    | project
+        UserPrincipalName=AccountUPN,
+        AccountName,
+        AccountDisplayName,
+        JobTitle,
+        Country,
+        City,
+        Department;
+let aad=
+    SigninLogs
+    | where TimeGenerated > ago(30d)
+    | where ResultType == 0
+    | summarize arg_max(TimeGenerated, *) by UserPrincipalName
+    | project ['Last Azure AD Sign In']=TimeGenerated, UserPrincipalName;
+let ad=
+    SecurityEvent
+    | where TimeGenerated > ago(30d)
+    | project TimeGenerated, Computer, EventID, TargetUserName
+    | where EventID == "4624"
+    | summarize arg_max(TimeGenerated, TargetUserName) by AccountName=TargetUserName
+    | project ['Last AD Sign In']=TimeGenerated, AccountName;
+idinfo
+| lookup aad on UserPrincipalName
+| lookup ad on AccountName
+| project-reorder UserPrincipalName, AccountName, ['Last AD Sign In'], ['Last Azure AD Sign In']

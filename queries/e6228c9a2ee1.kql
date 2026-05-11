@@ -1,0 +1,12 @@
+// Source: https://github.com/CraigCloudITPro/Microsoft-Sentinel
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue =~ "MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/DELETE"
+| summarize
+    TimeGenerated = arg_max(TimeGenerated, Properties),
+    ActivityStatusValue = make_set(ActivityStatusValue, 5),
+    take_any(Caller, CallerIpAddress, OperationName, ResourceGroup, Resource)
+    by CorrelationId, _ResourceId, OperationNameValue
+| extend ResourceHierarchy = split(_ResourceId, "/")

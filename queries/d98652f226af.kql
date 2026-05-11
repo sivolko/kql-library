@@ -1,0 +1,8 @@
+// Source: https://github.com/hchiphong/KQL
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated >ago(30d)
+| where LoggedByService == 'B2C'
+| where OperationName =~ 'Initialize tenant'

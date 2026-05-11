@@ -1,0 +1,52 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let MaliciousIPs = (_GetWatchlist('IOCWatchlist')
+    | where ioc_type == "ip"
+    | project ioc_value, threat_actor, malware_family, confidence, source);
+
+pfSenseLogs                                    // uses the pfsense-parser.kql function
+| where Action in ("pass", "block")            // keep both allowed and denied hits
+| join kind=inner MaliciousIPs on $left.SourceIP == $right.ioc_value
+| project
+    TimeGenerated,
+    Action,
+    SourceIP,
+    DestinationIP,
+    DestinationPort,
+    Protocol,
+    threat_actor,
+    malware_family,
+    confidence,
+    source
+
+// -----------------------------------------------------------------------------
+// Hunt 2: Match watchlist IPs against Windows logon events
+// -----------------------------------------------------------------------------
+
+// let MaliciousIPs = (_GetWatchlist('IOCWatchlist')
+//     | where ioc_type == "ip"
+//     | project ioc_value, threat_actor, confidence);
+//
+// SecurityEvent
+// | where EventID in (4624, 4625)
+// | join kind=inner MaliciousIPs on $left.IpAddress == $right.ioc_value
+// | project TimeGenerated, EventID, IpAddress, TargetUserName, threat_actor, confidence
+
+// -----------------------------------------------------------------------------
+// Hunt 3: Match watchlist file hashes against Sysmon process events
+// -----------------------------------------------------------------------------
+
+// let MaliciousHashes = (_GetWatchlist('IOCWatchlist')
+//     | where ioc_type startswith "hash"
+//     | project ioc_value, malware_family, confidence);
+//
+// Event
+// | where Source == "Microsoft-Windows-Sysmon"
+// | where EventID == 1                        // process creation
+// | extend Hashes = extract_all(@"(\w+)=([A-Fa-f0-9]+)", dynamic([1,2]), RenderedDescription)
+// | mv-expand Hashes
+// | extend HashType = tostring(Hashes[0]), HashValue = tostring(Hashes[1])
+// | join kind=inner MaliciousHashes on $left.HashValue == $right.ioc_value
+// | project TimeGenerated, Computer, HashValue, malware_family, confidence, RenderedDescription

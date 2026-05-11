@@ -1,0 +1,26 @@
+// Source: https://github.com/MSJosh/TTTTUB
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+AADSignInEventsBeta   
+| where Timestamp >ago (60d) //Can change date to lesser date
+| where ErrorCode == 0   
+| where RiskLevelDuringSignIn >= 50   
+| project SignInTime=AccountUpn, AccountObjectId, SessionId, RiskLevelDuringSignIn, ApplicationId, Application   
+| join kind=leftouter
+(CloudAppEvents | where Timestamp > ago(60d) //Need to match above timestamp
+| where ActionType in ("Add application.", "Update application.","Update application – Certificates and secrets management ")   
+| extend appId =
+tostring(parse_json(RawEventData.Target[4].ID)) 
+| project   
+    Timestamp, 
+    ActionType, 
+    Application,   
+    ApplicationId,   
+    UserAgent, 
+    ISP, 
+    AccountObjectId,   
+    AppName=ObjectName,   
+    OauthApplicationId=appId,   
+    RawEventData ) on AccountObjectId   
+| where isnotempty(ActionType) 

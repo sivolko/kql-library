@@ -1,0 +1,21 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DevEvents = 
+DeviceEvents
+| extend DevTime = bin(Timestamp, 1s)
+| where ActionType =~ "ScheduledTaskCreated"
+| extend TaskName = trim(@"\\", tostring(parse_json(AdditionalFields).TaskName))
+| extend TaskAction = tostring(parse_json(AdditionalFields).TaskContent)
+| extend Payload = extractjson('$.Actions.Exec.Command', TaskAction)
+| extend Repetition = extractjson('$.Triggers.TimeTrigger.Repetition.Interval', TaskAction)
+| where TaskName !contains @"microsoft" and TaskName !contains @"office" and TaskName !contains "onedrive"
+| project DevTime, DeviceId, InitiatingProcessAccountName, TaskName, Payload, Repetition;
+// 
+DeviceProcessEvents
+| extend DevProcTime = bin(Timestamp, 1s)
+| where FileName == "schtasks.exe"
+| join kind=inner ( DevEvents ) on DeviceId
+| where DevProcTime == DevTime
+| project DevProcTime, DeviceName, InitiatingProcessAccountName, FileName, ProcessCommandLine, TaskName, Payload, Repetition, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName

@@ -1,0 +1,17 @@
+// Source: https://github.com/jsa2/kql
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let CloudShells = materialize (arg("").Resources
+    | where tostring(tags) has "cloud-shell"
+    | extend mass =bag_pack("id", tolower(id), "tags", tags)
+    | summarize make_list(mass)
+    );
+AzureActivity
+| where OperationNameValue == "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS/ACTION"
+| mv-apply cs = toscalar(CloudShells) to typeof(dynamic) on (
+    where cs.id == _ResourceId
+    )
+| project TimeGenerated, OperationNameValue, _ResourceId, cs.tags, Caller
+
+

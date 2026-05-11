@@ -1,0 +1,13 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let existingoperations=
+    OfficeActivity
+    | where TimeGenerated > ago(180d) and TimeGenerated < ago(14d)
+    | distinct Operation;
+OfficeActivity
+| where TimeGenerated > ago(14d)
+| summarize arg_min(TimeGenerated, *) by Operation
+| where Operation !in (existingoperations)
+| project ['Time First Seen']=TimeGenerated, Operation, OfficeWorkload

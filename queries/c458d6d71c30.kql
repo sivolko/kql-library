@@ -1,0 +1,29 @@
+// Source: https://github.com/mtweimer/m365-defender-token-replay-hunts
+// Collected: 2026-05-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let logonEvents = union isfuzzy=true
+(
+    IdentityLogonEvents
+    | project Timestamp, ActionType, AccountUpn, IPAddress, Location, ISP
+),
+(
+    datatable(
+        Timestamp:datetime,
+        ActionType:string,
+        AccountUpn:string,
+        IPAddress:string,
+        Location:string,
+        ISP:string
+    )[]
+);
+let baseline = logonEvents
+| where Timestamp between (ago(37d) .. ago(7d))
+| where ActionType == "LogonSuccess"
+| summarize by AccountUpn, IPAddress;
+logonEvents
+| where Timestamp > ago(7d)
+| where ActionType == "LogonSuccess"
+| join kind=leftanti baseline on AccountUpn, IPAddress
+| summarize FirstSeen=min(Timestamp), LastSeen=max(Timestamp), LogonCount=count() by AccountUpn, IPAddress, Location, ISP
+| order by LastSeen desc
