@@ -1,0 +1,14 @@
+// Source: https://github.com/rod-trent/Sentinel-SOC-101
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(30d)
+| where Operation == "FileMalwareDetected"
+| project
+    TimeGenerated,
+    OfficeWorkload,
+    ['File Name']=SourceFileName,
+    ['File Location']=OfficeObjectId,
+    ['Relative File URL']=SourceRelativeUrl,
+    ClientIP

@@ -1,0 +1,148 @@
+// Source: https://github.com/azdabat/Minimum-Truth-Detection-Framework-ADX-Validated-Composite-Rules
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 7d;
+let Threshold = 60;
+
+// 1. KNOWN BAD (High Fidelity)
+// [FIX-2] comsvcs.dll removed — DLL not process, never matched Proc in~ check
+let DumpTools = dynamic([
+    "procdump.exe",
+    "dumpert.exe",
+    "nanodump.exe",
+    "mimikatz.exe",
+    "rundll32.exe"
+]);
+
+let DumpKeywords = dynamic(["minidump", "sekurlsa", "lsass", "comsvcs", "full"]);
+
+// 2. KNOWN GOOD (Noise Suppression)
+// Legitimate tools interact with LSASS constantly — minimum truth alone
+// is not sufficient to cross convergence threshold without reinforcement.
+let BenignImages = dynamic(["msmpeng.exe", "senseir.exe", "wininit.exe", "csrss.exe"]);
+
+// -----------------------------------------------------------------------
+// SIGNAL A: PROCESS BEHAVIOR (Tools & CmdLine)
+// Minimum truth: any process interaction with lsass.
+// Can be memory read, dump request, or API handler.
+// -----------------------------------------------------------------------
+let ProcSignals =
+    DeviceProcessEvents
+    | where Timestamp >= ago(Lookback)
+    | where not(InitiatingProcessFileName in~ (BenignImages))
+    | extend Cmd = tolower(ProcessCommandLine), Proc = tolower(FileName)
+    | extend
+        // TRUTH 1: Living off the Land (Comsvcs/Rundll32) -> CRITICAL
+        IsComsvcs = toint(Cmd has "comsvcs.dll" and Cmd has "minidump"),
+        // TRUTH 2: Explicit Targeting (Procdump/Mimikatz) -> HIGH
+        IsExplicitTool = toint(Proc in~ (DumpTools) and (Cmd has "lsass" or Cmd has "dump")),
+        // TRUTH 3: Generic Keyword (Weak Signal) -> MEDIUM
+        IsGenericDump = toint(Cmd has "lsass" and Cmd has_any (DumpKeywords))
+    | where IsComsvcs == 1 or IsExplicitTool == 1 or IsGenericDump == 1
+    | project
+        Timestamp,
+        DeviceName,
+        AccountName,
+        ActionType = "ProcessExecution",
+        Technique  = case(
+            IsComsvcs == 1,      "LOLBin_Comsvcs",
+            IsExplicitTool == 1, "Known_Dump_Tool",
+                                 "Generic_Dump_Cmd"
+        ),
+        Evidence = Cmd,
+        Score = case(
+            IsComsvcs == 1,      90,
+            IsExplicitTool == 1, 75,
+                                 40
+        );
+
+// -----------------------------------------------------------------------
+// SIGNAL B: FILE ARTIFACTS (The Output)
+// Uncertainty collapses when lsass is written to a user-writable path
+// spawned by a non-system process. Convergence point.
+// -----------------------------------------------------------------------
+let FileSignals =
+    DeviceFileEvents
+    | where Timestamp >= ago(Lookback)
+    | where FileName endswith ".dmp" or FileName =~ "lsass.dmp"
+    | where not(InitiatingProcessFileName in~ (BenignImages))
+    | extend Path = tolower(FolderPath)
+    | extend
+        // TRUTH 1: Dump in suspicious path (staging behaviour)
+        IsStaged   = toint(Path has_any ("temp", "public", "programdata")),
+        // TRUTH 2: Explicit lsass.dmp filename — reinforced truth, definitive intent
+        // Note: .dmp alone does not prove malicious intent — system crashes produce dmp files.
+        // Cumulative scoring required before escalation.
+        IsExplicit = toint(FileName =~ "lsass.dmp")
+    | where IsStaged == 1 or IsExplicit == 1
+    | project
+        Timestamp,
+        DeviceName,
+        AccountName = InitiatingProcessAccountName,
+        ActionType  = "FileCreation",
+        Technique   = "LSASS_Dump_File",
+        Evidence    = strcat(Path, "\\", FileName),
+        Score       = case(IsExplicit == 1, 60, IsStaged == 1, 40, 20);
+
+// -----------------------------------------------------------------------
+// SIGNAL C: API TELEMETRY (Optional — Deep Behavioral)
+// Catches silent dumps (no cmdline, no file artifact).
+// Moderate score — requires reinforcement from Signal A or B to cross threshold.
+// [FIX-1] Removed TargetProcessName — not a valid MDE DeviceEvents schema field.
+//         Detection relies on FileName =~ "lsass.exe" which is schema-correct.
+// -----------------------------------------------------------------------
+let ApiSignals =
+    DeviceEvents
+    | where Timestamp >= ago(Lookback)
+    | where ActionType in ("OpenProcessApiCall", "AccessProcessHandle")
+    | where FileName =~ "lsass.exe"  // [FIX-1] TargetProcessName removed — invalid field
+    | where not(InitiatingProcessFileName in~ (BenignImages))
+    | project
+        Timestamp,
+        DeviceName,
+        AccountName = InitiatingProcessAccountName,
+        ActionType  = "LsassHandleAccess",
+        Technique   = "Direct_Memory_Access",
+        Evidence    = strcat("Access by: ", InitiatingProcessFileName),
+        Score       = 50; // Moderate — needs Signal A or B to cross Threshold
+
+// -----------------------------------------------------------------------
+// COMPOSITE AGGREGATION
+// -----------------------------------------------------------------------
+union ProcSignals, FileSignals, ApiSignals
+| summarize
+    FirstSeen   = min(Timestamp),
+    LastSeen    = max(Timestamp),
+    SignalCount  = count(),
+    Techniques   = make_set(Technique, 20),
+    EvidenceList = make_set(Evidence, 20),
+    MaxScore     = max(Score)
+  by DeviceName, AccountName
+| extend RiskScore =
+      MaxScore
+    + iif(SignalCount > 1, 15, 0)                          // Multi-signal convergence boost
+    + iif(Techniques has "LOLBin_Comsvcs", 20, 0)          // LOLBin boost
+| where RiskScore >= Threshold
+| extend Severity = case(
+    RiskScore >= 90, "CRITICAL",
+    RiskScore >= 70, "HIGH",
+                     "MEDIUM"
+)
+| extend Hunter_Directive = pack_array(
+    strcat("ACTION: ", Severity, " LSASS Credential Theft Alert on ", DeviceName),
+    strcat("CONTEXT: Techniques Observed: ", tostring(Techniques)),
+    strcat("EVIDENCE: ", tostring(EvidenceList)),
+    "PIVOT: 1. Isolate Host. 2. Check for SeDebugPrivilege usage. 3. Check recent network connections for lateral movement indicators."
+)
+| project
+    FirstSeen,      // [FIX-3] restored — temporal spread is triage-relevant
+    LastSeen,
+    Severity,
+    RiskScore,
+    DeviceName,
+    AccountName,
+    Techniques,
+    EvidenceList,
+    Hunter_Directive
+| order by RiskScore desc

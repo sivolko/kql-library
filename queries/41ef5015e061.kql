@@ -1,0 +1,22 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let starttime = 7d;
+let timeframe = 2h;
+let operations = dynamic(["FileSyncDownloadedFull", "FileDownloaded"]);
+OfficeActivity
+| where TimeGenerated > ago(starttime)
+| where OfficeWorkload == "MicrosoftTeams" 
+| where Operation == "MemberAdded"
+| extend UserAdded = tostring(parse_json(Members)[0].UPN)
+| where UserAdded contains ("#EXT#")
+| project TimeAdded=TimeGenerated, UserId=tolower(UserAdded)
+| join kind=inner
+    (
+    OfficeActivity
+    | where Operation in (['operations'])
+    )
+    on UserId
+| project DownloadTime=TimeGenerated, TimeAdded, SourceFileName, UserId
+| where (DownloadTime - TimeAdded) between (0min .. timeframe)

@@ -1,0 +1,14 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let MonitoredCommands = dynamic(["cmd","powershell"]);
+DeviceEvents
+| where Timestamp > ago(1h)
+| where ActionType == "ShellLinkCreateFileEvent"
+| where tostring(AdditionalFields) contains "ShellLink"
+| where parse_json(AdditionalFields)["ShellLinkShowCommand"] != 'SW_SHOWNORMAL'
+| extend ShellLinkCommandLine = parse_json(AdditionalFields)["ShellLinkCommandLine"]
+| extend ShellLinkIconPath = parse_json(AdditionalFields)["ShellLinkIconPath"]
+| where ShellLinkCommandLine != ""
+| where ShellLinkCommandLine has_any (MonitoredCommands)

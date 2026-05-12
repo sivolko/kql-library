@@ -1,0 +1,22 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let user = _GetWatchlist('greylist')
+    | project Name;
+(IdentityLogonEvents
+| where AccountDisplayName in (user)
+| summarize count(), FirstAccess = min(TimeGenerated), LastAccess = max(TimeGenerated) by AccountDisplayName, ActionType, DeviceType, IPAddress, ISP, Location
+| union (
+    CloudAppEvents
+    | where AccountDisplayName in (user)
+    | summarize count(), FirstAccess = min(TimeGenerated), LastAccess = max(TimeGenerated) by AccountDisplayName, ActionType = "CloudAppEvents", DeviceType, IPAddress, ISP, Location = strcat(CountryCode,", ",City)
+    )
+)
+| where isnotempty(ISP)
+    and not (ISP == "INTERNAL_NETWORK")
+    and not (ISP == "Microsoft Azure")
+    and not (ISP == "Microsoft 365 Common and Office Online server")
+    and not (ISP == "SharePoint Online and OneDrive for Business server")
+    and not (ISP == "Microsoft Corporation")
+| order by AccountDisplayName

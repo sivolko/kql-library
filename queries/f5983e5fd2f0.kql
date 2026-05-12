@@ -1,0 +1,124 @@
+// Source: https://github.com/mhartson310/Sentinel-KQL-Library
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(1h)
+| where Operation in (
+    "FileUploaded",
+    "FileSyncUploadedFull",
+    "FileModifiedExtended"
+)
+| where OfficeWorkload in ("OneDrive", "SharePoint")
+| extend 
+    FileSize_MB = todouble(Size) / 1048576,  // Convert bytes to MB
+    FileName = tostring(SourceFileName),
+    FilePath = tostring(SourceRelativeUrl),
+    User = tostring(UserId),
+    ClientIP = tostring(ClientIP)
+// Filter for large files only
+| where FileSize_MB > 100
+// Summarize by user and time window
+| summarize 
+    TotalUploadMB = sum(FileSize_MB),
+    FileCount = count(),
+    LargestFile_MB = max(FileSize_MB),
+    Files = make_set(FileName),
+    FilePaths = make_set(FilePath),
+    UniqueIPs = dcount(ClientIP),
+    IPList = make_set(ClientIP),
+    FirstUpload = min(TimeGenerated),
+    LastUpload = max(TimeGenerated)
+    by User, bin(TimeGenerated, 1h)
+// Alert threshold: More than 500 MB in 1 hour
+| where TotalUploadMB > 500
+| extend 
+    Severity = case(
+        TotalUploadMB > 5000, "Critical",  // 5 GB+
+        TotalUploadMB > 2000, "High",      // 2 GB+
+        TotalUploadMB > 1000, "Medium",    // 1 GB+
+        "Low"
+    ),
+    // Check if after business hours (higher risk)
+    Hour = datetime_part("hour", TimeGenerated),
+    IsAfterHours = iff(Hour < 8 or Hour > 18, "Yes", "No"),
+    // Check for personal OneDrive (higher risk)
+    IsPersonalOneDrive = iff(User !endswith "@company.com", "Yes", "No"),
+    // Calculate upload velocity
+    TimeSpan = LastUpload - FirstUpload,
+    UploadRate_MBperMin = round(TotalUploadMB / (datetime_diff('minute', LastUpload, FirstUpload) + 1), 2),
+    // Check file types (some are higher risk)
+    HasSensitiveFileTypes = iff(
+        Files has_any (".sql", ".zip", ".rar", ".7z", ".csv", ".xlsx", ".docx", ".pst"),
+        "Yes",
+        "No"
+    )
+| extend 
+    RiskScore = 
+        (TotalUploadMB / 100) +  // Base score from volume
+        (iff(IsAfterHours == "Yes", 20, 0)) +
+        (iff(IsPersonalOneDrive == "Yes", 30, 0)) +
+        (iff(HasSensitiveFileTypes == "Yes", 15, 0)) +
+        (iff(UniqueIPs > 2, 10, 0))  // Multiple IPs suspicious
+| project 
+    TimeGenerated,
+    Severity,
+    RiskScore,
+    User,
+    TotalUploadMB,
+    FileCount,
+    LargestFile_MB,
+    UploadRate_MBperMin,
+    Files,
+    FilePaths,
+    IsAfterHours,
+    IsPersonalOneDrive,
+    HasSensitiveFileTypes,
+    UniqueIPs,
+    IPList,
+    TimeSpan,
+    FirstUpload,
+    LastUpload
+| order by RiskScore desc, TotalUploadMB desc
+
+// ENHANCED VERSION - Include External Sharing:
+// OfficeActivity
+// | where Operation in ("AddedToSecureLink", "AnonymousLinkCreated", "SharingSet")
+// | where OfficeWorkload in ("OneDrive", "SharePoint")
+// | where TimeGenerated > FirstUpload and TimeGenerated < LastUpload + 1h
+// | where UserId == User
+
+// FILE TYPE ANALYSIS:
+// Extend the query to categorize file types:
+// | extend FileType = extract(@"\.([^.]+)$", 1, FileName)
+// | extend DataCategory = case(
+//     FileType in ("sql", "db", "mdb", "bak"), "Database",
+//     FileType in ("zip", "rar", "7z", "tar"), "Archive",
+//     FileType in ("csv", "xlsx", "xls"), "Spreadsheet",
+//     FileType in ("docx", "doc", "pdf"), "Document",
+//     FileType in ("pst", "ost", "msg"), "Email",
+//     FileType in ("mp4", "avi", "mov"), "Video",
+//     "Other"
+// )
+
+// ADDITIONAL HUNTING:
+// After detecting large uploads:
+//
+// 1. Check what files user accessed before upload:
+// OfficeActivity
+// | where UserId == User
+// | where TimeGenerated between (FirstUpload - 24h .. FirstUpload)
+// | where Operation in ("FileAccessed", "FileDownloaded", "FileCopied")
+//
+// 2. Check for data staging (local aggregation):
+// DeviceFileEvents  // If using Defender for Endpoint
+// | where InitiatingProcessAccountName == User
+// | where FolderPath has "Downloads" or FolderPath has "Desktop"
+// | where Timestamp < FirstUpload
+//
+// 3. Look for additional exfiltration channels:
+// EmailEvents
+// | where SenderFromAddress == User
+// | where TimeGenerated > ago(7d)
+// | where AttachmentCount > 0
+// | summarize sum(TotalBytes) by RecipientEmailAddress

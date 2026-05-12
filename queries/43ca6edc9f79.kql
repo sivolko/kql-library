@@ -1,0 +1,68 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let IPRegex = '[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}';
+let dt_lookBack = 1h;
+let ioc_lookBack = 3d;
+let confidence_threshold = 95;
+let ignoredactivity = dynamic(["deny", "drop"]);
+let TrustedCIDRs = (_GetWatchlist('trustedcidr') | project TrustedCIDR = SearchKey);
+let TrustedCIDRArray = toscalar(TrustedCIDRs | summarize make_set(TrustedCIDR));
+let IP_Indicators = ThreatIntelIndicators
+    | extend IndicatorType = replace(@"\[|\]|\""", "", tostring(split(ObservableKey, ":", 0)))
+    | where IndicatorType in ("ipv4-addr", "ipv6-addr", "network-traffic")
+    | extend NetworkSourceIP = toupper(ObservableValue)
+    | extend TrafficLightProtocolLevel = tostring(parse_json(AdditionalFields).TLPLevel)
+    | where TimeGenerated >= ago(ioc_lookBack)
+    | where Confidence >= confidence_threshold
+    | where TrafficLightProtocolLevel !in ('WHITE', '')
+    | extend TI_ipEntity = iff(isnotempty(NetworkSourceIP), NetworkSourceIP, NetworkSourceIP)
+    | where ipv4_is_private(TI_ipEntity) == false and  
+            TI_ipEntity !startswith "fe80" and 
+            TI_ipEntity !startswith "::" and 
+            TI_ipEntity !startswith "127."
+    | summarize LatestIndicatorTime = arg_max(TimeGenerated, *) by Id, ObservableValue
+    | where IsActive and (ValidUntil > now() or isempty(ValidUntil))
+    | extend IsTrustedIP = ipv4_is_in_any_range(NetworkSourceIP, TrustedCIDRArray)
+    | where IsTrustedIP == false;
+IP_Indicators
+| join kind=innerunique (
+    CommonSecurityLog
+    | where TimeGenerated >= ago(dt_lookBack)
+    | where not(DeviceAction has_any (ignoredactivity))
+    | where ApplicationProtocol !in~ ('ping', 'incomplete', '', 'unknown')
+    | where isnotempty(SourceIP) and ipv4_is_private(SourceIP) == false
+    | extend CommonSecurityLog_TimeGenerated = TimeGenerated
+    | extend CS_ipEntity = SourceIP
+) on $left.TI_ipEntity == $right.CS_ipEntity
+| where CommonSecurityLog_TimeGenerated < ValidUntil
+// === Suppression Logic ===
+| summarize 
+    FirstSeen = min(CommonSecurityLog_TimeGenerated), 
+    LastSeen = max(CommonSecurityLog_TimeGenerated), 
+    HitCount = count(), 
+    any(SourceIP), any(DestinationIP), any(DeviceVendor), any(DeviceProduct), 
+    any(Id), any(ValidUntil), any(Confidence), any(TI_ipEntity), any(LogSeverity), 
+    any(DeviceAction), any(Type), any(ApplicationProtocol), any(DestinationPort), 
+    any(TrafficLightProtocolLevel)
+  by CS_ipEntity
+| where HitCount >= 3  // adjust this threshold if needed
+| project 
+    timestamp = LastSeen,
+    SourceIP = any_SourceIP,
+    DestinationIP = any_DestinationIP,
+    DeviceVendor = any_DeviceVendor,
+    DeviceProduct = any_DeviceProduct,
+    Id = any_Id,
+    ValidUntil = any_ValidUntil,
+    Confidence = any_Confidence,
+    TI_ipEntity = any_TI_ipEntity,
+    CS_ipEntity,
+    LogSeverity = any_LogSeverity,
+    DeviceAction = any_DeviceAction,
+    Type = any_Type,
+    ApplicationProtocol = any_ApplicationProtocol,
+    DestinationPort = any_DestinationPort,
+    TrafficLightProtocolLevel = any_TrafficLightProtocolLevel,
+    HitCount

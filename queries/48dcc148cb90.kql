@@ -1,0 +1,45 @@
+// Source: https://github.com/kaywoz/bluestuff
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let targetUser = "user@example.com"; //change target user variable here
+let totalCount = toscalar(
+    IdentityLogonEvents
+    | where AccountUpn contains targetUser
+    | summarize count()
+);
+let percentageCountLocation = IdentityLogonEvents
+| where AccountUpn contains targetUser
+| summarize Count = count() by Location
+| extend PercentageLocation = round(100.0 * Count / totalCount, 2)
+| extend LocationTag = iff(PercentageLocation >= 10, "Majority", "Minority")
+| project Location, Count, PercentageLocation, LocationTag
+;
+let percentageCountIP = IdentityLogonEvents
+| where AccountUpn contains targetUser
+| summarize Count = count() by IPAddress
+| extend PercentageIP = round(100.0 * Count / totalCount, 2)
+| extend IPTag = iff(PercentageIP >= 10, "Majority", "Minority")
+| project IPAddress, Count, PercentageIP, IPTag
+;
+let mainSearch = IdentityLogonEvents
+| where AccountUpn contains targetUser
+| extend d = parse_json(AdditionalFields)
+| extend SuccessCloudService = tostring(d["ARG.CLOUD_SERVICE"])
+| extend FailCloudService = tostring(d["TO.CLOUD_SERVICE"])
+| extend CloudService = coalesce(SuccessCloudService, FailCloudService)
+;
+mainSearch
+| join kind=leftouter (
+    percentageCountLocation
+) on Location
+| join kind=leftouter (
+    percentageCountIP
+) on IPAddress
+| extend Flag = case(
+ActionType contains "fail" and OSPlatform contains "unknown" and LocationTag contains "minority" and ISP !contains "Zscalerserver", "RED - location minority",
+ActionType contains "fail" and OSPlatform contains "unknown" and LocationTag contains "majority" and ISP !contains "Zscalerserver", "Yellow - location majority",
+ActionType contains "fail" and OSPlatform contains "unknown" and IPTag contains "minority" and ISP !contains "Zscalerserver", "WARN - IP minority",
+"Green - no indicators")
+| project Timestamp, Flag, ActionType, FailureReason, CloudService, OSPlatform, IPAddress, Location, ISP 
+| sort by Timestamp

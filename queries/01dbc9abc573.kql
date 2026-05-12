@@ -1,0 +1,13 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe = 7d;
+let TI = ThreatIntelligenceIndicator
+| where TimeGenerated > ago(timeframe)
+| where Active == true and ExpirationDateTime > now();
+CommonSecurityLog
+| where TimeGenerated > ago(timeframe)
+| join kind=inner (
+    TI
+) on $left.DestinationIP == $right.NetworkIP 

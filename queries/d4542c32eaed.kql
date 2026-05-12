@@ -1,0 +1,13 @@
+// Source: https://github.com/AttacktheSOC/Azure-SecOps
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let isGUID = (inputString:string) {
+    inputString matches regex @"(?i)^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$"
+};
+isGUID(inputString)
+//
+//## Example usage
+// SigninLogs
+// | extend isGuid = isGUID(UserPrincipalName)
+// | where isGuid == true

@@ -1,0 +1,164 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let EnforcementDate = datetime(2026-04-14);
+SecurityEvent
+| where TimeGenerated > EnforcementDate
+| where EventID == 4769
+| where TicketEncryptionType == "0x17"           // RC4-HMAC
+| where Status == "0x0"                          // Successful (not a rejection)
+| extend
+    RequestingAccount = AccountName,
+    TargetService = ServiceName,
+    SourceIP = IpAddress,
+    DomainController = Computer
+| project
+    TimeGenerated,
+    RequestingAccount,
+    TargetService,
+    SourceIP,
+    DomainController,
+    TicketEncryptionType,
+    Status
+| extend FindingType = "RC4_POST_ENFORCEMENT",
+         Severity = "High",
+         Description = "RC4 TGS request succeeded after CVE-2026-20833 enforcement. "
+             "Indicates unpatched DC, RC4-only service account, or enforcement override."
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: AES TGS Volume Spike (AES Kerberoasting Indicator)
+//
+// Rationale: Post-enforcement, attackers request AES tickets for all SPN accounts.
+// Normal behavior: an account requests a few service tickets per session.
+// Kerberoasting pattern: one account requests tickets for many distinct services
+// in rapid succession.
+//
+// Threshold: >15 distinct service accounts requested from one IpAddress or
+//            AccountName within a 5-minute window.
+// Tune this threshold based on your baseline (monitoring agents may exceed it).
+// ============================================================================
+let LookbackWindow = 24h;
+let TimeWindowMinutes = 5;
+let AESRoastThreshold = 15;       // Distinct service accounts per window
+let EnforcementDate = datetime(2026-04-14);
+SecurityEvent
+| where TimeGenerated > ago(LookbackWindow)
+| where TimeGenerated > EnforcementDate
+| where EventID == 4769
+| where TicketEncryptionType in ("0x12", "0x11")  // AES256 or AES128
+| where Status == "0x0"
+// Exclude machine-to-machine TGS (computer accounts are $ suffixed)
+| where AccountName !endswith "$"
+// Exclude krbtgt (normal TGT-renewal)
+| where ServiceName != "krbtgt"
+| summarize
+    DistinctServiceCount = dcount(ServiceName),
+    ServiceList = make_set(ServiceName, 50),
+    RequestCount = count(),
+    EarliestRequest = min(TimeGenerated),
+    LatestRequest = max(TimeGenerated)
+    by
+    AccountName,
+    IpAddress,
+    bin(TimeGenerated, TimeWindowMinutes * 1m)
+| where DistinctServiceCount >= AESRoastThreshold
+| extend
+    DurationSeconds = datetime_diff('second', LatestRequest, EarliestRequest),
+    FindingType = "AES_KERBEROASTING_VOLUME_SPIKE",
+    Severity = "High",
+    Description = strcat(
+        "Account '", AccountName,
+        "' requested TGS for ", tostring(DistinctServiceCount),
+        " distinct services within ", tostring(TimeWindowMinutes), " minutes. ",
+        "This matches the AES Kerberoasting pattern (post-RC4-enforcement pivot)."
+    )
+| project
+    bin_TimeGenerated = bin(TimeGenerated, TimeWindowMinutes * 1m),
+    AccountName,
+    IpAddress,
+    DistinctServiceCount,
+    RequestCount,
+    DurationSeconds,
+    ServiceList,
+    FindingType,
+    Severity,
+    Description
+| order by DistinctServiceCount desc
+
+
+// ============================================================================
+// Query 3: Service Accounts with RC4-Only Encryption (LDAP Enumeration View)
+//
+// Rationale: Service accounts with msDS-SupportedEncryptionTypes = 0x04 (RC4 only)
+// will fail Kerberos authentication post-enforcement. Before they break, identify
+// them from LDAP audit events (Event 4662 — Directory Service Access, or
+// from AzureAD/Entra Connect sync events if using hybrid identity).
+//
+// This query uses IdentityLogonEvents (Defender for Identity) if available,
+// falling back to SecurityEvent 4768/4769 to infer which accounts still
+// generate RC4 tickets (indicating the msDS-SupportedEncryptionTypes is RC4-only).
+//
+// Note: For a complete LDAP-attribute-level enumeration, use
+//       service_account_triage.py against a BloodHound / ldapdomaindump dump.
+// ============================================================================
+let LookbackDays = 30d;
+let EnforcementDate = datetime(2026-04-14);
+// Accounts that produced RC4 tickets in the 30 days before enforcement
+// are candidates for RC4-only configuration
+let PreEnforcementRC4Accounts =
+    SecurityEvent
+    | where TimeGenerated between (ago(LookbackDays) .. EnforcementDate)
+    | where EventID == 4769
+    | where TicketEncryptionType == "0x17"
+    | where Status == "0x0"
+    | where ServiceName !in ("krbtgt", "")
+    | summarize
+        RC4TicketCount = count(),
+        LastRC4Event = max(TimeGenerated),
+        RequestingAccounts = make_set(AccountName, 20)
+        by ServiceName
+    | extend
+        RC4AccountStatus = "PRE_ENFORCEMENT_RC4_SEEN",
+        MigrationRisk = iff(RC4TicketCount > 10, "HIGH", "MEDIUM");
+// Check if the same accounts are now failing authentication post-enforcement
+let PostEnforcementFailures =
+    SecurityEvent
+    | where TimeGenerated > EnforcementDate
+    | where EventID == 4769
+    | where TicketEncryptionType == "0x17"
+    | where Status != "0x0"                    // Failed requests — DC rejecting RC4
+    | summarize
+        FailedRC4Count = count(),
+        LastFailure = max(TimeGenerated)
+        by ServiceName;
+PreEnforcementRC4Accounts
+| join kind=leftouter (PostEnforcementFailures) on ServiceName
+| extend
+    IsBreaking = isnotnull(FailedRC4Count) and FailedRC4Count > 0,
+    FindingType = "RC4_ONLY_SERVICE_ACCOUNT",
+    Severity = iff(RC4TicketCount > 50, "Critical", "High"),
+    Description = strcat(
+        "Service '", ServiceName,
+        "' received ", tostring(RC4TicketCount), " RC4 TGS tickets pre-enforcement. ",
+        iff(
+            isnotnull(FailedRC4Count),
+            strcat("Post-enforcement: ", tostring(FailedRC4Count), " rejected RC4 requests observed — account is breaking."),
+            "No post-enforcement failures yet — account may be infrequently used or clients have adapted."
+        )
+    )
+| project
+    ServiceName,
+    RC4TicketCount,
+    LastRC4Event,
+    FailedRC4Count,
+    LastFailure,
+    IsBreaking,
+    MigrationRisk,
+    RequestingAccounts,
+    FindingType,
+    Severity,
+    Description
+| order by RC4TicketCount desc

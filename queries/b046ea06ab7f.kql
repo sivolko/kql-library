@@ -1,0 +1,7 @@
+// Source: https://github.com/ava-orange-education/Ultimate-Microsoft-XDR-for-Full-Spectrum-Cyber-Defence
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 8002
+| where TimeGenerated > ago(5m)

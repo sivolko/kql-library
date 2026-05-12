@@ -1,0 +1,8 @@
+// Source: https://github.com/Coalfire-CF/terraform-azurerm-sentinel
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent                     // <--Define the table to query
+| where EventID == "4663"         // <--Declare which EventID you're looking for
+| summarize count() by Computer   // <--Show how many times that EventID was thrown per device
+| render columnchart              // <--Optional, but helps quickly visualize potential outliers

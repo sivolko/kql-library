@@ -1,0 +1,106 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+Syslog
+| where Facility == "kern" or ProcessName == "auditd"
+| where SyslogMessage has "syscall=bpf" and SyslogMessage has "a0=0x5"
+| extend
+    CallerExe   = extract(@'exe="([^"]+)"', 1, SyslogMessage),
+    CallerComm  = extract(@' comm="([^"]+)"', 1, SyslogMessage),
+    CallerPid   = toint(extract(@' pid=(\d+) ', 1, SyslogMessage)),
+    AuditUID    = extract(@' auid=(\d+) ', 1, SyslogMessage)
+| where not (CallerExe has_any (
+    "bpftool", "/usr/bin/tc", "/usr/sbin/tc",
+    "cilium", "calico", "weave", "flannel",
+    "datadog", "falco", "tetragon", "tracee",
+    "pixie", "beyla", "/opt/cni/"
+))
+| project TimeGenerated, Computer, CallerExe, CallerComm, CallerPid, AuditUID
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: XDP Program Attachment Outside Maintenance Window
+//
+// Rationale: XDP programs attach via RTM_SETLINK netlink messages. During normal
+// operation, XDP attachments only occur during initial CNI setup or maintenance
+// windows. Unexpected XDP attachments indicate rootkit activity.
+// ============================================================================
+DeviceProcessEvents
+| where ProcessCommandLine has "XDP" or ProcessCommandLine has "xdp"
+    or FileName in ("tc", "ip")
+| where ProcessCommandLine has_any ("xdp", "XDP_ATTACH", "XDP_FLAGS")
+| where not (FolderPath has_any (
+    "/usr/bin/ip", "/sbin/ip", "/usr/sbin/cilium",
+    "/opt/cni/", "/usr/lib/systemd/"
+))
+| project TimeGenerated, DeviceName, AccountName, FolderPath,
+          FileName, ProcessCommandLine
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 3: kprobe/Tracepoint on Sensitive Kernel Functions
+//
+// Rationale: eBPF rootkits attach kprobes or tracepoints to getdents64 (process
+// hiding), tcp_seq_show (network hiding), and do_access (privilege escalation).
+// The attachment is visible in /sys/kernel/debug/tracing/kprobe_events or
+// bpftrace output — this query targets auditd records of such attachment.
+// ============================================================================
+Syslog
+| where SyslogMessage has_any (
+    "kprobe:__x64_sys_getdents64",
+    "kprobe:tcp_seq_show",
+    "kprobe:do_access",
+    "kprobe:security_inode_permission",
+    "tracepoint:syscalls:sys_exit_bpf"
+)
+| where SyslogMessage has "kprobe_events" or SyslogMessage has "bpf_prog_load"
+| extend
+    KernelFunc  = extract(@'kprobe:([a-z_]+)', 1, SyslogMessage),
+    CallerExe   = extract(@'exe="([^"]+)"', 1, SyslogMessage)
+| project TimeGenerated, Computer, KernelFunc, CallerExe, SyslogMessage
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 4: LD_PRELOAD Modification (TripleCross Persistence)
+// ============================================================================
+DeviceFileEvents
+| where FolderPath == "/etc" and FileName == "ld.so.preload"
+    and ActionType in ("FileCreated", "FileModified")
+| where not (InitiatingProcessFileName has_any (
+    "dpkg", "apt-get", "rpm", "dnf", "ldconfig"
+))
+| project TimeGenerated, DeviceName, FileName, FolderPath,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 5: Outbound TCP Without Corresponding Listening Port
+//          (ebpfkit-class In-Kernel TCP)
+//
+// Rationale: ebpfkit constructs raw TCP packets at the TC layer without a
+// userland socket. This produces outbound TCP traffic where no process owns
+// a corresponding socket. Standard process-to-network join will fail.
+// ============================================================================
+let OutboundConns = DeviceNetworkEvents
+| where ActionType == "ConnectionSuccess"
+    and Direction == "Outbound"
+    and RemotePort == 443
+| project ConnTime = TimeGenerated, DeviceName, RemoteIP,
+          LocalPort, InitiatingProcessId, InitiatingProcessFileName;
+let ProcessSockets = DeviceProcessEvents
+| where FileName has_any ("nc", "bash", "python", "perl", "ruby",
+                           "curl", "wget", "openssl")
+| project ProcessTime = TimeGenerated, DeviceName, ProcessId = ProcessId,
+          ProcessName = FileName;
+OutboundConns
+| join kind=leftanti ProcessSockets
+    on DeviceName, $left.InitiatingProcessId == $right.ProcessId
+| project ConnTime, DeviceName, RemoteIP, LocalPort,
+          InitiatingProcessId, InitiatingProcessFileName
+| order by ConnTime desc

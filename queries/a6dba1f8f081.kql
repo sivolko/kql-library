@@ -1,0 +1,376 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let huntingWindow = 7d;
+let suspiciousVolumeThreshold = 1000; // MB
+let rapidTransferWindow = 1h;
+
+// Define cloud storage and file sharing domains to monitor
+let cloudStorageDomains = dynamic([
+    "dropbox.com",
+    "drive.google.com", 
+    "onedrive.live.com",
+    "box.com",
+    "mega.nz",
+    "mediafire.com",
+    "4shared.com",
+    "sendspace.com",
+    "wetransfer.com",
+    "filemail.com",
+    "amazon.com", // S3 transfers
+    "amazonaws.com",
+    "azure.com", // External Azure storage
+    "blob.core.windows.net"
+]);
+
+// Define sensitive file extensions
+let sensitiveFileExtensions = dynamic([
+    "xlsx", "xls", "csv", "docx", "doc", "pdf", "pptx", "ppt",
+    "sql", "db", "sqlite", "mdb", "accdb", 
+    "zip", "rar", "7z", "tar", "gz",
+    "pst", "ost", "msg",
+    "key", "p12", "pfx", "pem", "crt"
+]);
+
+// Step 1: Analyze web traffic to cloud storage services
+let cloudStorageWebTraffic = 
+    CommonSecurityLog
+    | where TimeGenerated >= ago(huntingWindow)
+    | where DeviceVendor == "Palo Alto Networks" or DeviceVendor == "Fortinet" or DeviceVendor == "Check Point"
+    | where Activity contains "allow" or Activity contains "permitted"
+    | extend 
+        SourceIP = coalesce(SourceIP, extractjson("$.src", AdditionalExtensions)),
+        DestinationHostName = coalesce(DestinationHostName, extractjson("$.dst_host", AdditionalExtensions)),
+        BytesOut = toint(coalesce(SentBytes, extractjson("$.bytes_out", AdditionalExtensions), "0")),
+        BytesIn = toint(coalesce(ReceivedBytes, extractjson("$.bytes_in", AdditionalExtensions), "0")),
+        UserName = coalesce(SourceUserName, extractjson("$.user", AdditionalExtensions))
+    | where DestinationHostName has_any (cloudStorageDomains)
+    | extend 
+        CloudProvider = case(
+            DestinationHostName contains "dropbox", "Dropbox",
+            DestinationHostName contains "google", "Google Drive", 
+            DestinationHostName contains "onedrive", "OneDrive Personal",
+            DestinationHostName contains "box", "Box",
+            DestinationHostName contains "mega", "Mega",
+            DestinationHostName contains "amazonaws", "AWS S3",
+            DestinationHostName contains "azure", "Azure Storage",
+            "Other Cloud Storage"
+        ),
+        TotalBytes = BytesOut + BytesIn,
+        IsLargeTransfer = (BytesOut + BytesIn) > (100 * 1024 * 1024), // 100MB+
+        IsUpload = BytesOut > BytesIn
+    | summarize 
+        TransferCount = count(),
+        TotalUploadMB = round(sum(BytesOut) / (1024.0 * 1024.0), 2),
+        TotalDownloadMB = round(sum(BytesIn) / (1024.0 * 1024.0), 2),
+        TotalTransferMB = round(sum(TotalBytes) / (1024.0 * 1024.0), 2),
+        LargeTransfers = countif(IsLargeTransfer),
+        UniqueDestinations = dcount(DestinationHostName),
+        CloudProviders = make_set(CloudProvider, 20),
+        Destinations = make_set(DestinationHostName, 50),
+        FirstTransfer = min(TimeGenerated),
+        LastTransfer = max(TimeGenerated)
+        by bin(TimeGenerated, 1h), SourceIP, UserName
+    | extend 
+        TransferDuration = datetime_diff('minute', LastTransfer, FirstTransfer),
+        TransferRate = case(TransferDuration > 0, round(TotalTransferMB / TransferDuration, 2), TotalTransferMB),
+        CloudStorageRiskScore = 
+            (case(TotalUploadMB > 1000, 30, TotalUploadMB > 500, 20, TotalUploadMB > 100, 10, 0)) +
+            (case(LargeTransfers > 10, 25, LargeTransfers > 5, 15, LargeTransfers > 0, 10, 0)) +
+            (case(UniqueDestinations > 5, 20, UniqueDestinations > 2, 10, 0)) +
+            (case(TransferRate > 100, 15, TransferRate > 50, 10, 0)) // MB per minute
+    | where CloudStorageRiskScore >= 20 or TotalUploadMB >= suspiciousVolumeThreshold;
+
+// Step 2: Analyze Office 365 external sharing activities
+let office365ExternalSharing = 
+    OfficeActivity
+    | where TimeGenerated >= ago(huntingWindow)
+    | where Operation in ("SharingSet", "SharingInvitationCreated", "AnonymousLinkCreated", "SecureLinkCreated")
+    | where isnotempty(UserId) and isnotempty(SourceFileName)
+    | extend 
+        UserPrincipal = tolower(UserId),
+        FileName = SourceFileName,
+        FileExtension = tolower(split(SourceFileName, ".")[-1]),
+        FileSize = toint(coalesce(Size, 0)),
+        
+        // Determine if sharing is external
+        IsExternalSharing = case(
+            Operation == "AnonymousLinkCreated", true,
+            isnotempty(TargetUserOrGroupName) and not(TargetUserOrGroupName contains "@yourcompany.com"), true, // Replace with actual domain
+            false
+        ),
+        
+        // Classify file sensitivity
+        IsSensitiveFile = (
+            SourceFileName has_any (dynamic(["confidential", "secret", "personal", "sensitive", "financial", "salary", "ssn", "private"])) or
+            FileExtension in (sensitiveFileExtensions)
+        ),
+        
+        // Risk factors
+        IsLargeFile = FileSize > (50 * 1024 * 1024), // 50MB+
+        IsHighRiskExtension = FileExtension in (sensitiveFileExtensions)
+    | where IsExternalSharing
+    | summarize 
+        ExternalShares = count(),
+        UniqueFilesShared = dcount(SourceFileName),
+        SensitiveFilesShared = countif(IsSensitiveFile),
+        LargeFilesShared = countif(IsLargeFile),
+        HighRiskFilesShared = countif(IsHighRiskExtension),
+        TotalSharedSizeMB = round(sum(FileSize) / (1024.0 * 1024.0), 2),
+        SharedFiles = make_set(SourceFileName, 100),
+        SensitiveFiles = make_set_if(SourceFileName, IsSensitiveFile, 50),
+        ShareTargets = make_set(TargetUserOrGroupName, 50),
+        Operations = make_set(Operation, 20),
+        FirstShare = min(TimeGenerated),
+        LastShare = max(TimeGenerated)
+        by bin(TimeGenerated, 1h), UserPrincipal
+    | extend 
+        ShareDuration = datetime_diff('minute', LastShare, FirstShare),
+        SharingRiskScore = 
+            (case(ExternalShares > 50, 30, ExternalShares > 20, 20, ExternalShares > 5, 10, 0)) +
+            (case(SensitiveFilesShared > 0, SensitiveFilesShared * 15, 0)) +
+            (case(LargeFilesShared > 0, LargeFilesShared * 10, 0)) +
+            (case(TotalSharedSizeMB > 500, 25, TotalSharedSizeMB > 100, 15, 0)) +
+            (case(ShareDuration <= 60, 15, 0)) // Rapid sharing
+    | where SharingRiskScore >= 20;
+
+// Step 3: Analyze Azure Storage access patterns
+let azureStorageAccess = 
+    StorageBlobLogs
+    | where TimeGenerated >= ago(huntingWindow)
+    | where StatusText == "Success" and OperationName in ("GetBlob", "PutBlob", "CopyBlob")
+    | extend 
+        UserPrincipal = tolower(RequesterUpn),
+        BlobName = Uri,
+        BlobSize = toint(ResponseBodySize),
+        IsDownload = OperationName == "GetBlob",
+        IsUpload = OperationName in ("PutBlob", "CopyBlob"),
+        
+        // Classify blob sensitivity
+        IsSensitiveBlob = BlobName has_any (dynamic(["confidential", "secret", "personal", "sensitive", "financial", "backup", "dump"])),
+        
+        // Extract file extension
+        FileExtension = tolower(split(split(BlobName, "/")[-1], ".")[-1]),
+        IsHighRiskExtension = FileExtension in (sensitiveFileExtensions),
+        
+        // Risk factors
+        IsLargeBlob = BlobSize > (100 * 1024 * 1024), // 100MB+
+        IsExternalAccess = not(ClientIpAddress startswith "10." or ClientIpAddress startswith "192.168." or ClientIpAddress startswith "172.")
+    | where isnotempty(UserPrincipal)
+    | summarize 
+        BlobAccesses = count(),
+        Downloads = countif(IsDownload),
+        Uploads = countif(IsUpload),
+        UniqueBlobsAccessed = dcount(BlobName),
+        SensitiveBlobsAccessed = countif(IsSensitiveBlob),
+        LargeBlobsAccessed = countif(IsLargeBlob),
+        HighRiskBlobsAccessed = countif(IsHighRiskExtension),
+        ExternalAccesses = countif(IsExternalAccess),
+        TotalDownloadMB = round(sumif(BlobSize, IsDownload) / (1024.0 * 1024.0), 2),
+        TotalUploadMB = round(sumif(BlobSize, IsUpload) / (1024.0 * 1024.0), 2),
+        AccessedBlobs = make_set(BlobName, 100),
+        SensitiveBlobs = make_set_if(BlobName, IsSensitiveBlob, 50),
+        ClientIPs = make_set(ClientIpAddress, 20),
+        FirstAccess = min(TimeGenerated),
+        LastAccess = max(TimeGenerated)
+        by bin(TimeGenerated, 1h), UserPrincipal
+    | extend 
+        AccessDuration = datetime_diff('minute', LastAccess, FirstAccess),
+        AccessRate = case(AccessDuration > 0, round(BlobAccesses / AccessDuration, 2), BlobAccesses),
+        StorageRiskScore = 
+            (case(TotalDownloadMB > 1000, 30, TotalDownloadMB > 500, 20, TotalDownloadMB > 100, 10, 0)) +
+            (case(SensitiveBlobsAccessed > 0, SensitiveBlobsAccessed * 15, 0)) +
+            (case(ExternalAccesses > 0, ExternalAccesses * 10, 0)) +
+            (case(AccessRate > 20, 20, AccessRate > 10, 10, 0)) + // Accesses per minute
+            (case(LargeBlobsAccessed > 5, 15, LargeBlobsAccessed > 0, 10, 0))
+    | where StorageRiskScore >= 20;
+
+// Step 4: Correlate email activity with large attachments to external domains
+let emailExfiltration = 
+    OfficeActivity
+    | where TimeGenerated >= ago(huntingWindow)
+    | where OfficeWorkload == "Exchange" and Operation == "Send"
+    | where AttachmentCount > 0 and Size > (10 * 1024 * 1024) // 10MB+ attachments
+    | where isnotempty(Recipients)
+    | extend 
+        UserPrincipal = tolower(UserId),
+        AttachmentSize = toint(Size),
+        RecipientList = split(Recipients, ";")
+    | mv-expand RecipientList to typeof(string)
+    | extend 
+        RecipientDomain = split(trim(@"\s*<?>?", RecipientList), "@")[1],
+        IsExternalRecipient = not(RecipientDomain == "yourcompany.com"), // Replace with actual domain
+        IsPersonalEmail = RecipientDomain in ("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "protonmail.com"),
+        IsCloudStorageNotification = RecipientDomain in (cloudStorageDomains)
+    | where IsExternalRecipient
+    | summarize 
+        ExternalEmailsWithAttachments = count(),
+        PersonalEmails = countif(IsPersonalEmail),
+        CloudStorageEmails = countif(IsCloudStorageNotification),
+        TotalAttachmentSizeMB = round(sum(AttachmentSize) / (1024.0 * 1024.0), 2),
+        UniqueExternalDomains = dcount(RecipientDomain),
+        ExternalDomains = make_set(RecipientDomain, 20),
+        Recipients = make_set(RecipientList, 50),
+        FirstEmail = min(TimeGenerated),
+        LastEmail = max(TimeGenerated)
+        by bin(TimeGenerated, 1h), UserPrincipal
+    | extend 
+        EmailDuration = datetime_diff('minute', LastEmail, FirstEmail),
+        EmailRiskScore = 
+            (case(PersonalEmails > 0 and TotalAttachmentSizeMB > 100, 35, PersonalEmails > 0, 20, 0)) +
+            (case(CloudStorageEmails > 0, 25, 0)) +
+            (case(TotalAttachmentSizeMB > 500, 25, TotalAttachmentSizeMB > 100, 15, 0)) +
+            (case(UniqueExternalDomains > 10, 20, UniqueExternalDomains > 5, 10, 0)) +
+            (case(EmailDuration <= 60, 15, 0)) // Rapid email sending
+    | where EmailRiskScore >= 20;
+
+// Step 5: Comprehensive correlation and risk assessment
+let correlatedExfiltration = 
+    cloudStorageWebTraffic
+    | join kind=fullouter (office365ExternalSharing) on $left.UserName == $right.UserPrincipal, TimeGenerated
+    | join kind=fullouter (azureStorageAccess) on $left.UserName == $right.UserPrincipal, TimeGenerated  
+    | join kind=fullouter (emailExfiltration) on $left.UserName == $right.UserPrincipal, TimeGenerated
+    | extend 
+        // Normalize user identity
+        User = coalesce(UserName, UserPrincipal, UserPrincipal1, UserPrincipal2),
+        
+        // Comprehensive risk calculation
+        ComprehensiveRiskScore = 
+            coalesce(CloudStorageRiskScore, 0) +
+            coalesce(SharingRiskScore, 0) +
+            coalesce(StorageRiskScore, 0) +
+            coalesce(EmailRiskScore, 0),
+            
+        // Pattern classification
+        ExfiltrationPattern = case(
+            coalesce(CloudStorageRiskScore, 0) > 0 and coalesce(SharingRiskScore, 0) > 0, "Multi-Vector Cloud Exfiltration",
+            coalesce(PersonalEmails, 0) > 0 and coalesce(TotalAttachmentSizeMB, 0) > 100, "Large Email Attachment Exfiltration",
+            coalesce(CloudStorageRiskScore, 0) > 20, "Direct Cloud Storage Upload",
+            coalesce(SharingRiskScore, 0) > 20, "External File Sharing Abuse",
+            coalesce(StorageRiskScore, 0) > 20, "Azure Storage Data Extraction",
+            coalesce(EmailRiskScore, 0) > 20, "Email-Based Data Exfiltration",
+            "Suspicious Data Transfer Activity"
+        ),
+        
+        // Risk level assessment
+        RiskLevel = case(
+            ComprehensiveRiskScore >= 80, "Critical",
+            ComprehensiveRiskScore >= 60, "High", 
+            ComprehensiveRiskScore >= 40, "Medium",
+            "Low"
+        ),
+        
+        // Investigation priority
+        InvestigationPriority = case(
+            coalesce(SensitiveFilesShared, 0) > 0 or coalesce(SensitiveBlobsAccessed, 0) > 0, "P0-Critical",
+            coalesce(PersonalEmails, 0) > 0 and coalesce(TotalAttachmentSizeMB, 0) > 100, "P1-High",
+            ComprehensiveRiskScore >= 50, "P2-Medium",
+            "P3-Low"
+        ),
+        
+        // Total data volume assessment
+        TotalDataVolumeMB = 
+            coalesce(TotalUploadMB, 0) +
+            coalesce(TotalSharedSizeMB, 0) +
+            coalesce(TotalDownloadMB, 0) +
+            coalesce(TotalUploadMB1, 0) +
+            coalesce(TotalAttachmentSizeMB, 0);
+
+// Step 6: Final results with hunting recommendations
+correlatedExfiltration
+| where ComprehensiveRiskScore >= 30 // Adjustable threshold
+| project 
+    // Time and Identity
+    TimeGenerated,
+    User,
+    ExfiltrationPattern,
+    RiskLevel,
+    InvestigationPriority,
+    ComprehensiveRiskScore,
+    TotalDataVolumeMB,
+    
+    // Web Traffic to Cloud Storage
+    CloudStorageRiskScore = coalesce(CloudStorageRiskScore, 0),
+    TotalUploadMB = coalesce(TotalUploadMB, 0),
+    CloudProviders = coalesce(CloudProviders, dynamic([])),
+    
+    // Office 365 External Sharing
+    SharingRiskScore = coalesce(SharingRiskScore, 0),
+    ExternalShares = coalesce(ExternalShares, 0),
+    SensitiveFilesShared = coalesce(SensitiveFilesShared, 0),
+    TotalSharedSizeMB = coalesce(TotalSharedSizeMB, 0),
+    
+    // Azure Storage Access
+    StorageRiskScore = coalesce(StorageRiskScore, 0),
+    BlobAccesses = coalesce(BlobAccesses, 0),
+    SensitiveBlobsAccessed = coalesce(SensitiveBlobsAccessed, 0),
+    
+    // Email Exfiltration
+    EmailRiskScore = coalesce(EmailRiskScore, 0),
+    PersonalEmails = coalesce(PersonalEmails, 0),
+    TotalAttachmentSizeMB = coalesce(TotalAttachmentSizeMB, 0),
+    
+    // Evidence Collections
+    SharedFiles = coalesce(SharedFiles, dynamic([])),
+    SensitiveFiles = coalesce(SensitiveFiles, dynamic([])),
+    AccessedBlobs = coalesce(AccessedBlobs, dynamic([])),
+    SensitiveBlobs = coalesce(SensitiveBlobs, dynamic([])),
+    ExternalDomains = coalesce(ExternalDomains, dynamic([])),
+    Recipients = coalesce(Recipients, dynamic([])),
+    
+    // Hunting Recommendations
+    HuntingRecommendations = case(
+        InvestigationPriority == "P0-Critical", "IMMEDIATE: Full forensic investigation, preserve evidence, interview user, legal notification if data breach",
+        InvestigationPriority == "P1-High", "URGENT: Deep dive investigation, correlate with DLP alerts, validate business justification",
+        InvestigationPriority == "P2-Medium", "Investigate within 8h: Review activity context, check for business approval, monitor user",
+        "Monitor: Establish baseline, schedule follow-up review if pattern continues"
+    ),
+    
+    // MITRE ATT&CK Mapping
+    MitreTechniques = case(
+        coalesce(CloudStorageRiskScore, 0) > 0, "T1567.002, T1041",
+        coalesce(EmailRiskScore, 0) > 0, "T1048.003",
+        coalesce(SharingRiskScore, 0) > 0, "T1567.002",
+        "T1020, T1041"
+    ),
+    
+    // Analyst Actions
+    NextSteps = strcat(
+        "1. Review user's data access baseline and job function | ",
+        "2. Validate business justification for large data transfers | ",
+        "3. Check DLP and CASB alerts for the same user/timeframe | ",
+        "4. Examine content of transferred files if possible | ",
+        "5. Interview user and manager about activity | ",
+        "6. Consider temporary access restrictions if suspicious"
+    )
+| order by ComprehensiveRiskScore desc, InvestigationPriority asc
+
+// Additional Investigation Queries:
+// Use these follow-up queries to investigate specific users identified above
+
+/*
+// Query 1: Detailed timeline for specific user
+let targetUser = "user@company.com"; // Replace with actual user
+union 
+    (OfficeActivity | where UserId == targetUser | extend EventType = "Office365"),
+    (StorageBlobLogs | where RequesterUpn == targetUser | extend EventType = "AzureStorage"), 
+    (CommonSecurityLog | where SourceUserName == targetUser | extend EventType = "NetworkTraffic")
+| where TimeGenerated >= ago(7d)
+| sort by TimeGenerated asc
+| project TimeGenerated, EventType, Operation, SourceFileName, DestinationHostName, Size
+
+// Query 2: File access heat map
+OfficeActivity
+| where TimeGenerated >= ago(7d) and UserId == targetUser
+| where Operation in ("FileAccessed", "FileDownloaded", "SharingSet")
+| summarize Count = count(), TotalSize = sum(toint(Size)) by bin(TimeGenerated, 1h), Operation
+| render timechart
+
+// Query 3: Network destinations analysis
+CommonSecurityLog
+| where TimeGenerated >= ago(7d) and SourceUserName == targetUser
+| where DestinationHostName has_any (cloudStorageDomains)
+| summarize Transfers = count(), TotalMB = sum(SentBytes + ReceivedBytes) / (1024*1024) by DestinationHostName
+| render barchart
+*/

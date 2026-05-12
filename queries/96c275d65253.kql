@@ -1,0 +1,11 @@
+// Source: https://github.com/rod-trent/KQLMysteries
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let startTime = ago(7d);
+let endTime = now();
+let knownAliases = dynamic(['NightPrincess', 'PrincessOfTheNight', 'NP']);
+SecurityEvent
+| where TimeGenerated between(startTime .. endTime)
+| where Account has_any (knownAliases)
+| project TimeGenerated, Account, Computer, EventID

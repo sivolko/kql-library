@@ -1,0 +1,15 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == "4624"
+| where LogonType == 10
+//Extend new column that drops Account to lower case so users are correctly summarized, i.e User123 and user123 are combined
+| extend AccountName=tolower(Account)
+| summarize
+    ['Count of Computers']=dcount(Computer),
+    ['List of Computers']=make_set(Computer)
+    by AccountName
+| sort by ['Count of Computers'] desc 

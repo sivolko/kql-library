@@ -1,0 +1,11 @@
+// Source: https://github.com/ank0ku/KQL
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where ActionType startswith "Asr"
+| extend AdditionalFieldsStr = tostring(AdditionalFields)
+| extend IsAudit = extractjson("$.IsAudit", AdditionalFieldsStr)
+| extend RuleId = extractjson("$.RuleId", AdditionalFieldsStr)
+| project TimeGenerated, DeviceName, ActionType, FileName, FolderPath, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName, AccountDomain, IsAudit, RuleId

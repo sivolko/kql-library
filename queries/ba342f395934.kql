@@ -1,0 +1,17 @@
+// Source: https://github.com/vivekrn11/AzureSentinelKQLqueries
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| extend ParsedFields=parse_json(AdditionalFields) 
+| extend ParsedFields=parse_json(AdditionalFields) 
+//|search "trojan"
+| extend ThreatName_ = tostring(AdditionalFields.ThreatName)
+| where isnotempty(ThreatName_)
+| where ThreatName_ startswith "Trojan"
+    or ThreatName_ startswith "backdoor"
+    or ThreatName_ startswith "exploit"
+    or ThreatName_ contains "virus"
+| extend WasRemediated_ = tostring(AdditionalFields.WasRemediated)
+//uncomment Below line if you want to see result which are not remediated
+//| where WasRemediated_ !contains "true"

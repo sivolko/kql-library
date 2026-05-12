@@ -1,0 +1,14 @@
+// Source: https://github.com/griffin31-lab/Griffin31-ToolKit
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(30d)
+| where Operation == "New-InboxRule"
+| mv-apply p=todynamic(Parameters) on (
+    where p.Name == "Name"
+    | extend RuleName = tostring(p.Value)
+  )
+| project TimeGenerated, UserId, ClientIP, RuleName
+// Additionally surface rule names with no alphanumeric characters — a classic attacker-obfuscation marker
+| where RuleName matches regex @"^[^a-zA-Z0-9]*$"

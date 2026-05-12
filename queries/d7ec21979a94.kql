@@ -1,0 +1,11 @@
+// Source: https://github.com/ava-orange-education/Ultimate-Microsoft-XDR-for-Full-Spectrum-Cyber-Defence
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(90d)
+| where OfficeWorkload == "SharePoint" or OfficeWorkload == "OneDrive"
+| where Operation != ""
+| where Operation contains "shar"
+| summarize count() by UserId
+| take 10 

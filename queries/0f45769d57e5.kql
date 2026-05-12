@@ -1,0 +1,16 @@
+// Source: https://github.com/MSJosh/documentation
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let EmailEventsQuery =
+ EmailEvents
+ | where EmailDirection contains "Outbound" and AttachmentCount > 0
+ | extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[-1]);
+let OfficeActivityQuery =
+ OfficeActivity
+| where Operation in ("Send")
+ | extend InternetMessageId = tostring(parse_json(Item).InternetMessageId);
+EmailEventsQuery
+| join kind=inner OfficeActivityQuery on $left.InternetMessageId == $right.InternetMessageId
+| extend SizeInBytes = tostring(parse_json(Item).SizeInBytes)
+| project TimeGenerated, Subject, SenderFromAddress, SenderFromDomain, RecipientEmailAddress, RecipientDomain, AttachmentCount,SizeInBytes

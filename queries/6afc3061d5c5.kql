@@ -1,0 +1,7 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(10m)
+| where OperationName == "Deallocate Virtual Machine" and ActivityStatus == "Succeeded"

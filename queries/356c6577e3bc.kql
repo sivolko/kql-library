@@ -1,0 +1,9 @@
+// Source: https://github.com/ZeroDeltaSEC/Exploring-KQL
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| search "<IDENTIFIER>"
+| where FailureReason in ("WrongPassword","UnknownUser")
+| summarize Count=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by DeviceName, AccountName, FailureReason
+| order by Count desc

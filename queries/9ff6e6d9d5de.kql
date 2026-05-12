@@ -1,0 +1,422 @@
+// Source: https://github.com/ilyafedotov-ops/Templates
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+union withsource=TableName *
+| where TimeGenerated > ago(24h)
+| summarize 
+    RecordCount = count(),
+    DataSizeGB = sum(estimate_data_size(*)) / 1024 / 1024 / 1024,
+    EarliestRecord = min(TimeGenerated),
+    LatestRecord = max(TimeGenerated),
+    UniqueHours = dcount(bin(TimeGenerated, 1h))
+by TableName
+| where RecordCount > 0
+| extend 
+    IngestionStatus = case(
+        UniqueHours >= 20, "Healthy",
+        UniqueHours >= 12, "Warning", 
+        "Critical"
+    ),
+    AvgRecordsPerHour = RecordCount / 24.0,
+    DataFreshness = now() - LatestRecord
+| project 
+    TableName,
+    IngestionStatus,
+    RecordCount,
+    DataSizeGB = round(DataSizeGB, 3),
+    AvgRecordsPerHour = round(AvgRecordsPerHour, 0),
+    DataFreshness = format_timespan(DataFreshness, "hh:mm:ss"),
+    EarliestRecord,
+    LatestRecord
+| order by RecordCount desc
+
+//==========================================
+// 2. DATA CONNECTOR SPECIFIC HEALTH CHECKS
+//==========================================
+
+// Azure Activity Log Health Check
+AzureActivity
+| where TimeGenerated > ago(6h)
+| summarize 
+    RecordCount = count(),
+    UniqueSubscriptions = dcount(SubscriptionId),
+    UniqueOperations = dcount(OperationName),
+    LastRecord = max(TimeGenerated),
+    FailedOperations = countif(ActivityStatus == "Failed")
+| extend 
+    HealthStatus = case(
+        RecordCount > 0 and LastRecord > ago(1h), "Healthy",
+        RecordCount > 0 and LastRecord > ago(3h), "Warning",
+        "Critical"
+    ),
+    FailureRate = round(todouble(FailedOperations) / RecordCount * 100, 2)
+| project 
+    Connector = "Azure Activity",
+    HealthStatus,
+    RecordCount,
+    UniqueSubscriptions,
+    LastRecord,
+    FailureRate,
+    TimeSinceLastRecord = format_timespan(now() - LastRecord, "hh:mm:ss")
+
+// Azure AD Sign-in Logs Health Check  
+SigninLogs
+| where TimeGenerated > ago(6h)
+| summarize 
+    RecordCount = count(),
+    UniqueUsers = dcount(UserPrincipalName),
+    SuccessfulLogins = countif(ResultType == 0),
+    FailedLogins = countif(ResultType != 0),
+    LastRecord = max(TimeGenerated)
+| extend
+    HealthStatus = case(
+        RecordCount > 0 and LastRecord > ago(1h), "Healthy",
+        RecordCount > 0 and LastRecord > ago(3h), "Warning", 
+        "Critical"
+    ),
+    FailureRate = round(todouble(FailedLogins) / RecordCount * 100, 2)
+| project 
+    Connector = "Azure AD Sign-ins",
+    HealthStatus,
+    RecordCount,
+    UniqueUsers,
+    SuccessfulLogins,
+    FailedLogins,
+    FailureRate,
+    LastRecord,
+    TimeSinceLastRecord = format_timespan(now() - LastRecord, "hh:mm:ss")
+
+// Office 365 Activity Health Check
+OfficeActivity
+| where TimeGenerated > ago(6h)
+| summarize 
+    RecordCount = count(),
+    UniqueUsers = dcount(UserId),
+    UniqueWorkloads = dcount(OfficeWorkload),
+    LastRecord = max(TimeGenerated)
+by OfficeWorkload
+| extend
+    HealthStatus = case(
+        RecordCount > 0 and LastRecord > ago(2h), "Healthy",
+        RecordCount > 0 and LastRecord > ago(4h), "Warning",
+        "Critical"
+    )
+| project 
+    Connector = strcat("Office 365 - ", OfficeWorkload),
+    HealthStatus,
+    RecordCount,
+    UniqueUsers, 
+    LastRecord,
+    TimeSinceLastRecord = format_timespan(now() - LastRecord, "hh:mm:ss")
+
+// Security Alerts Health Check
+SecurityAlert
+| where TimeGenerated > ago(24h)
+| summarize 
+    RecordCount = count(),
+    HighSeverityAlerts = countif(AlertSeverity == "High"),
+    CriticalAlerts = countif(AlertSeverity == "Critical"),
+    UniqueProducts = dcount(ProductName),
+    LastRecord = max(TimeGenerated)
+| extend
+    HealthStatus = case(
+        RecordCount >= 0 and LastRecord > ago(4h), "Healthy",
+        RecordCount >= 0 and LastRecord > ago(8h), "Warning",
+        "Critical"
+    )
+| project 
+    Connector = "Security Alerts",
+    HealthStatus,
+    RecordCount,
+    HighSeverityAlerts,
+    CriticalAlerts,
+    UniqueProducts,
+    LastRecord,
+    TimeSinceLastRecord = format_timespan(now() - LastRecord, "hh:mm:ss")
+
+//==========================================
+// 3. DATA QUALITY MONITORING
+//==========================================
+
+// Missing or Null Critical Fields
+let CriticalFieldChecks = datatable(TableName:string, FieldName:string, ExpectedPresence:double) [
+    "SigninLogs", "UserPrincipalName", 0.95,
+    "SigninLogs", "IPAddress", 0.90,
+    "AzureActivity", "Caller", 0.85,
+    "AzureActivity", "ResourceId", 0.95,
+    "OfficeActivity", "UserId", 0.95,
+    "SecurityAlert", "AlertName", 1.0
+];
+CriticalFieldChecks
+| join kind=leftouter (
+    union 
+    (SigninLogs | where TimeGenerated > ago(1h) | extend TableName = "SigninLogs", FieldName = "UserPrincipalName", HasValue = isnotempty(UserPrincipalName)),
+    (SigninLogs | where TimeGenerated > ago(1h) | extend TableName = "SigninLogs", FieldName = "IPAddress", HasValue = isnotempty(IPAddress)),
+    (AzureActivity | where TimeGenerated > ago(1h) | extend TableName = "AzureActivity", FieldName = "Caller", HasValue = isnotempty(Caller)),
+    (AzureActivity | where TimeGenerated > ago(1h) | extend TableName = "AzureActivity", FieldName = "ResourceId", HasValue = isnotempty(ResourceId)),
+    (OfficeActivity | where TimeGenerated > ago(1h) | extend TableName = "OfficeActivity", FieldName = "UserId", HasValue = isnotempty(UserId)),
+    (SecurityAlert | where TimeGenerated > ago(1h) | extend TableName = "SecurityAlert", FieldName = "AlertName", HasValue = isnotempty(AlertName))
+    | summarize TotalRecords = count(), RecordsWithValue = countif(HasValue) by TableName, FieldName
+    | extend ActualPresence = todouble(RecordsWithValue) / TotalRecords
+) on TableName, FieldName
+| extend
+    QualityStatus = case(
+        ActualPresence >= ExpectedPresence, "Good",
+        ActualPresence >= (ExpectedPresence * 0.8), "Warning",
+        "Poor"
+    ),
+    PresenceGap = ExpectedPresence - ActualPresence
+| project 
+    TableName,
+    FieldName,
+    QualityStatus,
+    ExpectedPresence = round(ExpectedPresence * 100, 1),
+    ActualPresence = round(ActualPresence * 100, 1),
+    PresenceGap = round(PresenceGap * 100, 1),
+    TotalRecords,
+    RecordsWithValue
+
+//==========================================
+// 4. INGESTION LATENCY MONITORING
+//==========================================
+
+// Data Freshness Check - Time between event generation and ingestion
+let FreshnessCheck = (TableName:string, TimeField:string) {
+    let Query = strcat("
+    ", TableName, "
+    | where TimeGenerated > ago(2h)
+    | where ", TimeField, " > datetime(2020-01-01)
+    | extend IngestionLatency = TimeGenerated - ", TimeField, "
+    | where IngestionLatency > 0s
+    | summarize 
+        RecordCount = count(),
+        AvgLatency = avg(IngestionLatency),
+        MedianLatency = percentile(IngestionLatency, 50),
+        P95Latency = percentile(IngestionLatency, 95),
+        MaxLatency = max(IngestionLatency)
+    | extend TableName = '", TableName, "'
+    ");
+    toscalar(Query)
+};
+
+union 
+(AzureActivity 
+ | where TimeGenerated > ago(2h)
+ | extend IngestionLatency = TimeGenerated - EventSubmissionTimestamp
+ | where IngestionLatency > 0s and IngestionLatency < 1d
+ | summarize 
+    RecordCount = count(),
+    AvgLatency = avg(IngestionLatency),
+    MedianLatency = percentile(IngestionLatency, 50),
+    P95Latency = percentile(IngestionLatency, 95),
+    MaxLatency = max(IngestionLatency)
+ | extend TableName = "AzureActivity"),
+(SigninLogs 
+ | where TimeGenerated > ago(2h)
+ | extend IngestionLatency = TimeGenerated - CreatedDateTime  
+ | where IngestionLatency > 0s and IngestionLatency < 1d
+ | summarize 
+    RecordCount = count(),
+    AvgLatency = avg(IngestionLatency),
+    MedianLatency = percentile(IngestionLatency, 50), 
+    P95Latency = percentile(IngestionLatency, 95),
+    MaxLatency = max(IngestionLatency)
+ | extend TableName = "SigninLogs")
+| extend
+    LatencyStatus = case(
+        P95Latency <= 15m, "Good",
+        P95Latency <= 30m, "Warning", 
+        "Poor"
+    )
+| project 
+    TableName,
+    LatencyStatus,
+    RecordCount,
+    AvgLatency = format_timespan(AvgLatency, "hh:mm:ss"),
+    MedianLatency = format_timespan(MedianLatency, "hh:mm:ss"),
+    P95Latency = format_timespan(P95Latency, "hh:mm:ss"),
+    MaxLatency = format_timespan(MaxLatency, "hh:mm:ss")
+
+//==========================================
+// 5. CONNECTOR-SPECIFIC ANOMALY DETECTION
+//==========================================
+
+// Anomaly Detection for Data Volume
+let BaselineData = 
+union withsource=TableName *
+| where TimeGenerated between (ago(7d) .. ago(1d))
+| summarize RecordCount = count() by TableName, bin(TimeGenerated, 1h)
+| summarize 
+    AvgHourlyRecords = avg(RecordCount),
+    StdDevRecords = stdev(RecordCount)
+by TableName;
+
+let CurrentData = 
+union withsource=TableName *
+| where TimeGenerated > ago(1d)
+| summarize RecordCount = count() by TableName, bin(TimeGenerated, 1h);
+
+CurrentData
+| join kind=inner (BaselineData) on TableName
+| extend
+    ZScore = (RecordCount - AvgHourlyRecords) / StdDevRecords,
+    AnomalyStatus = case(
+        abs(ZScore) > 3, "Critical Anomaly",
+        abs(ZScore) > 2, "Moderate Anomaly", 
+        abs(ZScore) > 1.5, "Minor Anomaly",
+        "Normal"
+    ),
+    PercentDeviation = round(((RecordCount - AvgHourlyRecords) / AvgHourlyRecords) * 100, 1)
+| where AnomalyStatus != "Normal"
+| project 
+    TableName,
+    TimeGenerated,
+    AnomalyStatus,
+    CurrentRecords = RecordCount,
+    BaselineAvg = round(AvgHourlyRecords, 0),
+    PercentDeviation,
+    ZScore = round(ZScore, 2)
+| order by abs(ZScore) desc
+
+//==========================================
+// 6. MULTI-CLOUD CONNECTOR HEALTH
+//==========================================
+
+// AWS CloudTrail Health Check (if enabled)
+AWSCloudTrail
+| where TimeGenerated > ago(6h)
+| summarize 
+    RecordCount = count(),
+    UniqueAccounts = dcount(AWSAccountId),
+    UniqueRegions = dcount(AWSRegion),
+    ErrorEvents = countif(isnotempty(ErrorCode)),
+    LastRecord = max(TimeGenerated)
+| extend
+    HealthStatus = case(
+        RecordCount > 0 and LastRecord > ago(2h), "Healthy",
+        RecordCount > 0 and LastRecord > ago(4h), "Warning",
+        "Critical"  
+    ),
+    ErrorRate = round(todouble(ErrorEvents) / RecordCount * 100, 2)
+| project 
+    Connector = "AWS CloudTrail",
+    HealthStatus,
+    RecordCount,
+    UniqueAccounts,
+    UniqueRegions,
+    ErrorEvents,
+    ErrorRate,
+    LastRecord,
+    TimeSinceLastRecord = format_timespan(now() - LastRecord, "hh:mm:ss")
+
+// GCP Audit Logs Health Check (if enabled)
+GCPAuditLogs  
+| where TimeGenerated > ago(6h)
+| summarize 
+    RecordCount = count(),
+    UniqueProjects = dcount(ProjectId),
+    UniqueServices = dcount(ServiceName),
+    ErrorEvents = countif(Status != "OK"),
+    LastRecord = max(TimeGenerated)
+| extend
+    HealthStatus = case(
+        RecordCount > 0 and LastRecord > ago(2h), "Healthy",
+        RecordCount > 0 and LastRecord > ago(4h), "Warning",
+        "Critical"
+    ),
+    ErrorRate = round(todouble(ErrorEvents) / RecordCount * 100, 2)
+| project 
+    Connector = "GCP Audit Logs",
+    HealthStatus, 
+    RecordCount,
+    UniqueProjects,
+    UniqueServices,
+    ErrorEvents,
+    ErrorRate,
+    LastRecord,
+    TimeSinceLastRecord = format_timespan(now() - LastRecord, "hh:mm:ss")
+
+//==========================================
+// 7. CUSTOM LOG CONNECTOR HEALTH
+//==========================================
+
+// CEF Logs Health Check
+CommonSecurityLog
+| where TimeGenerated > ago(6h)
+| summarize 
+    RecordCount = count(),
+    UniqueDevices = dcount(DeviceName),
+    UniqueProducts = dcount(DeviceProduct),
+    HighSeverityEvents = countif(LogSeverity >= 7),
+    LastRecord = max(TimeGenerated)
+| extend
+    HealthStatus = case(
+        RecordCount > 0 and LastRecord > ago(1h), "Healthy",
+        RecordCount > 0 and LastRecord > ago(3h), "Warning",
+        "Critical"
+    )
+| project 
+    Connector = "CEF Logs",
+    HealthStatus,
+    RecordCount,
+    UniqueDevices,
+    UniqueProducts,
+    HighSeverityEvents,
+    LastRecord,
+    TimeSinceLastRecord = format_timespan(now() - LastRecord, "hh:mm:ss")
+
+// Syslog Health Check
+Syslog
+| where TimeGenerated > ago(6h)
+| summarize 
+    RecordCount = count(),
+    UniqueHosts = dcount(Computer),
+    UniqueFacilities = dcount(Facility),
+    ErrorMessages = countif(SeverityLevel <= 3),
+    LastRecord = max(TimeGenerated)
+| extend
+    HealthStatus = case(
+        RecordCount > 0 and LastRecord > ago(1h), "Healthy", 
+        RecordCount > 0 and LastRecord > ago(3h), "Warning",
+        "Critical"
+    )
+| project 
+    Connector = "Syslog",
+    HealthStatus,
+    RecordCount,
+    UniqueHosts,
+    UniqueFacilities,
+    ErrorMessages,
+    LastRecord,
+    TimeSinceLastRecord = format_timespan(now() - LastRecord, "hh:mm:ss")
+
+//==========================================
+// 8. COMPREHENSIVE HEALTH DASHBOARD QUERY
+//==========================================
+
+// Combined health status for dashboard
+let HealthSummary = 
+union 
+    (AzureActivity | where TimeGenerated > ago(1h) | summarize Count = count() | extend Connector = "Azure Activity", LastData = Count > 0),
+    (SigninLogs | where TimeGenerated > ago(1h) | summarize Count = count() | extend Connector = "Azure AD Sign-ins", LastData = Count > 0),
+    (AuditLogs | where TimeGenerated > ago(1h) | summarize Count = count() | extend Connector = "Azure AD Audit", LastData = Count > 0),
+    (SecurityAlert | where TimeGenerated > ago(2h) | summarize Count = count() | extend Connector = "Security Alerts", LastData = Count > 0),
+    (OfficeActivity | where TimeGenerated > ago(2h) | summarize Count = count() | extend Connector = "Office 365", LastData = Count > 0),
+    (CommonSecurityLog | where TimeGenerated > ago(1h) | summarize Count = count() | extend Connector = "CEF Logs", LastData = Count > 0),
+    (Syslog | where TimeGenerated > ago(1h) | summarize Count = count() | extend Connector = "Syslog", LastData = Count > 0)
+| extend Status = iff(LastData, "Connected", "No Data")
+| project Connector, Status, Count;
+
+HealthSummary
+| extend OverallHealth = case(
+    Status == "Connected", "✅ Healthy",
+    "❌ Issue Detected"
+)
+| project Connector, OverallHealth, RecordCount = Count
+| union (datatable(Connector:string, OverallHealth:string, RecordCount:long) [
+    "Overall Status", 
+    iff(toscalar(HealthSummary | where Status == "No Data" | count()) == 0, "✅ All Systems Healthy", "⚠️ Issues Detected"),
+    toscalar(HealthSummary | summarize sum(Count))
+])
+| order by Connector asc

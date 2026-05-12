@@ -1,0 +1,9 @@
+// Source: https://github.com/flattte/libKQL
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let t = now();
+union DeviceTvmSoftwareVulnerabilities, DeviceEvents
+| where VulnerabilitySeverityLevel has_any ("High","Medium")
+| where DeviceName != "wro-dev01.smartech-it.eu"
+| project Timestamp = t, ReportId = hash_sha1(strcat(DeviceId, CveId)), DeviceName, OSPlatform, OSVersion, SoftwareVendor, SoftwareName, CveId, VulnerabilitySeverityLevel

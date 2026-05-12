@@ -1,0 +1,9 @@
+// Source: https://github.com/krabelize/Palo-Alto-NGFW-Sentinel-SIEM
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where DeviceVendor == "Palo Alto Networks"
+| where DeviceEventClassID == "url"
+| where isnotempty(RequestURL)
+| summarize Amount=count() by  RequestURL, DeviceName, ApplicationProtocol, DeviceEventCategory, Activity, DeviceAction, SourceIP, DestinationIP, DestinationPort, Protocol

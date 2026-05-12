@@ -1,0 +1,241 @@
+// Source: https://github.com/kevinflint-cs2/sentinel-threat-hunting
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ByteThreshold = 100000000; // 100 MB
+let timeRange = 24h;
+CommonSecurityLog
+| where TimeGenerated > ago(timeRange)
+| where DeviceDirection == "Outbound"
+| where DestinationIP !startswith "10." and DestinationIP !startswith "192.168." and DestinationIP !startswith "172.16."
+| summarize 
+    TotalBytesSent = sum(SentBytes),
+    ConnectionCount = count(),
+    FirstTransfer = min(TimeGenerated),
+    LastTransfer = max(TimeGenerated),
+    Destinations = make_set(DestinationIP, 10),
+    Ports = make_set(DestinationPort, 10)
+    by SourceIP
+| where TotalBytesSent > ByteThreshold
+| extend TotalMB = round(TotalBytesSent / 1024.0 / 1024.0, 2)
+| extend Severity = case(
+    TotalBytesSent > 1000000000, "Critical", // > 1 GB
+    TotalBytesSent > 500000000, "High", // > 500 MB
+    "Medium"
+)
+| project-reorder FirstTransfer, LastTransfer, SourceIP, TotalMB, ConnectionCount, Severity, Destinations
+
+// ----------------------------------------------------------------------------
+// 2. Unusual Cloud Storage Access
+// ----------------------------------------------------------------------------
+// Detects unusual uploads to cloud storage services
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DeviceDirection == "Outbound"
+| extend Domain = extract(@"^(?:https?://)?([^/]+)", 1, RequestURL)
+| where Domain has_any (
+    "dropbox.com", "drive.google.com", "onedrive.com", 
+    "box.com", "mega.nz", "wetransfer.com",
+    "sendspace.com", "mediafire.com", "filebin.net"
+)
+| where RequestMethod in ("POST", "PUT")
+| summarize 
+    UploadCount = count(),
+    TotalBytesSent = sum(SentBytes),
+    Services = make_set(Domain, 10),
+    URLs = make_set(RequestURL, 5)
+    by SourceIP, SourceUserName
+| extend TotalMB = round(TotalBytesSent / 1024.0 / 1024.0, 2)
+| where TotalMB > 10
+| project 
+    SourceIP,
+    SourceUserName,
+    UploadCount,
+    TotalMB,
+    Services,
+    SampleURLs = URLs
+| order by TotalMB desc
+
+// ----------------------------------------------------------------------------
+// 3. After-Hours Data Transfer
+// ----------------------------------------------------------------------------
+// Detects large data transfers outside business hours
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DeviceDirection == "Outbound"
+| extend Hour = hourofday(TimeGenerated)
+| extend DayOfWeek = dayofweek(TimeGenerated)
+| where Hour < 7 or Hour > 19 // Outside 7 AM - 7 PM
+    or DayOfWeek in (0d, 6d) // Weekend
+| summarize 
+    TotalBytesSent = sum(SentBytes),
+    ConnectionCount = count(),
+    TransferDates = make_set(format_datetime(TimeGenerated, "yyyy-MM-dd HH:mm"), 10),
+    Destinations = make_set(DestinationIP, 10)
+    by SourceIP, SourceUserName
+| extend TotalMB = round(TotalBytesSent / 1024.0 / 1024.0, 2)
+| where TotalMB > 50
+| project-reorder SourceIP, SourceUserName, TotalMB, ConnectionCount, TransferDates
+| order by TotalMB desc
+
+// ----------------------------------------------------------------------------
+// 4. Mass File Download/Upload from SharePoint/OneDrive
+// ----------------------------------------------------------------------------
+// Detects bulk file operations in Office 365
+OfficeActivity
+| where TimeGenerated > ago(24h)
+| where Operation in ("FileDownloaded", "FileUploaded", "FileSyncDownloadedFull")
+| where OfficeWorkload in ("SharePoint", "OneDrive")
+| summarize 
+    FileCount = count(),
+    UniqueFiles = dcount(SourceFileName),
+    Operations = make_set(Operation, 5),
+    FileNames = make_set(SourceFileName, 20)
+    by UserId, ClientIP, bin(TimeGenerated, 1h)
+| where FileCount > 50 // More than 50 files in an hour
+| extend Severity = case(
+    FileCount > 200, "Critical",
+    FileCount > 100, "High",
+    "Medium"
+)
+| project 
+    TimeGenerated,
+    UserId,
+    ClientIP,
+    FileCount,
+    UniqueFiles,
+    Operations,
+    Severity
+| order by FileCount desc
+
+// ----------------------------------------------------------------------------
+// 5. Email with Large Attachments to External Recipients
+// ----------------------------------------------------------------------------
+// Detects emails with large attachments sent externally
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where Operation == "Send"
+| where OfficeWorkload == "Exchange"
+| extend AttachmentSize = toint(AttachmentCount) * toint(MessageSize)
+| where MessageSize > 10485760 // > 10 MB
+| extend RecipientDomain = extract(@"@(.+)$", 1, tostring(Recipients))
+| where RecipientDomain !has_any ("yourdomain.com") // Replace with your domain
+| summarize 
+    EmailCount = count(),
+    TotalSizeMB = round(sum(MessageSize) / 1024.0 / 1024.0, 2),
+    Recipients = make_set(Recipients, 20),
+    Subjects = make_set(Subject, 10)
+    by UserId, RecipientDomain
+| where TotalSizeMB > 50
+| project 
+    UserId,
+    RecipientDomain,
+    EmailCount,
+    TotalSizeMB,
+    Recipients,
+    Subjects
+| order by TotalSizeMB desc
+
+// ----------------------------------------------------------------------------
+// 6. Clipboard Data Exfiltration via Remote Desktop
+// ----------------------------------------------------------------------------
+// Detects clipboard transfers in RDP sessions
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4624
+| where LogonType == 10 // RDP
+| join kind=inner (
+    SecurityEvent
+    | where TimeGenerated > ago(24h)
+    | where EventID == 5140 // Network share accessed
+    | where ShareName has "\\Device\\RdpDrClipboard"
+) on Computer, Account
+| project 
+    TimeGenerated,
+    Computer,
+    Account,
+    IpAddress,
+    ShareName,
+    RelativeTargetName
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 7. Database Bulk Export Detection
+// ----------------------------------------------------------------------------
+// Detects bulk data extraction from databases
+let DatabaseServers = dynamic(["DB-PROD-01", "SQL-SERVER-02"]); // Update with your DB servers
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where Computer in (DatabaseServers)
+| where Process has_any ("sqlcmd.exe", "bcp.exe", "mysqldump.exe", "pg_dump.exe")
+| where CommandLine has_any ("SELECT", "EXPORT", "OUT", "INTO OUTFILE")
+| extend Operation = case(
+    CommandLine has "bcp" and CommandLine has "out", "Bulk Copy Out",
+    CommandLine has "mysqldump", "MySQL Dump",
+    CommandLine has "pg_dump", "PostgreSQL Dump",
+    CommandLine has "SELECT" and CommandLine has "INTO", "SQL Export",
+    "Unknown Export"
+)
+| project 
+    TimeGenerated,
+    Computer,
+    Account,
+    Operation,
+    CommandLine,
+    Process
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// 8. Unusual Protocol for Data Transfer
+// ----------------------------------------------------------------------------
+// Detects data transfers using uncommon protocols
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DeviceDirection == "Outbound"
+| where ApplicationProtocol in ("FTP", "TFTP", "SCP", "SFTP", "IRC")
+    or DestinationPort in (21, 69, 22, 6667)
+| summarize 
+    ConnectionCount = count(),
+    TotalBytesSent = sum(SentBytes),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Destinations = make_set(DestinationIP, 10)
+    by SourceIP, ApplicationProtocol, DestinationPort
+| extend TotalMB = round(TotalBytesSent / 1024.0 / 1024.0, 2)
+| where TotalMB > 10
+| project-reorder FirstSeen, LastSeen, SourceIP, ApplicationProtocol, TotalMB, ConnectionCount
+| order by TotalMB desc
+
+// ----------------------------------------------------------------------------
+// 9. Compressed Archive Creation Before Transfer
+// ----------------------------------------------------------------------------
+// Detects creation of compressed files potentially for exfiltration
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4688 // Process creation
+| where Process has_any ("7z.exe", "winrar.exe", "zip.exe", "tar.exe")
+    or CommandLine has_any (".zip", ".rar", ".7z", ".tar.gz")
+| where CommandLine has_any ("a ", "create", "-c", "compress")
+| project 
+    TimeGenerated,
+    Computer,
+    Account,
+    Process,
+    CommandLine,
+    ParentProcessName
+| join kind=inner (
+    CommonSecurityLog
+    | where TimeGenerated > ago(24h)
+    | where DeviceDirection == "Outbound"
+    | where SentBytes > 10000000
+    | summarize TotalBytesSent = sum(SentBytes) by SourceIP, bin(TimeGenerated, 5m)
+) on $left.Computer == $right.SourceIP
+| where TimeGenerated1 > TimeGenerated and TimeGenerated1 < (TimeGenerated + 1h)
+| project 
+    CompressionTime = TimeGenerated,
+    TransferTime = TimeGenerated1,
+    Computer,
+    Account,
+    CommandLine,
+    TotalBytesSent
+| order by CompressionTime desc

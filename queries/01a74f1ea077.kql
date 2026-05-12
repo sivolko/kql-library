@@ -1,0 +1,17 @@
+// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ipAddress = "ENTER IP HERE";
+// Query for Azure Activity Logs
+let azureActivityLogs = AzureActivity
+| where CallerIpAddress == ipAddress
+| summarize Count = count() by bin(TimeGenerated, 1d), LogType = "Azure Activity Logs";
+// Query for Entra ID Sign-in Logs
+let entraIDSignInLogs = SigninLogs
+| where IPAddress == ipAddress
+| summarize Count = count() by bin(TimeGenerated, 1d), LogType = "Entra ID Sign-in Logs";
+// Combine the results
+union azureActivityLogs, entraIDSignInLogs
+| project TimeGenerated, LogType, Count
+| render barchart

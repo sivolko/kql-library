@@ -1,0 +1,105 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType in ("CreateRemoteThreadApiCall", "AllocateVirtualMemoryApiCall", "WriteToLsassMemory")
+| where isnotempty(CallStackReturnAddresses)
+| mv-expand CallStackFrame = parse_json(CallStackReturnAddresses)
+| where tostring(CallStackFrame.ModuleName) == "" or tostring(CallStackFrame.ModuleName) == "unknown"
+| project Timestamp, DeviceName, ProcessId, InitiatingProcessFileName,
+          InitiatingProcessParentFileName, ActionType,
+          SuspiciousFrame = CallStackFrame,
+          ReportId, DeviceId
+| order by Timestamp desc
+
+// ── Query 2: Direct-Syscall Detection via Non-ntdll Return Address ─────────────
+//
+// Rationale: Direct syscall evasion (BruteRatel, SysWhispers) executes the
+// `syscall` instruction from a non-ntdll region. Kernel-ETW records the
+// userspace return address at the time of the syscall. If that address is
+// outside ntdll.dll, the syscall was issued directly.
+DeviceEvents
+| where ActionType == "CreateRemoteThreadApiCall"
+| where isnotempty(CallStackReturnAddresses)
+| extend CallFrames = parse_json(CallStackReturnAddresses)
+| extend TopFrame = tostring(CallFrames[0].ModuleName)
+| where TopFrame != "ntdll.dll" and TopFrame != ""
+    and InitiatingProcessFileName !in~ ("WinDbg.exe", "ida64.exe", "x64dbg.exe")
+| project Timestamp, DeviceName, ProcessId, InitiatingProcessFileName,
+          TopFrameModule = TopFrame, ActionType, ReportId
+| order by Timestamp desc
+
+// ── Query 3: Thread-Pool Spoof Pattern ────────────────────────────────────────
+//
+// Rationale: Thread-pool spoofing (queuing work to TppWorkerThread) produces a
+// characteristic frame: TppWorkerThread appears in the stack, but the frames
+// above it do not have a valid call-transition from TppWorkerThread's code path.
+// This query looks for TppWorkerThread in the stack without the expected
+// accompanying NT Thread bootstrap frames.
+DeviceEvents
+| where ActionType in ("CreateRemoteThreadApiCall", "AllocateVirtualMemoryApiCall")
+| where isnotempty(CallStackReturnAddresses)
+| extend Frames = parse_json(CallStackReturnAddresses)
+| extend HasTppWorker = array_length(
+    array_slice(Frames, 0, 20)
+    | mv-expand F = Frames
+    | where F.SymbolName contains "TppWorkerThread"
+    ) > 0
+| extend HasRtlUserThreadStart = array_length(
+    Frames
+    | mv-expand F = Frames
+    | where F.SymbolName contains "RtlUserThreadStart"
+    ) > 0
+| where HasTppWorker == true and HasRtlUserThreadStart == false
+| project Timestamp, DeviceName, ProcessId, InitiatingProcessFileName, ActionType, ReportId
+| order by Timestamp desc
+
+// ── Query 4: Periodic Beacon with Anomalous Call-Stack Timing ─────────────────
+//
+// Rationale: C2 beacons with call-stack spoofing produce periodic network
+// connections from processes with anomalous call stacks. Correlating periodic
+// outbound connections with call-stack anomaly events for the same process
+// narrows to high-confidence implant activity.
+let callstack_anomalies =
+    DeviceEvents
+    | where ActionType in ("CreateRemoteThreadApiCall", "AllocateVirtualMemoryApiCall")
+    | where isnotempty(CallStackReturnAddresses)
+    | mv-expand Frame = parse_json(CallStackReturnAddresses)
+    | where tostring(Frame.ModuleName) == "" or tostring(Frame.ModuleName) == "unknown"
+    | distinct DeviceName, ProcessId, Timestamp;
+let outbound_connections =
+    DeviceNetworkEvents
+    | where RemotePort in (80, 443, 8080, 8443, 4444)
+    | where ActionType == "ConnectionSuccess"
+    | project DeviceName, ProcessId, NetworkTimestamp = Timestamp, RemoteIP, RemotePort;
+callstack_anomalies
+| join kind=inner outbound_connections on DeviceName, ProcessId
+| where abs(datetime_diff('second', Timestamp, NetworkTimestamp)) < 10
+| project Timestamp, DeviceName, ProcessId, RemoteIP, RemotePort, NetworkTimestamp
+| order by Timestamp desc
+
+// ── Query 5: svchost.exe with Unexpected Outbound and Hollow Stack ─────────────
+//
+// Rationale: NightHawk and similar tools hollow svchost.exe to host the implant.
+// Hollowed svchost.exe will have outbound connections to non-Microsoft endpoints
+// and call stacks that lack the expected ServiceMain / SvcHostMain frames.
+DeviceNetworkEvents
+| where InitiatingProcessFileName =~ "svchost.exe"
+| where RemotePort in (80, 443, 8080, 8443)
+| where RemoteUrl !endswith "microsoft.com"
+    and RemoteUrl !endswith "windows.com"
+    and RemoteUrl !endswith "msftconnecttest.com"
+    and RemoteUrl !endswith "windowsupdate.com"
+| join kind=leftouter (
+    DeviceEvents
+    | where ActionType == "AllocateVirtualMemoryApiCall"
+    | where InitiatingProcessFileName =~ "svchost.exe"
+    | where isnotempty(CallStackReturnAddresses)
+    | extend HasSvcHostMain = parse_json(CallStackReturnAddresses)
+        | mv-expand F = parse_json(CallStackReturnAddresses)
+        | summarize HasSvcHost = countif(F.SymbolName contains "SvcHostMain") by ProcessId
+    ) on ProcessId
+| where HasSvcHost == 0 or isnull(HasSvcHost)
+| project Timestamp, DeviceName, ProcessId, RemoteUrl, RemotePort, RemoteIP
+| order by Timestamp desc

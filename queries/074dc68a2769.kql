@@ -1,0 +1,11 @@
+// Source: https://github.com/letisiapangataa/azure-sentinel-power-bi-dashboard
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue in ("Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read", 
+                               "Microsoft.Storage/storageAccounts/listKeys/action")
+| where ActivityStatusValue == "Success"
+| summarize Downloads = count() by Caller, ResourceGroup, bin(TimeGenerated, 1h)
+| where Downloads > 100
+| order by TimeGenerated desc

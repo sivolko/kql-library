@@ -1,0 +1,27 @@
+// Source: https://github.com/ZeroDeltaSEC/Exploring-KQL
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let UsbDriveMount = DeviceEvents
+| where DeviceName == "<DEVICE_NAME>"
+| where ActionType == "UsbDriveMounted"
+| project DeviceId, DeviceName, DriveLetter=tostring(AdditionalFields.DriveLetter), MountTime=TimeGenerated,
+          ProductName=tostring(AdditionalFields.ProductName), SerialNumber=tostring(AdditionalFields.SerialNumber),
+          Manufacturer=tostring(AdditionalFields.Manufacturer)
+| order by DeviceId asc, MountTime desc;
+let FileCreation = DeviceFileEvents
+| where InitiatingProcessAccountName != "system"
+| where ActionType == "FileCreated"
+| where FolderPath !startswith "c:\"
+| where FolderPath !startswith "\\"
+| project ReportId, DeviceId, InitiatingProcessAccountDomain, InitiatingProcessAccountName,
+          InitiatingProcessAccountUpn, FileName, FolderPath, SHA256, TimeGenerated, SensitivityLabel,
+          IsAzureInfoProtectionApplied
+| order by DeviceId asc, TimeGenerated desc;
+FileCreation
+| lookup kind=inner (UsbDriveMount) on DeviceId
+| where FolderPath startswith DriveLetter
+| where TimeGenerated >= MountTime
+| partition by ReportId (top 1 by MountTime)
+| order by DeviceId asc, TimeGenerated desc
+| extend FileHashAlgorithm = "SHA256"

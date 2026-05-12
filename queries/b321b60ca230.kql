@@ -1,0 +1,10 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+union isfuzzy=true (WireData
+| where Direction == 'Outbound'), (WindowsFirewall
+| where CommunicationDirection == 'SEND'), (CommonSecurityLog
+| where CommunicationDirection == 'Outbound')
+| where isnotempty(MaliciousIP)
+| summarize by MaliciousIP

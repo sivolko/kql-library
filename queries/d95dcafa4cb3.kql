@@ -1,0 +1,16 @@
+// Source: https://github.com/ManagedSentinel/AzureSentinelKQLScripts
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeInterval = 24h;
+CommonSecurityLog
+| where TimeGenerated > ago(timeInterval)
+| summarize Total=count(),makeset(Activity)
+| mv-expand set_Activity
+| extend Activity=tostring(set_Activity)
+| join kind=innerunique (CommonSecurityLog
+| where TimeGenerated > ago(timeInterval)
+| summarize Count=count() by Activity) on $left.Activity == $right.Activity
+| extend percentagePerActivity = round(todouble(Count)/Total*100,2)
+| project Activity, percentagePerActivity, totalPerActivity=Count, Total
+| sort by totalPerActivity desc

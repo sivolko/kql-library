@@ -1,0 +1,31 @@
+// Source: https://github.com/flattte/libKQL
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let admins = OfficeActivity
+    | where TimeGenerated >= ago(7d)
+    | where UserType has_any("Regular","DcAdmin", "Admin", "System")
+    | summarize make_set(UserType) by UserId
+    | project set_UserType, UserPrincipalName=UserId;
+union SigninLogs
+| where TimeGenerated >= ago(1h)
+| join kind = inner admins on UserPrincipalName
+| extend S1 = parse_json(AuthenticationDetails)[0]
+| extend S2 = parse_json(AuthenticationDetails)[1]
+| where not(isempty(S2))
+| extend StatusS1 = S1.succeeded
+| extend StatusS2 = S2.succeeded
+| where StatusS1 == "true"
+| where StatusS2 == "false"
+| summarize IdentityCount = count(),
+    make_set(ResourceId),
+    make_set(AuthenticationDetails),
+    make_set(AuthenticationProcessingDetails),
+    make_set(MfaDetail),
+    make_set(IPAddress),
+    make_set(ResourceTenantId),
+    reason = make_set(strcat(ResultType, " - ", ResultDescription)),
+    make_set(DeviceDetail),
+    make_set(LocationDetails)
+    by UserPrincipalName
+| where IdentityCount >= 3

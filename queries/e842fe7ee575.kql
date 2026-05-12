@@ -1,0 +1,36 @@
+// Source: https://github.com/robert-iw3/rnd_proto
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 1d;
+// Define a list of trusted service principals or users that are allowed to perform these actions.
+// This list should be populated based on your environment's known administrative and automation accounts to reduce false positives.
+let trustedCallers = dynamic([]); // e.g. dynamic(["service-principal-id-1", "user@example.com"])
+AzureActivity
+| where TimeGenerated > ago(lookback)
+| where ResourceProviderValue == "MICROSOFT.STORAGE"
+| where ActivityStatusValue == "Succeeded"
+// Exclude known legitimate callers. However, activity from these callers should still be reviewed periodically to ensure it is expected.
+| where Caller !in (trustedCallers)
+| where
+    // Condition 1: Detects when a storage account is configured to allow public blob access.
+    // This might be legitimate for hosting public website assets, but is often a misconfiguration that exposes sensitive data.
+    (OperationNameValue == "MICROSOFT.STORAGE/STORAGEACCOUNTS/WRITE" and Properties has '"allowBlobPublicAccess":true') or
+    // Condition 2: Detects when storage account access keys are listed.
+    // This grants full access to the storage account's data and can be used to create powerful SAS tokens.
+    (OperationNameValue == "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS/ACTION")
+| extend
+    // Parse relevant fields for easier analysis.
+    Activity = OperationNameValue,
+    User = Caller,
+    UserIpAddress = CallerIpAddress,
+    StorageAccountName = tostring(split(_ResourceId, '/')[-1])
+| project
+    TimeGenerated,
+    Activity,
+    User,
+    UserIpAddress,
+    StorageAccountName,
+    _ResourceId,
+    SubscriptionId,
+    CorrelationId

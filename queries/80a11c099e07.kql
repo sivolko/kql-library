@@ -1,0 +1,27 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe=4h;
+InformationProtectionEvents
+| where Time > ago(1d)
+| where Activity == "DowngradeLabel"
+| project LabelChangeTime=Time, User, FileDowngraded=ItemName
+| join kind=inner (
+    DeviceEvents
+    | where TimeGenerated > ago(1d)
+    | where ActionType == "UsbDriveMounted"
+    | extend DriveLetter = tostring(todynamic(AdditionalFields).DriveLetter)
+    | join kind=inner (DeviceFileEvents
+        | where TimeGenerated > ago(1d)
+        | project TimeGenerated, ActionType, FileName, FolderPath, DeviceId, DeviceName
+        | extend FileCopyTime = TimeGenerated
+        | where ActionType == "FileCreated"
+        | extend FileCopyName = FileName
+        | parse FolderPath with DriveLetter '\\' *
+        | extend DriveLetter = tostring(DriveLetter)
+        )
+        on DeviceId, DriveLetter) 
+    on $left.FileDowngraded == $right.FileCopyName
+| project LabelChangeTime, FileCopyTime, FileDowngraded, DeviceName, AccountName
+| where (FileCopyTime - LabelChangeTime) between (0min .. timeframe)

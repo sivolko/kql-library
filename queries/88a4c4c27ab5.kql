@@ -1,0 +1,154 @@
+// Source: https://github.com/timothywarner-org/github-security-testbed
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4720  // Account created
+| where TimeGenerated > ago(24h)
+| where Account contains "hacker" or Account contains "admin" or Account contains "test" or Account contains "backdoor"
+| project TimeGenerated, Computer, Account, SubjectUserName, NewAccountName, NewAccountSid
+| order by TimeGenerated desc
+
+// Query 2: File Encryption Activity Detection
+// Identifies processes creating encrypted files (ransomware indicators)
+SecurityEvent
+| where EventID in (4663, 4656)  // File access events
+| where ObjectName endswith ".locked" or ObjectName endswith ".encryptor" or ObjectName endswith ".crypto"
+    or ObjectName endswith ".encrypted" or ObjectName endswith ".wannacry" or ObjectName endswith ".ryuk"
+| where TimeGenerated > ago(24h)
+| summarize EncryptedFileCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by Computer, ProcessName, SubjectUserName
+| where EncryptedFileCount > 10  // Threshold for bulk encryption
+| order by EncryptedFileCount desc
+
+// Query 3: Suspicious PowerShell Execution
+// Detects PowerShell commands with obfuscation or bypass flags
+SecurityEvent
+| where EventID == 4688  // Process creation
+| where Process contains "powershell.exe" or Process contains "pwsh.exe"
+| where CommandLine contains "-NoProfile"
+    or CommandLine contains "-ExecutionPolicy Bypass"
+    or CommandLine contains "-EncodedCommand"
+    or CommandLine contains "-WindowStyle Hidden"
+    or CommandLine contains "IEX"
+    or CommandLine contains "Invoke-Expression"
+| where TimeGenerated > ago(24h)
+| project TimeGenerated, Computer, Account, CommandLine, ParentProcessName, ProcessId
+| order by TimeGenerated desc
+
+// Query 4: Backup Deletion (Ransomware Pre-Attack)
+// Ransomware often deletes backups before encryption
+SecurityEvent
+| where EventID == 4688
+| where CommandLine contains "wbadmin" or CommandLine contains "vssadmin delete"
+    or CommandLine contains "bcdedit" and CommandLine contains "recoveryenabled"
+    or CommandLine contains "wmic shadowcopy delete"
+| where TimeGenerated > ago(7d)
+| project TimeGenerated, Computer, Account, CommandLine, ParentProcessName
+| order by TimeGenerated desc
+
+// Query 5: Mass File Modification
+// Detects unusual volume of file writes (encryption behavior)
+SecurityEvent
+| where EventID == 4663  // File access
+| where AccessMask in ("0x2", "0x10")  // WRITE_DATA or APPEND_DATA
+| where TimeGenerated > ago(1h)
+| summarize FileModificationCount = count() by Computer, SubjectUserName, ProcessName, bin(TimeGenerated, 5m)
+| where FileModificationCount > 100  // Threshold for mass file modification
+| order by TimeGenerated desc, FileModificationCount desc
+
+// Query 6: Lateral Movement Detection
+// Detects suspicious remote connections
+SecurityEvent
+| where EventID in (4624, 4625)  // Logon success/failure
+| where LogonType in (3, 10)  // Network or RemoteInteractive
+| where Account !in ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE")
+| where TimeGenerated > ago(24h)
+| summarize LogonAttempts = count(), FailureCount = countif(EventID == 4625), DistinctSources = dcount(IpAddress)
+    by Account, Computer, IpAddress
+| where FailureCount > 5 or DistinctSources > 3
+| order by FailureCount desc, DistinctSources desc
+
+// Query 7: Persistence Mechanisms
+// Detects registry run key modifications and scheduled task creation
+SecurityEvent
+| where EventID in (4657, 4688)  // Registry modification, process creation
+| where (ObjectName contains "\\Microsoft\\Windows\\CurrentVersion\\Run"
+    or ObjectName contains "\\Microsoft\\Windows\\CurrentVersion\\RunOnce")
+    or (CommandLine contains "schtasks" and CommandLine contains "/create")
+| where TimeGenerated > ago(24h)
+| project TimeGenerated, Computer, Account, ObjectName, CommandLine, ProcessName
+| order by TimeGenerated desc
+
+// Query 8: Ransomware Note Detection
+// Detects creation of common ransomware note files
+SecurityEvent
+| where EventID == 4663
+| where ObjectName endswith "README.txt"
+    or ObjectName endswith "DECRYPT_INSTRUCTIONS.txt"
+    or ObjectName endswith "HOW_TO_DECRYPT.txt"
+    or ObjectName endswith "RECOVER_FILES.txt"
+| where TimeGenerated > ago(24h)
+| project TimeGenerated, Computer, ObjectName, SubjectUserName, ProcessName
+| order by TimeGenerated desc
+
+// Query 9: Network Connections to Suspicious IPs
+// Detects connections to known command-and-control servers
+// Note: Replace with your threat intelligence feed
+CommonSecurityLog
+| where DeviceAction == "Allow"
+| where DestinationIP in ("192.0.2.1", "198.51.100.1", "203.0.113.1")  // Example suspicious IPs
+| where TimeGenerated > ago(24h)
+| project TimeGenerated, DeviceName, SourceIP, DestinationIP, DestinationPort, ApplicationProtocol
+| order by TimeGenerated desc
+
+// Query 10: Threat Hunting - Combined Ransomware Indicators
+// Multi-indicator query for comprehensive ransomware detection
+let SuspiciousAccounts = SecurityEvent
+    | where EventID == 4720
+    | where TimeGenerated > ago(7d)
+    | where Account contains "hacker" or Account contains "test"
+    | project TimeGenerated, Computer, NewAccountName;
+let EncryptionActivity = SecurityEvent
+    | where EventID in (4663, 4656)
+    | where ObjectName matches regex @"\.(locked|crypto|encrypted|wannacry)$"
+    | where TimeGenerated > ago(7d)
+    | summarize EncryptedFileCount = count() by Computer, ProcessName
+    | where EncryptedFileCount > 10;
+let BackupDeletion = SecurityEvent
+    | where EventID == 4688
+    | where CommandLine contains "vssadmin delete" or CommandLine contains "wbadmin"
+    | where TimeGenerated > ago(7d)
+    | project TimeGenerated, Computer, CommandLine;
+SuspiciousAccounts
+| join kind=inner (EncryptionActivity) on Computer
+| join kind=inner (BackupDeletion) on Computer
+| project Computer, NewAccountName, EncryptedFileCount, BackupDeletionCommand = CommandLine, Severity = "CRITICAL"
+| order by EncryptedFileCount desc
+
+// Query 11: Timeline of Attack (Post-Incident Analysis)
+// Reconstructs attack timeline for incident report
+let IncidentComputer = "vm-prod-01";  // Replace with actual affected computer
+let IncidentTimeStart = datetime(2025-11-30 12:00:00);
+let IncidentTimeEnd = datetime(2025-11-30 14:00:00);
+union
+    (SecurityEvent
+    | where Computer == IncidentComputer
+    | where TimeGenerated between (IncidentTimeStart .. IncidentTimeEnd)
+    | where EventID in (4720, 4624, 4625, 4688, 4663, 4657)
+    | project TimeGenerated, EventType = "SecurityEvent", EventID, Account, ProcessName, CommandLine, ObjectName),
+    (CommonSecurityLog
+    | where DeviceName == IncidentComputer
+    | where TimeGenerated between (IncidentTimeStart .. IncidentTimeEnd)
+    | project TimeGenerated, EventType = "NetworkEvent", EventID = 0, Account = "", ProcessName = "", CommandLine = "", ObjectName = DestinationIP)
+| order by TimeGenerated asc
+
+// Query 12: Post-Remediation Validation
+// Verify malicious activity has stopped after containment
+let BaselineTime = datetime(2025-11-30 15:00:00);  // Time of containment
+SecurityEvent
+| where Computer == "vm-prod-01"
+| where TimeGenerated > BaselineTime
+| where EventID in (4720, 4688)  // Account creation, process creation
+| where Account contains "hacker" or ProcessName contains "update.exe"
+| project TimeGenerated, EventID, Account, ProcessName, CommandLine
+| order by TimeGenerated desc

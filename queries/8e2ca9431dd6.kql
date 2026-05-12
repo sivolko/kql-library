@@ -1,0 +1,73 @@
+// Source: https://github.com/83avenger/azure-sentinel-defender-lab
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let CompromisedUser = "john.doe@contoso.com";   // CHANGE THIS
+let IncidentStart   = ago(24h);                  // CHANGE THIS
+let IncidentEnd     = now();                     // CHANGE THIS
+
+union
+// === Authentication events ===
+(
+    SigninLogs
+    | where UserPrincipalName =~ CompromisedUser
+    | extend
+        EventCategory = "Authentication",
+        Outcome       = iff(ResultType == "0", "SUCCESS", "FAILED"),
+        Detail        = strcat(ResultDescription, " | IP: ", IPAddress,
+                               " | Country: ", tostring(LocationDetails.countryOrRegion),
+                               " | App: ", AppDisplayName),
+        RiskLevel     = tostring(RiskLevelDuringSignIn)
+    | project TimeGenerated, EventCategory, Outcome, Detail, RiskLevel, IPAddress
+),
+// === Admin / directory changes ===
+(
+    AuditLogs
+    | where InitiatedBy.user.userPrincipalName =~ CompromisedUser
+    | extend
+        EventCategory = "DirectoryChange",
+        Outcome       = tostring(Result),
+        Detail        = strcat(OperationName, " → Target: ",
+                               tostring(TargetResources[0].displayName)),
+        RiskLevel     = iff(OperationName has_any ("role", "password", "delete"), "HIGH", "MEDIUM"),
+        IPAddress     = tostring(InitiatedBy.user.ipAddress)
+    | project TimeGenerated, EventCategory, Outcome, Detail, RiskLevel, IPAddress
+),
+// === Azure resource operations ===
+(
+    AzureActivity
+    | where Caller =~ CompromisedUser
+    | extend
+        EventCategory = "AzureControl",
+        Outcome       = ActivityStatusValue,
+        Detail        = strcat(OperationNameValue, " | Resource: ", ResourceGroup,
+                               "/", _ResourceId),
+        RiskLevel     = iff(OperationNameValue has_any ("delete", "write", "action"), "HIGH", "LOW"),
+        IPAddress     = CallerIpAddress
+    | project TimeGenerated, EventCategory, Outcome, Detail, RiskLevel, IPAddress
+),
+// === M365 / Office activity ===
+(
+    OfficeActivity
+    | where UserId =~ CompromisedUser
+    | extend
+        EventCategory = "M365Activity",
+        Outcome       = "SUCCESS",
+        Detail        = strcat(Operation, " | ", OfficeWorkload, " | Item: ", OfficeObjectId),
+        RiskLevel     = iff(Operation has_any ("Delete", "HardDelete", "MoveToDeletedItems",
+                            "SendAs", "SendOnBehalf", "ExternalUserFileDownload"), "HIGH", "LOW"),
+        IPAddress     = ClientIP
+    | project TimeGenerated, EventCategory, Outcome, Detail, RiskLevel, IPAddress
+)
+| where TimeGenerated between (IncidentStart .. IncidentEnd)
+| extend
+    EvidenceId = strcat(format_datetime(TimeGenerated, "yyyyMMdd-HHmmss"), "-", EventCategory)
+| sort by TimeGenerated asc
+| project
+    TimeGenerated,
+    EvidenceId,
+    EventCategory,
+    Outcome,
+    Detail,
+    RiskLevel,
+    IPAddress

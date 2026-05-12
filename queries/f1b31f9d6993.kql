@@ -1,0 +1,15 @@
+// Source: https://github.com/pirateape/Azure-Security
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TenantDomain = "contoso.com";  // EDIT: Replace with your organisation's primary UPN domain
+
+OfficeActivity
+| where TimeGenerated > ago(1h)
+| where OfficeWorkload == "SharePoint"
+| where Operation == "FileDownloaded"
+| where UserId contains "#EXT#" or UserId !contains strcat("@", TenantDomain)
+| project TimeGenerated, UserId, SiteUrl = Site_Url, FileName = SourceFileName, ClientIP
+| summarize DownloadCount = count(), Files = make_set(FileName), Sites = make_set(SiteUrl), IPs = make_set(ClientIP) by UserId, bin(TimeGenerated, 10m)
+| where DownloadCount > 50
+| order by DownloadCount desc

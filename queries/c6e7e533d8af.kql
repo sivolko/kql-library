@@ -1,0 +1,40 @@
+// Source: https://github.com/griffin31-lab/Griffin31-ToolKit
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Filters = dynamic(['AppData', '%localappdata%', '%appdata%', 'Temp', 'Public']);
+let TaskExclusions = dynamic([@'\\Microsoft\\OneDrive\\OneDriveStandaloneUpdater.exe', 'OneDriveLauncher.exe', 'MicrosoftEdgeUpdate']);
+let ScheduledTasks =
+    DeviceEvents
+    | where Timestamp > ago(7d)
+    | where ActionType in ('ScheduledTaskCreated', 'ScheduledTaskUpdated')
+    | where AdditionalFields has_any (Filters)
+    | extend Parsed   = parse_json(AdditionalFields)
+    | extend TaskName = tostring(Parsed.TaskName), TaskContent = tostring(Parsed.TaskContent)
+    | where not(TaskContent has_any (TaskExclusions))
+    | project Timestamp, DeviceName, Persistence = "ScheduledTask",
+              Artifact = TaskName, Details = TaskContent,
+              InitiatingProcessFileName, InitiatingProcessAccountUpn;
+// ---- Block 2: Registry Run / RunOnce key writes ----
+let RunKeys =
+    DeviceRegistryEvents
+    | where Timestamp > ago(7d)
+    | where ActionType == "RegistryValueSet"
+    | where RegistryKey endswith @'\Software\Microsoft\Windows\CurrentVersion\Run'
+         or RegistryKey endswith @'\Software\Microsoft\Windows\CurrentVersion\RunOnce'
+         or RegistryKey endswith @'\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'
+         or RegistryKey endswith @'\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce'
+    | project Timestamp, DeviceName, Persistence = "RegistryRunKey",
+              Artifact = RegistryKey, Details = RegistryValueData,
+              InitiatingProcessFileName, InitiatingProcessAccountUpn = tostring(InitiatingProcessAccountUpn);
+// ---- Block 3: Files dropped in Startup folders ----
+let StartupFolder =
+    DeviceFileEvents
+    | where Timestamp > ago(7d)
+    | where ActionType == "FileCreated"
+    | where FolderPath has @"\Start Menu\Programs\Startup"
+    | project Timestamp, DeviceName, Persistence = "StartupFolder",
+              Artifact = FileName, Details = FolderPath,
+              InitiatingProcessFileName, InitiatingProcessAccountUpn;
+union ScheduledTasks, RunKeys, StartupFolder
+| sort by Timestamp desc

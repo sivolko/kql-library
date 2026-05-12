@@ -1,0 +1,50 @@
+// Source: https://github.com/McBeer89/TL-McBeer-Repo
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 24h;
+let tgt_issuances =
+    SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | where EventID == 4768
+    | where Status == "0x0"
+    | distinct TargetUserName;
+SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4769
+| where Status == "0x0"
+| join kind=leftanti tgt_issuances on TargetUserName
+| extend IsMachineAccount = TargetUserName endswith "$"
+| project
+    TimeGenerated,
+    Computer,
+    TargetUserName,
+    TargetDomainName,
+    ServiceName,
+    TicketOptions,
+    TicketEncryptionType,
+    IpAddress,
+    IpPort,
+    IsMachineAccount
+| sort by TimeGenerated desc
+;
+
+
+// TRR0013.AD.A — Query 2: Defender for Identity IdentityLogonEvents
+// DDM Operation: n1 "Receive Network Request" (TGS-REQ)
+// Baseline Kerberos TGS events — correlation for absent AS-REQ requires parsing AdditionalFields.
+
+IdentityLogonEvents
+| where Timestamp > ago(24h)
+| where Protocol == "Kerberos"
+| project
+    Timestamp,
+    ActionType,
+    AccountName,
+    AccountDomain,
+    DeviceName,
+    DestinationDeviceName,
+    Protocol,
+    AdditionalFields
+| sort by Timestamp desc
+;

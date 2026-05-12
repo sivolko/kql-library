@@ -1,0 +1,110 @@
+// Source: https://github.com/petercwilson/cyber_lab_detection_rules
+// Collected: 2026-05-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback        = 1h;   // How far back to search
+let correlationSpan = 5m;   // Max time between whoami and ipconfig executions
+
+let ReconCommands =
+    Event
+    | where TimeGenerated > ago(lookback)
+    | where Source == "Microsoft-Windows-Sysmon"
+    | where EventID == 1  // Sysmon: Process Creation
+    // Parse all Sysmon fields in a single pass using parse_xml() to avoid
+    // running a separate regex over RenderedDescription for each field.
+    | extend EventXml     = parse_xml(EventData)
+    | extend DataItems    = EventXml["DataItem"]
+    | mv-expand DataItems
+    | extend FieldName    = tostring(DataItems["@Name"]),
+             FieldValue   = tostring(DataItems["#text"])
+    // Include EventRecordID in the grouping key to prevent data loss when
+    // multiple process creation events share the same timestamp on one host.
+    | summarize Fields = make_bag(pack(FieldName, FieldValue))
+               by TimeGenerated, Computer, EventRecordId
+    | extend
+        ProcessName   = tostring(Fields["Image"]),
+        CommandLine   = tostring(Fields["CommandLine"]),
+        ParentProcess = tostring(Fields["ParentImage"]),
+        ParentPID     = tostring(Fields["ParentProcessId"]),
+        User          = tostring(Fields["User"]),
+        HostName      = tostring(Fields["Computer"])
+    // Normalise to lower-case filename for case-insensitive matching
+    | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1]))
+    | where ProcessFile in ("whoami.exe", "ipconfig.exe")
+    | project TimeGenerated, HostName, User, ProcessName, ProcessFile, CommandLine, ParentProcess, ParentPID;
+
+// Correlate: flag hosts where BOTH commands were run by the same parent
+// process within the correlation window.
+ReconCommands
+| summarize
+    CommandsRun        = make_set(ProcessFile),
+    CommandLines       = make_set(CommandLine),
+    FirstExecution     = min(TimeGenerated),
+    LastExecution      = max(TimeGenerated)
+    by HostName, User, ParentProcess, ParentPID
+| where
+    // Both commands must be present
+    set_has_element(CommandsRun, "whoami.exe")
+    and set_has_element(CommandsRun, "ipconfig.exe")
+    // Both must have fired within the correlation window (5 minutes)
+    and datetime_diff("minute", LastExecution, FirstExecution) <= 5
+| project
+    FirstExecution,
+    LastExecution,
+    HostName,
+    User,
+    ParentProcess,
+    ParentPID,
+    CommandsRun,
+    CommandLines
+| sort by FirstExecution desc
+
+// -----------------------------------------------------------------------
+// Option B: Microsoft Defender for Endpoint — DeviceProcessEvents table
+// (Higher-fidelity, richer fields, no XML parsing required)
+// -----------------------------------------------------------------------
+
+// let lookback        = 1h;
+// let correlationSpan = 5m;
+//
+// let ReconMDE =
+//     DeviceProcessEvents
+//     | where Timestamp > ago(lookback)
+//     | where FileName in~ ("whoami.exe", "ipconfig.exe")
+//     // Filter out known-good execution contexts (e.g., IT tooling, monitoring agents)
+//     | where InitiatingProcessFileName !in~ (
+//         "msiexec.exe",
+//         "svchost.exe",
+//         "services.exe",
+//         "WmiPrvSE.exe"
+//     )
+//     | project
+//         Timestamp,
+//         DeviceName,
+//         AccountName,
+//         FileName,
+//         ProcessCommandLine,
+//         InitiatingProcessFileName,
+//         InitiatingProcessId;
+//
+// ReconMDE
+// | summarize
+//     CommandsRun    = make_set(FileName),
+//     CommandLines   = make_set(ProcessCommandLine),
+//     FirstExecution = min(Timestamp),
+//     LastExecution  = max(Timestamp)
+//     by DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessId
+// | where
+//     set_has_element(CommandsRun, "whoami.exe")
+//     and set_has_element(CommandsRun, "ipconfig.exe")
+//     and datetime_diff("minute", LastExecution, FirstExecution) <= 5
+// | project
+//     FirstExecution,
+//     LastExecution,
+//     DeviceName,
+//     AccountName,
+//     InitiatingProcessFileName,
+//     InitiatingProcessId,
+//     CommandsRun,
+//     CommandLines
+// | sort by FirstExecution desc
