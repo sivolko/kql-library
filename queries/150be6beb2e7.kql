@@ -1,0 +1,151 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let S4UTicketOptions = dynamic(["0x40810010", "0x40800010", "0x50800000"]);
+let LegitDelegationAccounts = dynamic(["MSSQL", "SQLSVC", "EXCHANGE"]);
+
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID == 4769
+| where AccountName endswith "$"           // machine accounts only
+| where TicketOptions in (S4UTicketOptions)
+| where Status == "0x0"                    // success only
+| extend
+    RequestingMachine = AccountName,
+    ImpersonatedUser  = TargetUserName,
+    TargetService     = ServiceName,
+    SourceIP          = IpAddress
+| where not (RequestingMachine startswith_cs "MSSQL"
+          or RequestingMachine startswith_cs "SQLSVC"
+          or RequestingMachine startswith_cs "EXCHANGE")
+| project
+    TimeGenerated,
+    RequestingMachine,
+    ImpersonatedUser,
+    TargetService,
+    TicketOptions,
+    SourceIP,
+    Computer
+| order by TimeGenerated desc
+
+
+// ---------------------------------------------------------------------------
+// Query 2: S4U2proxy — transmitted service ticket (protocol transition chain)
+// Event 4769 with non-empty TransmittedServices field
+// ---------------------------------------------------------------------------
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID == 4769
+| where Status == "0x0"
+| where isnotempty(TransmittedServices)
+    and TransmittedServices != "-"
+| where not (ServiceName contains "exchangeMDB"
+          or ServiceName contains "exchangeRFR"
+          or ServiceName contains "exchangeAB")
+| extend
+    Requestor        = AccountName,
+    ImpersonatedUser = TargetUserName,
+    FinalService     = ServiceName,
+    EvidenceTicket   = TransmittedServices,
+    SourceIP         = IpAddress
+| project
+    TimeGenerated,
+    Requestor,
+    ImpersonatedUser,
+    FinalService,
+    EvidenceTicket,
+    TicketOptions,
+    SourceIP,
+    Computer
+| order by TimeGenerated desc
+
+
+// ---------------------------------------------------------------------------
+// Query 3: Defender for Identity — IdentityLogonEvents S4U correlation
+// Requires Microsoft Defender for Identity sensor on the DC
+// ---------------------------------------------------------------------------
+IdentityLogonEvents
+| where Timestamp > ago(1d)
+| where Protocol == "Kerberos"
+| where LogonType == "ServiceTicket"
+| where isnotempty(AdditionalFields)
+| extend Fields = todynamic(AdditionalFields)
+| where Fields.TicketOptions in ("0x40810010", "0x40800010", "0x50800000")
+| where AccountName endswith "$"
+| project
+    Timestamp,
+    AccountName,
+    DestinationDeviceName,
+    DestinationIPAddress,
+    Fields.ImpersonatedAccount,
+    Fields.TicketOptions,
+    Fields.TransmittedServices
+| order by Timestamp desc
+
+
+// ---------------------------------------------------------------------------
+// Query 4: S4U impersonation of privileged accounts
+// Detects any S4U2self/proxy where the impersonated account is a DA-equivalent
+// ---------------------------------------------------------------------------
+let PrivilegedNames = dynamic(["Administrator", "krbtgt", "admin", "da_", "svc_da"]);
+
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4769
+| where AccountName endswith "$"
+| where Status == "0x0"
+| where TicketOptions in ("0x40810010", "0x40800010", "0x50800000")
+| where TargetUserName has_any (PrivilegedNames)
+| summarize
+    RequestCount     = count(),
+    Services         = make_set(ServiceName),
+    SourceIPs        = make_set(IpAddress)
+    by AccountName, TargetUserName, bin(TimeGenerated, 1h)
+| extend Severity = iff(TargetUserName contains "krbtgt", "Critical", "High")
+| order by RequestCount desc
+
+
+// ---------------------------------------------------------------------------
+// Query 5: Temporal correlation — S4U chain within 2 minutes
+// S4U2self (rule 1) followed by S4U2proxy (rule 2) from same machine account
+// Indicates the full two-phase exploitation chain
+// ---------------------------------------------------------------------------
+let S4USelf =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4769
+    | where AccountName endswith "$"
+    | where TicketOptions in ("0x40810010", "0x40800010")
+    | where Status == "0x0"
+    | project
+        SelfTime     = TimeGenerated,
+        MachineAcct  = AccountName,
+        ImpersonUser = TargetUserName,
+        SelfService  = ServiceName;
+
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID == 4769
+| where isnotempty(TransmittedServices) and TransmittedServices != "-"
+| where Status == "0x0"
+| project
+    ProxyTime    = TimeGenerated,
+    MachineAcct  = AccountName,
+    ImpersonUser = TargetUserName,
+    ProxyService = ServiceName,
+    Evidence     = TransmittedServices
+| join kind=inner (S4USelf)
+    on MachineAcct, ImpersonUser
+| where ProxyTime between (SelfTime .. (SelfTime + 2m))
+| extend ChainDeltaSeconds = datetime_diff("second", ProxyTime, SelfTime)
+| project
+    MachineAcct,
+    ImpersonUser,
+    SelfService,
+    ProxyService,
+    Evidence,
+    SelfTime,
+    ProxyTime,
+    ChainDeltaSeconds
+| order by ChainDeltaSeconds asc

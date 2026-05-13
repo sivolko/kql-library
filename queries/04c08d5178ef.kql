@@ -1,0 +1,62 @@
+// Source: https://github.com/AmeenShareif/HomeLab
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+Syslog
+| where ProcessName == "filterlog" or SyslogMessage contains "filterlog"
+| extend RawMessage = SyslogMessage
+// strip the filterlog prefix if present
+| extend LogBody = extract(@"filterlog\[\d+\]:\s+(.*)", 1, RawMessage)
+| extend LogBody = iif(isempty(LogBody), RawMessage, LogBody)
+| extend Fields = split(LogBody, ",")
+// common fields (always present)
+| extend
+    RuleNumber     = tostring(Fields[0]),
+    Interface      = tostring(Fields[4]),
+    Reason         = tostring(Fields[5]),
+    Action         = tostring(Fields[6]),       // "pass" or "block"
+    Direction      = tostring(Fields[7]),       // "in" or "out"
+    IPVersion      = tostring(Fields[8])        // "4" or "6"
+// IPv4 specific fields
+| extend
+    SourceIP       = iif(IPVersion == "4", tostring(Fields[18]), tostring(Fields[17])),
+    DestinationIP  = iif(IPVersion == "4", tostring(Fields[19]), tostring(Fields[18])),
+    Protocol       = iif(IPVersion == "4", tostring(Fields[16]), tostring(Fields[15]))
+// TCP/UDP port fields (offset depends on protocol)
+| extend
+    SourcePort     = iif(Protocol in ("tcp","udp"), 
+                        iif(IPVersion == "4", tostring(Fields[20]), tostring(Fields[19])),
+                        ""),
+    DestinationPort = iif(Protocol in ("tcp","udp"),
+                        iif(IPVersion == "4", tostring(Fields[21]), tostring(Fields[20])),
+                        "")
+| extend
+    DestinationPort = toint(DestinationPort),
+    SourcePort      = toint(SourcePort)
+| project
+    TimeGenerated,
+    Action,
+    Direction,
+    Interface,
+    Protocol,
+    SourceIP,
+    SourcePort,
+    DestinationIP,
+    DestinationPort,
+    IPVersion,
+    Reason,
+    RuleNumber,
+    RawMessage
+
+// -----------------------------------------------------------------------------
+// Quick test queries once this is saved as a function:
+//
+// All blocked traffic:
+// pfSenseLogs | where Action == "block" | take 50
+//
+// Top source IPs hitting blocks:
+// pfSenseLogs | where Action == "block" | summarize count() by SourceIP | order by count_ desc
+//
+// Traffic to a specific port:
+// pfSenseLogs | where DestinationPort == 3389
+// -----------------------------------------------------------------------------

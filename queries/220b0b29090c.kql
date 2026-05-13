@@ -1,0 +1,10 @@
+// Source: https://github.com/DancinDinoo/KQL
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "TamperingAttempt"
+| extend Target = tostring(AdditionalFields.Target)
+| extend Result = tostring(AdditionalFields.Status)
+| extend TamperingAction = tostring(AdditionalFields.TamperingAction)
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessParentFileName, InitiatingProcessFileName, Target, Result, TamperingAction

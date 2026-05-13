@@ -1,0 +1,8 @@
+// Source: https://github.com/ZeroDeltaSEC/Exploring-KQL
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation == "Click Alowed"
+| where Parameters has "<URL>"
+| project TimeGenerated, UserId=Userid, Operation, ClientIP, UserAgent, IP

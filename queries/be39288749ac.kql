@@ -1,0 +1,369 @@
+// Source: https://github.com/Zurackus/Public
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let FailureWindow = 1h;                // sliding window to aggregate failures
+let FailureCountThreshold = 10;        // minimum failures to consider (tune to environment)
+let UniqueCountryThreshold = 3;        // failures must come from >= this many countries
+let SuccessFollowWindow = 1h;          // time after last failure to consider a follow-up success
+// Normalize username and IP fields
+let Duo = CiscoDuo_CL
+| extend AttemptedUser = iff(isnotempty(user_name_s), user_name_s, email_s)
+| extend SourceIP = todynamic(coalesce(auth_device_ip_s, access_device_ip_s))
+| project TimeGenerated, AttemptedUser, SourceIP, auth_device_location_country_s, result_s, reason_s, application_name_s;
+// Aggregate failed attempts by user within FailureWindow
+let FailedBurst = Duo
+| where TimeGenerated >= ago(24h)  // search lookback; analytic rule engines will control schedule
+| where tolower(result_s) in ("denied", "failure", "invalid_passcode", "fraud") or reason_s has "invalid"
+| summarize
+		FailureCount = count(),
+		FirstFailure = min(TimeGenerated),
+		LastFailure = max(TimeGenerated),
+		UniqueCountries = dcount(auth_device_location_country_s),
+		UniqueIPs = dcount(SourceIP),
+		Countries = make_set(auth_device_location_country_s),
+		SampleIPs = make_set(SourceIP)
+		by AttemptedUser
+| where FailureCount >= FailureCountThreshold and UniqueCountries >= UniqueCountryThreshold
+| extend FailureWindowStart = FirstFailure, FailureWindowEnd = LastFailure;
+// Find successes that follow the failed burst for same user
+let PostSuccess = Duo
+| where tolower(result_s) in ("success", "user_approved", "valid_passcode")
+| project SuccessTime = TimeGenerated, AttemptedUser, SuccessIP = SourceIP, SuccessCountry = auth_device_location_country_s, application_name_s, reason_s;
+// Correlate burst to post-success within SuccessFollowWindow and IP/country mismatch
+FailedBurst
+| join kind=inner (PostSuccess) on AttemptedUser
+| where SuccessTime >= FailureWindowEnd and SuccessTime <= FailureWindowEnd + SuccessFollowWindow
+| where SuccessIP !in (SampleIPs) or SuccessCountry !in (Countries)
+| extend TimeSinceLastFailureMins = datetime_diff('minute', SuccessTime, FailureWindowEnd)
+| extend AlertReason = strcat("High-volume failed auths (", FailureCount, ") across ", UniqueCountries, " countries, followed by success after ", tostring(TimeSinceLastFailureMins), " minutes")
+| project AlertTime = SuccessTime, Severity = "High", AttemptedUser, FailureCount, UniqueCountries, UniqueIPs, SampleIPs, Countries, SuccessIP, SuccessCountry, TimeSinceLastFailureMins, AlertReason
+| sort by AlertTime desc
+;
+
+// ======================================================================
+// Option B: SigninLogs-based (fallback) - if SigninLogs ingestion is available
+// Rationale: If Azure AD SigninLogs are being ingested, similar logic can be used
+// Detection logic:
+//  - multiple failed sign-ins from distinct geo-locations for a user followed by a success
+
+let SigninFailureWindow = 1h;
+let SigninFailureCount = 8;
+let SigninUniqueCountryThreshold = 2;
+let SigninSuccessFollow = 30m;
+SigninLogs
+| where TimeGenerated >= ago(24h)
+| extend TargetUser = userPrincipalName, SrcIP = IPAddress
+| extend Result = tostring(case(isnotempty(RiskLevelAggregated), RiskLevelAggregated, "unknown"))
+// Identify failures: platform-specific fields vary; look for non-success or explicit failure statuses
+| where Result !in ("low", "medium", "high") and Result != "Success"
+| summarize FailedCount = count(), FirstFail = min(TimeGenerated), LastFail = max(TimeGenerated), Countries = make_set(tostring(ClientAppUsed)), UniqueIPs = dcount(SrcIP) by TargetUser
+| where FailedCount >= SigninFailureCount
+| join kind=inner (
+		SigninLogs
+		| where tolower(Result) == "success" or ClientAppUsed has "Browser" // success best-effort
+		| project SuccessTime = TimeGenerated, TargetUser = userPrincipalName, SuccessIP = IPAddress
+	) on TargetUser
+| where SuccessTime >= LastFail and SuccessTime <= LastFail + SigninSuccessFollow
+| project AlertTime = SuccessTime, Severity = "High", TargetUser, FailedCount, UniqueIPs, SuccessIP
+| sort by AlertTime desc
+
+// Notes and tuning:
+// - Thresholds above (FailureCount, UniqueCountryThreshold) are environment-specific. Start conservative and reduce false positives by raising counts or narrowing country thresholds.
+// - Consider whitelisting known IP ranges (VPN egress, corporate proxy) and trusted countries.
+// - Enrich alerts with threat intel on SourceIP (ThreatIntelligenceIndicator) to prioritize suspicious sources.
+// - If CiscoDuo_CL does not have auth_device_location_country_s populated, consider geolocating SourceIP using an IP->geo lookup table and then re-running the correlation.
+
+// ======================================================================
+// Name: Credential Stuffing Indicators Across Geographies (CyberArk)
+// Severity: High
+// Description: Detects credential stuffing attempts via CyberArk audit logs showing failed authentications from multiple countries followed by success
+
+let FailureWindow = 2h;
+let FailureCountThreshold = 8;
+let UniqueLocationThreshold = 3;
+let SuccessFollowWindow = 1h;
+
+// Failed authentication attempts - using actual CyberArk schema fields
+let FailedAttempts = CyberArk_AuditEvents_CL
+| where TimeGenerated >= ago(24h)
+| where auditType == "Failure" 
+    and (actionType in ("Login", "Password") or action has_any ("login", "authenticate"))
+    or message has_any ("failed", "denied", "invalid", "unauthorized", "error")
+| extend UserName = coalesce(username, userId, targetAccount)
+| extend SourceIP = source
+| where isnotempty(UserName) and isnotempty(SourceIP)
+// Filter out internal system IPs and ensure it's a valid external IP
+| where SourceIP !in ("CPM", "SYSTEM$", "NotificationEngine") 
+    and SourceIP matches regex @"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+| extend GeoInfo = geo_info_from_ip_address(SourceIP)
+| extend Country = tostring(GeoInfo.country)
+| where isnotempty(Country)
+| summarize 
+    FailureCount = count(),
+    FirstFailure = min(TimeGenerated),
+    LastFailure = max(TimeGenerated),
+    UniqueCountries = dcount(Country),
+    UniqueIPs = dcount(SourceIP),
+    Countries = make_set(Country),
+    SampleIPs = make_set(SourceIP, 10),
+    SampleActions = make_set(action, 5),
+    SampleMessages = make_set(message, 5)
+    by UserName
+| where FailureCount >= FailureCountThreshold and UniqueCountries >= UniqueLocationThreshold;
+
+// Successful authentication attempts - using actual CyberArk schema fields
+let SuccessfulLogins = CyberArk_AuditEvents_CL
+| where TimeGenerated >= ago(24h)
+| where auditType == "Info" 
+    and (actionType in ("Login", "Password") or action has_any ("login", "authenticate"))
+    and message !has_any ("failed", "denied", "error", "invalid")
+| extend UserName = coalesce(username, userId, targetAccount)
+| extend SourceIP = source
+| where isnotempty(UserName) and isnotempty(SourceIP)
+// Filter out internal system sources
+| where SourceIP !in ("CPM", "SYSTEM$", "NotificationEngine")
+    and SourceIP matches regex @"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+| extend GeoInfo = geo_info_from_ip_address(SourceIP)
+| extend Country = tostring(GeoInfo.country)
+| project SuccessTime = TimeGenerated, UserName, SuccessIP = SourceIP, SuccessCountry = Country, 
+         action, message, serviceName, applicationCode;
+
+// Correlate failures with subsequent successes
+FailedAttempts
+| join kind=inner (SuccessfulLogins) on UserName
+| where SuccessTime >= LastFailure and SuccessTime <= LastFailure + SuccessFollowWindow
+| where SuccessIP !in (SampleIPs) or SuccessCountry !in (Countries)
+| extend TimeSinceLastFailureHours = datetime_diff('hour', SuccessTime, LastFailure)
+| extend AlertReason = strcat("CyberArk credential stuffing detected: ", FailureCount, " failures across ", 
+    UniqueCountries, " countries, followed by success from ", SuccessCountry, " after ", 
+    tostring(TimeSinceLastFailureHours), " hours")
+| project 
+    AlertTime = SuccessTime,
+    Severity = "High",
+    UserName,
+    FailureCount,
+    UniqueCountries,
+    UniqueIPs,
+    Countries,
+    SuccessIP,
+    SuccessCountry,
+    TimeSinceLastFailureHours,
+    SampleActions,
+    SampleMessages,
+    SuccessAction = action,
+    ServiceName = serviceName,
+    ApplicationCode = applicationCode,
+    AlertReason
+| sort by AlertTime desc
+
+// ======================================================================
+// Name: Suspicious Connection Patterns Across Geographies (Netskope)
+// Severity: High
+// Description: Detects potential credential stuffing via Netskope connection events showing suspicious access patterns from multiple countries
+
+let SuspiciousWindow = 2h;
+let ConnectionThreshold = 15;
+let UniqueLocationThreshold = 3;
+let SuccessFollowWindow = 1h;
+// Identify suspicious connection patterns (short duration, authentication-related apps from multiple countries)
+let SuspiciousConnections = NetskopeEventsConnection_CL
+| where TimeGenerated >= ago(24h)
+| where isnotempty(ur_normalized) and isnotempty(srcip)
+// Focus on authentication-related applications
+| where app in ("Microsoft Accounts", "Microsoft Office 365 Sharepoint Online", "Microsoft Office 365 OneDrive for Business")
+    or site has_any ("microsoft", "login", "auth", "signin")
+// Look for patterns that might indicate failed login attempts (very short connections, small byte counts)
+| where conn_duration <= 10  // Very short connections (potential login failures)
+    or (client_bytes <= 10000 and server_bytes <= 10000)  // Small data transfers
+| extend UserName = ur_normalized
+| extend SourceIP = srcip
+| extend Country = src_country
+| where isnotempty(Country)
+| summarize 
+    SuspiciousCount = count(),
+    FirstConnection = min(TimeGenerated),
+    LastConnection = max(TimeGenerated),
+    UniqueCountries = dcount(Country),
+    UniqueIPs = dcount(SourceIP),
+    Countries = make_set(Country),
+    SampleIPs = make_set(SourceIP, 10),
+    Applications = make_set(app),
+    Sites = make_set(site),
+    AvgDuration = avg(conn_duration),
+    AvgClientBytes = avg(client_bytes)
+    by UserName
+| where SuspiciousCount >= ConnectionThreshold and UniqueCountries >= UniqueLocationThreshold;
+// Look for subsequent successful connections (longer duration, more data transfer)
+let SuccessfulConnections = NetskopeEventsConnection_CL
+| where TimeGenerated >= ago(24h)
+| where isnotempty(ur_normalized) and isnotempty(srcip)
+| where app in ("Microsoft Accounts", "Microsoft Office 365 Sharepoint Online", "Microsoft Office 365 OneDrive for Business")
+    or site has_any ("microsoft", "office", "sharepoint", "onedrive")
+// Indicators of successful sessions (longer duration, more data transfer)
+| where conn_duration > 30 or (client_bytes > 50000 or server_bytes > 50000)
+| extend UserName = ur_normalized
+| extend SourceIP = srcip
+| extend Country = src_country
+| project SuccessTime = TimeGenerated, UserName, SuccessIP = SourceIP, SuccessCountry = Country, 
+         app, site, conn_duration, client_bytes, server_bytes, browser, device;
+// Correlate suspicious patterns with successful connections
+SuspiciousConnections
+| join kind=inner (SuccessfulConnections) on UserName
+| where SuccessTime >= LastConnection and SuccessTime <= LastConnection + SuccessFollowWindow
+| where SuccessIP !in (SampleIPs) or SuccessCountry !in (Countries)
+| extend TimeSinceLastSuspiciousHours = datetime_diff('hour', SuccessTime, LastConnection)
+| extend AlertReason = strcat("Netskope suspicious connection pattern: ", SuspiciousCount, " short connections across ", 
+    UniqueCountries, " countries, followed by successful connection from ", SuccessCountry, " after ", 
+    tostring(TimeSinceLastSuspiciousHours), " hours")
+| project 
+    AlertTime = SuccessTime,
+    Severity = "High",
+    UserName,
+    SuspiciousCount,
+    UniqueCountries,
+    UniqueIPs,
+    Countries,
+    SuccessIP,
+    SuccessCountry,
+    TimeSinceLastSuspiciousHours,
+    Applications,
+    Sites,
+    AvgDuration,
+    AvgClientBytes,
+    SuccessApp = app,
+    SuccessSite = site,
+    SuccessBrowser = browser,
+    SuccessDevice = device,
+    AlertReason
+| sort by AlertTime desc
+
+// ======================================================================
+// Name: Credential Stuffing Indicators - Azure Management Plane
+// Severity: Medium
+// Description: Detects credential stuffing attempts via Azure Activity logs (management plane only)
+
+let FailureWindow = 2h;
+let FailureCountThreshold = 5;
+let UniqueLocationThreshold = 2;
+
+let FailedAzureAuth = AzureActivity
+| where TimeGenerated >= ago(24h)
+| where ActivityStatusValue == "Failure" 
+| where OperationNameValue has_any ("Sign-in", "Authentication", "Login")
+    or CategoryValue == "Authentication"
+| extend UserName = coalesce(Caller, CallerIpAddress)
+| extend SourceIP = CallerIpAddress
+| where isnotempty(SourceIP) and SourceIP != "127.0.0.1"
+| extend GeoInfo = geo_info_from_ip_address(SourceIP)
+| extend Country = tostring(GeoInfo.country)
+| where isnotempty(Country)
+| summarize 
+    FailureCount = count(),
+    LastFailure = max(TimeGenerated),
+    UniqueCountries = dcount(Country),
+    Countries = make_set(Country),
+    SampleIPs = make_set(SourceIP, 5)
+    by UserName
+| where FailureCount >= FailureCountThreshold and UniqueCountries >= UniqueLocationThreshold;
+
+let SuccessfulAzureAuth = AzureActivity
+| where TimeGenerated >= ago(24h)
+| where ActivityStatusValue == "Success"
+| where OperationNameValue has_any ("Sign-in", "Authentication")
+| extend UserName = coalesce(Caller, CallerIpAddress)
+| extend SourceIP = CallerIpAddress
+| extend GeoInfo = geo_info_from_ip_address(SourceIP)
+| extend Country = tostring(GeoInfo.country)
+| project SuccessTime = TimeGenerated, UserName, SuccessIP = SourceIP, SuccessCountry = Country;
+
+FailedAzureAuth
+| join kind=inner (SuccessfulAzureAuth) on UserName
+| where SuccessTime >= LastFailure and SuccessTime <= LastFailure + 1h
+| where SuccessIP !in (SampleIPs) or SuccessCountry !in (Countries)
+| project AlertTime = SuccessTime, UserName, FailureCount, UniqueCountries, Countries, SuccessCountry
+| sort by AlertTime desc
+
+// ======================================================================
+// Name: Credential Stuffing Indicators Across Geographies (Netskope Application Events)
+// Severity: High
+// Description: Detects credential stuffing via Netskope application events using actual Login Failed/Successful activities from multiple countries
+
+let FailureWindow = 2h;
+let FailureCountThreshold = 8;
+let UniqueLocationThreshold = 3;
+let SuccessFollowWindow = 1h;
+// Failed login attempts from Netskope Application events
+let FailedLogins = NetskopeEventsApplication_CL
+| where TimeGenerated >= ago(24h)
+| where activity == "Login Failed" or activity == "Login Attempt"
+| extend UserName = coalesce(ur_normalized, user_id, from_user)
+| extend SourceIP = srcip
+| where isnotempty(UserName) and isnotempty(SourceIP)
+| extend GeoInfo = geo_info_from_ip_address(SourceIP)
+| extend Country = tostring(GeoInfo.country), City = tostring(GeoInfo.city)
+| where isnotempty(Country)
+| summarize 
+    FailureCount = count(),
+    FirstFailure = min(TimeGenerated),
+    LastFailure = max(TimeGenerated),
+    UniqueCountries = dcount(Country),
+    UniqueCities = dcount(City),
+    UniqueIPs = dcount(SourceIP),
+    Countries = make_set(Country),
+    Cities = make_set(City),
+    SampleIPs = make_set(SourceIP, 10),
+    Applications = make_set(app),
+    AppSuites = make_set(appsuite),
+    LoginTypes = make_set(logintype),
+    Browsers = make_set(browser),
+    Devices = make_set(device)
+    by UserName
+| where FailureCount >= FailureCountThreshold and UniqueCountries >= UniqueLocationThreshold;
+// Successful login attempts
+let SuccessfulLogins = NetskopeEventsApplication_CL
+| where TimeGenerated >= ago(24h)
+| where activity == "Login Successful"
+| extend UserName = coalesce(ur_normalized, user_id, from_user)
+| extend SourceIP = srcip
+| where isnotempty(UserName) and isnotempty(SourceIP)
+| extend GeoInfo = geo_info_from_ip_address(SourceIP)
+| extend Country = tostring(GeoInfo.country)
+| project SuccessTime = TimeGenerated, UserName, SuccessIP = SourceIP, SuccessCountry = Country, 
+         app, appsuite, logintype, browser, device, instance, loginurl;
+// Correlate failed attempts with subsequent successful logins
+FailedLogins
+| join kind=inner (SuccessfulLogins) on UserName
+| where SuccessTime >= LastFailure and SuccessTime <= LastFailure + SuccessFollowWindow
+| where SuccessIP !in (SampleIPs) or SuccessCountry !in (Countries)
+| extend TimeSinceLastFailureHours = datetime_diff('hour', SuccessTime, LastFailure)
+| extend AlertReason = strcat("Netskope credential stuffing detected: ", FailureCount, " login failures across ", 
+    UniqueCountries, " countries, followed by successful login from ", SuccessCountry, " after ", 
+    tostring(TimeSinceLastFailureHours), " hours")
+| project 
+    AlertTime = SuccessTime,
+    Severity = "High",
+    UserName,
+    FailureCount,
+    UniqueCountries,
+    UniqueCities,
+    UniqueIPs,
+    Countries,
+    Cities,
+    SuccessIP,
+    SuccessCountry,
+    TimeSinceLastFailureHours,
+    Applications,
+    AppSuites,
+    LoginTypes,
+    Browsers,
+    Devices,
+    SuccessApp = app,
+    SuccessAppSuite = appsuite,
+    SuccessLoginType = logintype,
+    SuccessBrowser = browser,
+    SuccessDevice = device,
+    SuccessInstance = instance,
+    SuccessLoginUrl = loginurl,
+    AlertReason
+| sort by AlertTime desc

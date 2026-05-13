@@ -1,0 +1,11 @@
+// Source: https://github.com/DGovEnterprise/wasoc-notebook
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| summarize
+    users = dcount(AccountUpn),
+    devices = dcount(DeviceName),
+    dcs = array_strcat(array_sort_asc(make_set(DestinationDeviceName)), ", ")
+    by logontype = strcat(LogonType, ": ", Protocol)
+| order by users

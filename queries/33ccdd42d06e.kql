@@ -1,0 +1,23 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago(30d)
+| where ResultType == 0
+| where UserType == "Member"
+| extend DeviceTrustType = tostring(DeviceDetail.trustType)
+| distinct UserPrincipalName, IPAddress, DeviceTrustType
+| join kind=inner(
+    OfficeActivity
+    | where TimeGenerated > ago(30d)
+    | where Operation in ("FileSyncDownloadedFull", "FileDownloaded")
+    )
+    on $left.UserPrincipalName == $right.UserId, $left.IPAddress == $right.ClientIP
+| where isempty(DeviceTrustType)
+| summarize Count=count() by UserPrincipalName
+| as T
+| extend Percentage = round(100.0 * Count / toscalar (T
+    | summarize sum(Count)), 2)
+| project-reorder UserPrincipalName, Count, Percentage
+| top 20 by Percentage desc 

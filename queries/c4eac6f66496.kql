@@ -1,0 +1,8 @@
+// Source: https://github.com/grabery/graber.cloud-azure-templates
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| union IdentityQueryEvents
+| union IdentityDirectoryEvents
+| summarize RecordCount = count(), IDTotalSizeMB = round(sum(estimate_data_size(*))/pow(1024,2),2)

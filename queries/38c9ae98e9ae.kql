@@ -1,0 +1,17 @@
+// Source: https://github.com/ep3p/Sentinel_KQL
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation has_any ("Remove", "Disable") and Operation matches regex @"(?i)AntiPhish|SafeAttachment|SafeLinks|Dlp|Audit(?-i)"
+| extend ClientIPValues = extract_all(@'\[?(::ffff:)?(?P<IPAddress>(\d+\.\d+\.\d+\.\d+)|[^\]%]+)(%\d+)?\]?([-:](?P<Port>\d+))?', dynamic(["IPAddress", "Port"]), ClientIP)[0]
+| project
+    TimeGenerated,
+    OfficeWorkload,
+    RecordType,
+    UserType,
+    UserId,
+    IPAddress = tostring(ClientIPValues[0]),
+    Operation,
+    ResultStatus,
+    Parameters

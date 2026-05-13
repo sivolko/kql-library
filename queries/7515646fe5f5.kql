@@ -1,0 +1,9 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+BehaviorInfo
+| where Timestamp >= ago(7d) 
+| where ActionType !contains "ImpossibleTravelActivity"
+| join kind=inner (IdentityLogonEvents) on AccountUpn
+| summarize arg_max(Timestamp, *) by ActionType 

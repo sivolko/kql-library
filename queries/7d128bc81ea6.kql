@@ -1,0 +1,10 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| project TimeGenerated, EventID, TargetAccount, SubjectAccount, UserAccountControl
+| where EventID == "4738"
+| where UserAccountControl has ("2082")
+| extend Activity = strcat("Account set to password not required")
+| project TimeGenerated, Target=TargetAccount, Actor=SubjectAccount, Activity

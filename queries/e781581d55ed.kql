@@ -1,0 +1,16 @@
+// Source: https://github.com/0xAnalyst/DefenderATPQueries
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+Tags:
+
+Query://This need a bit of fixing
+let badPipeNames = pack_array('psexesvc','paexec','remcom');
+DeviceEvents
+| where ActionType == "NamedPipeEvent" 
+| extend ParsedFields=parse_json(AdditionalFields)
+//| where ParsedFields.FileOperation == "File created"
+//tolower(tostring(split(FileName,'\\')[-1]))
+|  extend foo = tolower(tostring(split(ParsedFields.PipeName,'\\')[-1]))
+| project foo, ParsedFields.PipeName
+| where foo in(badPipeNames)

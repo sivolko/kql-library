@@ -1,0 +1,23 @@
+// Source: https://github.com/robert-iw3/rnd_proto
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+// Filter for events that contain bug check (system crash) information.
+| where isnotempty(AdditionalFields) and AdditionalFields has "BugCheckCode"
+| extend BugCheckInfo = parse_json(AdditionalFields)
+// Filter for the KERNEL_SECURITY_CHECK_FAILURE bug check code, which is 0x139 (313 in decimal).
+| where toint(BugCheckInfo.BugCheckCode) == 313
+// The first parameter being 7 indicates STACK_COOKIE_CHECK_FAILURE, meaning a return address was corrupted. This is the specific sub-type for a CET/CFG failure.
+| where toint(BugCheckInfo.BugCheckParameter1) == 7
+| project
+    TimeGenerated,
+    DeviceName,
+    ActionType,
+    BugCheckCode = BugCheckInfo.BugCheckCode,
+    BugCheckParameter1 = BugCheckInfo.BugCheckParameter1,
+    BugCheckParameter2 = BugCheckInfo.BugCheckParameter2,
+    BugCheckParameter3 = BugCheckInfo.BugCheckParameter3,
+    BugCheckParameter4 = BugCheckInfo.BugCheckParameter4,
+    ReportId,
+    DeviceId

@@ -1,0 +1,13 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago (180d) and TimeGenerated < ago(14d)
+| distinct OperationName, LoggedByService
+| join kind=rightanti(
+    AuditLogs
+    | where TimeGenerated > ago(14d)
+    | summarize TotalCount=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by OperationName, LoggedByService
+    )
+    on OperationName, LoggedByService

@@ -1,0 +1,10 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where OperationName in ("Add verified domain", "Add unverified domain")
+| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| extend ['Actor IP Address'] = tostring(parse_json(tostring(InitiatedBy.user)).ipAddress)
+| extend Domain = tostring(TargetResources[0].displayName)
+| project TimeGenerated, OperationName, Actor, ['Actor IP Address'], Domain

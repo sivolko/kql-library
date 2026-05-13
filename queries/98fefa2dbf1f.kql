@@ -1,0 +1,29 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe=7d;
+//First find any users that hold privileged Azure AD roles
+IdentityInfo
+| where TimeGenerated > ago(21d)
+| where isnotempty(AssignedRoles)
+| where AssignedRoles != "[]"
+| summarize arg_max(TimeGenerated, *) by AccountUPN
+| project AccountUPN, AccountName, AccountSID
+//Join those users based on AccountSID to on premises Active Directory password reset events
+| join kind=inner (
+    SecurityEvent
+    | where TimeGenerated > ago(timeframe)
+    | where EventID == "4724"
+    | project
+        TimeGenerated,
+        Activity,
+        SubjectAccount,
+        TargetAccount,
+        TargetSid,
+        SubjectUserSid
+    )
+    on $left.AccountSID == $right.TargetSid
+| where SubjectUserSid != TargetSid
+//Summarize event data to make it easy to read
+| project ['Time of Password Reset']=TimeGenerated, Activity, Actor=SubjectAccount, ['Target UserPrincipalName']=AccountUPN,['Target AccountName']=TargetAccount

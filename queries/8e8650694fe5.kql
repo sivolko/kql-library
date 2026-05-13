@@ -1,0 +1,23 @@
+// Source: https://github.com/rudraverma/Sentinel-KQL-Detections
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where ResourceProviderValue =~ "MICROSOFT.STORAGE"
+| where OperationNameValue has_any (
+    "STORAGEACCOUNTS/WRITE",
+    "STORAGEACCOUNTS/BLOBSERVICES/WRITE"
+)
+| where ActivityStatusValue =~ "Success"
+| extend RequestBody = tostring(todynamic(Properties).requestbody)
+| where RequestBody has_any (
+    "AllowBlobPublicAccess",
+    "\"publicAccess\"",
+    "allowBlobPublicAccess"
+)
+| project TimeGenerated, Caller, CallerIpAddress,
+          OperationNameValue, ResourceGroup,
+          SubscriptionId, RequestBody
+| extend AlertDescription =
+    "Azure Storage public/anonymous blob access may have been enabled — potential data exposure"

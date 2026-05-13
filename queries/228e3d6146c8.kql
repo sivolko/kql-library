@@ -1,0 +1,8 @@
+// Source: https://github.com/WhalerMike/uiao
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+Usage
+| where TimeGenerated > ago(1d)
+| summarize DataVolumeMB = sum(Quantity) by DataType
+| order by DataVolumeMB desc

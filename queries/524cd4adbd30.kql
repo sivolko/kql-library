@@ -1,0 +1,8 @@
+// Source: https://github.com/WernerRall147/RallTheory
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(15m)
+| where OperationNameValue == "MICROSOFT.COMPUTE/VIRTUALMACHINES/DEALLOCATE/ACTION"
+| project Properties

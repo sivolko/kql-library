@@ -1,0 +1,18 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DevEvents = 
+DeviceEvents
+| extend DevTime = bin(Timestamp, 1s)
+| where ActionType =~ @"ServiceInstalled"
+| where tolower(FileName) contains @"psexesvc"
+| project DevTime, DeviceId, InitiatorAccount = InitiatingProcessAccountName;
+// 
+DeviceProcessEvents
+| extend ProcTime = bin(Timestamp, 1s)
+| where tolower(InitiatingProcessFileName) contains @"psexesvc"
+| where tolower(InitiatingProcessParentFileName) == "services.exe"
+| join kind=inner ( DevEvents ) on DeviceId
+| where abs(datetime_diff('second', DevTime, ProcTime)) <= 3
+| project Timestamp, DeviceName, InitiatorAccount, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessParentFileName

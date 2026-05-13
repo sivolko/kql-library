@@ -1,0 +1,23 @@
+// Source: https://github.com/pluralsight-cloud/azure-automated-incident-response
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let resourceId = '/subscriptions/c690c27b-f984-4f85-8cc7-21ee50a231b4/resourcegroups/rg-win-vms1/providers/microsoft.network/networksecuritygroups/win-vm1-nsg/securityrules/port2112'
+let segs = split(resourceId, "/")
+| extend trimmed = strcat_array(array_slice(segs, 0, array_length(segs)-2), "/")
+
+arg("").Resources
+| where tolower(id) == tolower('/subscriptions/c690c27b-f984-4f85-8cc7-21ee50a231b4/resourcegroups/rg-win-vms1/providers/microsoft.network/networksecuritygroups/win-vm1-nsg')
+
+let lookback = 7d;
+AzureActivity
+| where TimeGenerated >= ago(lookback)
+| where OperationNameValue has_any ("ipfilterrules", "securityRules", "publicIPAddresses", "firewallrules") and OperationNameValue endswith "write"
+// Choosing Accepted here because it has the Rule Attributes included
+| where ActivityStatusValue has_any("Accepted", "Accept")
+| extend parsed_properties = parse_json(tostring(parse_json(Properties).responseBody)).properties
+| extend segs = split(_ResourceId, "/")
+| extend NSGId = strcat_array(array_slice(segs, 0, array_length(segs)-3), "/")
+| extend destinationPortRange = case(Properties has_cs 'destinationPortRange',tostring(parsed_properties.destinationPortRange),"")
+| extend Name = tostring(split(Caller,'@',0)[0]), UPNSuffix = tostring(split(Caller,'@',1)[0])
+| project TimeGenerated, destinationPortRange, IPAddress = CallerIpAddress, Operation = OperationNameValue, NSGId, Name

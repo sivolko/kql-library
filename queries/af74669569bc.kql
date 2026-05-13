@@ -1,0 +1,9 @@
+// Source: https://github.com/DancinDinoo/KQL
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where UserAgent contains "Axios"
+| project TimeGenerated, AppDisplayName, DeviceDetail, IPAddress, ResultType, UserAgent, UserPrincipalName
+
+https://fieldeffect.com/blog/field-effect-discovers-m365-adversary-in-the-middle-campaign

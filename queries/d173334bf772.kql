@@ -1,0 +1,99 @@
+// Source: https://github.com/mattiasborg82/Talks
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let endpointInfo = materialize (DeviceInfo
+  | where OnboardingStatus == "Onboarded"
+  | where DeviceType in("Workstation","Server")
+  | where OSDistribution contains "Windows"
+  | summarize arg_max(Timestamp,*) by DeviceId, DeviceName
+  | project DeviceId,DeviceName,DeviceType,OSDistribution,MachineGroup);
+DeviceEvents
+| where ActionType startswith "ASR"
+| extend ASRAction = extract(@"(Blocked$|Audited$|WarnBypassed$)",1,ActionType)
+| extend ConfigurationId = case(ActionType in ("AsrVulnerableSignedDriverBlocked","AsrVulnerableSignedDriverAudited","AsrVulnerableSignedDriverWarnBypassed"),"scid-2515",
+ActionType in ("AsrAdobeReaderChildProcessBlocked","AsrAdobeReaderChildProcessAudited","AsrAdobeReaderChildProcessWarnBypassed"),"scid-2513",
+ActionType in ("AsrOfficeChildProcessBlocked","AsrOfficeChildProcessAudited","AsrOfficeChildProcessWarnBypassed"),"scid-2501",
+ActionType in ("AsrLsassCredentialTheftBlocked","AsrLsassCredentialTheftAudited","AsrLsassCredentialTheftWarnBypassed"),"scid-2509",
+ActionType in ("AsrExecutableEmailContentBlocked","AsrExecutableEmailContentAudited","AsrExecutableEmailContentWarnBypassed"),"scid-2500",
+ActionType in ("AsrUntrustedExecutableBlocked","AsrUntrustedExecutableAudited","AsrUntrustedExecutableWarnBypassed"),"scid-2507",
+ActionType in ("AsrObfuscatedScriptBlocked","AsrObfuscatedScriptAudited","AsrObfuscatedScriptWarnBypassed"),"scid-2505",
+ActionType in ("AsrScriptExecutableDownloadBlocked","AsrScriptExecutableDownloadAudited","AsrScriptExecutableDownloadWarnBypassed"),"scid-2504",
+ActionType in ("AsrExecutableOfficeContentBlocked","AsrExecutableOfficeContentAudited","AsrExecutableOfficeContentWarnBypassed"),"scid-2502",
+ActionType in ("AsrOfficeProcessInjectionBlocked","AsrOfficeProcessInjectionAudited","AsrOfficeProcessInjectionWarnBypassed"),"scid-2503",
+ActionType in ("AsrOfficeCommAppChildProcessBlocked","AsrOfficeCommAppChildProcessAudited","AsrOfficeCommAppChildProcessWarnBypassed"),"scid-2512",
+ActionType in ("AsrPersistenceThroughWmiBlocked","AsrPersistenceThroughWmiAudited","AsrPersistenceThroughWmiWarnBypassed"),"scid-2514",
+ActionType in ("AsrPsexecWmiChildProcessBlocked","AsrPsexecWmiChildProcessAudited","AsrPsexecWmiChildProcessWarnBypassed"),"scid-2510",
+ActionType in ("AsrSafeModeRebootBlocked","AsrSafeModeRebootAudited","AsrSafeModeRebootWarnBypassed"),"scid-2518",
+ActionType in ("AsrUntrustedUsbProcessBlocked","AsrUntrustedUsbProcessAudited","AsrUntrustedUsbProcessWarnBypassed"),"scid-2511",
+ActionType in ("AsrAbusedSystemToolBlocked","AsrAbusedSystemToolAudited","AsrAbusedSystemToolWarnBypassed"),"scid-2517",
+ActionType in ("AsrWebShellOnServerBlocked","AsrWebShellOnServerAudited","AsrWebShellWarnBypassed"),"scid-2516",
+ActionType in ("AsrOfficeMacroWin32ApiCallsBlocked","AsrOfficeMacroWin32ApiCallsAudited","AsrOfficeMacroWin32ApiCallsWarnBypassed"),"scid-2506",
+ActionType in ("AsrRansomwareBlocked","AsrRansomwareAudited  AsrRansomwareWarnBypassed"),"scid-2508","Undefined")
+| join kind = leftouter (
+  endpointInfo) on DeviceId
+  | project-away *1
+| join kind=leftouter( DeviceTvmSecureConfigurationAssessment
+| where ConfigurationSubcategory == "Attack Surface Reduction"
+| join kind=leftouter (DeviceTvmSecureConfigurationAssessmentKB | project ConfigurationName, ConfigurationId) on ConfigurationId
+| mv-expand Context
+| extend Context = tostring(Context[0])
+| project-rename CurrentSetting = Context
+| join kind=leftouter (endpointInfo) on DeviceId
+| project-away *1
+| summarize AuditConfig =dcountif(DeviceName,CurrentSetting=="Audit"),
+  BlockConfig =dcountif(DeviceName,CurrentSetting=="Block"),
+  OffConfig =dcountif(DeviceName,CurrentSetting=="Off"),
+  WarnConfig =dcountif(DeviceName,CurrentSetting=="Warn"),
+  UniqueDevicesConfigPerRule =dcount(DeviceName),
+  CompliantDevicesConfig=dcountif(DeviceName,IsCompliant==1),
+  NoneCompliantDevicesConfig=dcountif(DeviceName,IsCompliant==0),
+  ServersAuditConfig = dcountif(DeviceName,DeviceType == "Server" and CurrentSetting=="Audit"),
+  ServersBlockConfig = dcountif(DeviceName,DeviceType == "Server" and CurrentSetting=="Block"),
+  ServersWarnConfig = dcountif(DeviceName,DeviceType == "Server" and CurrentSetting=="Warn"),
+  ServersOffConfig = dcountif(DeviceName,DeviceType == "Server" and CurrentSetting=="Off"),
+  WorkstationsAuditConfig = dcountif(DeviceName,DeviceType == "Workstation" and CurrentSetting=="Audit"),
+  WorkstationsBlockConfig = dcountif(DeviceName,DeviceType == "Workstation" and CurrentSetting=="Block"),
+  WorkstationsWarnConfig = dcountif(DeviceName,DeviceType == "Workstation" and CurrentSetting=="Warn"),
+  WorkstationsOffConfig = dcountif(DeviceName,DeviceType == "Workstation" and CurrentSetting=="Off")
+  by ConfigurationName, ConfigurationId
+  ) on ConfigurationId
+  | summarize TotalDevicesWithBlockEvents = dcountif(DeviceId,ASRAction == "Blocked"),
+  TotalDevicesWithAuditEvents = dcountif(DeviceId,ASRAction == "Audited"),
+  TotalDevicesWithWarnEvents = dcountif(DeviceId,ASRAction == "WarnBypassed"),
+  UniqueFiles=dcount(FileName),
+  TotalEvents=dcount(Timestamp),
+  SampleFiles = make_set(FileName,25),
+  ServersWithEvents=dcountif(Timestamp,DeviceType=="Server"),
+  WorkstationsWithEvents=dcountif(Timestamp,DeviceType=="Workstation"),
+  FileInDownloadOrDesktopFolder = dcountif(FileName,FolderPath matches regex @"(?i)\w\:\\Users\\\w+\\Downloads" or FolderPath matches regex @"(?i)\w\:\\Users\\\w+\\Desktop"),
+  FileInTempFolder = dcountif(FileName,FolderPath has "\\temp"),
+  FileInProgramFilesFolder = dcountif(FileName,FolderPath matches regex @"(?i)\w\:\\Program\sFiles(\s\(x86\))?"),
+  FileInSystem32Folder = dcountif(FileName,FolderPath matches regex @"(?i)\w\:\\Windows\\System32")
+  by
+  ConfigurationName, AuditConfig, BlockConfig, OffConfig, WarnConfig, UniqueDevicesConfigPerRule, CompliantDevicesConfig, NoneCompliantDevicesConfig, ServersAuditConfig, ServersBlockConfig,
+  ServersOffConfig, ServersWarnConfig, WorkstationsAuditConfig, WorkstationsBlockConfig, WorkstationsOffConfig, WorkstationsWarnConfig
+| project-reorder ConfigurationName,
+                    ServersAuditConfig,
+                    ServersBlockConfig,
+                    ServersWarnConfig,
+                    ServersOffConfig,
+                    ServersWithEvents,
+                    WorkstationsAuditConfig,
+                    WorkstationsBlockConfig,
+                    WorkstationsWarnConfig,
+                    WorkstationsOffConfig,
+                    WorkstationsWithEvents,
+                    TotalEvents,
+                    TotalDevicesWithAuditEvents,
+                    TotalDevicesWithBlockEvents,
+                    TotalDevicesWithWarnEvents,
+                    UniqueFiles,
+                    SampleFiles,
+                    CompliantDevicesConfig,
+                    NoneCompliantDevicesConfig,
+                    UniqueDevicesConfigPerRule,
+                    FileInDownloadOrDesktopFolder,
+                    FileInProgramFilesFolder,
+                    FileInSystem32Folder,
+                    FileInTempFolder

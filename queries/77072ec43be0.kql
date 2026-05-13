@@ -1,0 +1,10 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let startDate = datetime(2024-07-01);
+let endDate = datetime(2024-07-05);
+union AADNonInteractiveUserSignInLogs, PowerBIActivity, AWSGuardDuty, ThreatIntelligenceIndicator, CloudAppEvents, BehaviorAnalytics, Dynamics365Activity, AzureActivity, DeviceEvents, DeviceLogonEvents, Anomalies, AppTraces, AADUserRiskEvents, IdentityInfo
+| where TimeGenerated between (startDate .. endDate)
+| summarize count() by bin(TimeGenerated, 1d)
+| render timechart

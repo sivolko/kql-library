@@ -1,0 +1,22 @@
+// Source: https://github.com/Jaekk0/Sentinel
+// Collected: 2026-05-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Price = 5.0;
+union withsource = TableName isfuzzy=true DeviceEvents, DeviceFileEvents, DeviceImageLoadEvents, DeviceInfo, DeviceLogonEvents, DeviceNetworkEvents, DeviceNetworkInfo, DeviceProcessEvents, DeviceRegistryEvents, DeviceFileCertificateInfo
+| where Timestamp >= ago(7d)
+| summarize totalTableEntries = count(), TableSizeInGB = sum(estimate_data_size(*))/1000/1000/1000., estimatedSentinelprice = round(sum(estimate_data_size(*)) / (1000 * 1000 * 1000.) * Price, 2)
+by TableName
+
+
+//Calculate defender cost in Sentinel with MachineGroup
+let Price = 5.0;
+let koneet=
+DeviceInfo
+| where MachineGroup == "win11"
+| distinct DeviceName;
+union withsource = TableName isfuzzy=true DeviceEvents, DeviceFileEvents, DeviceImageLoadEvents, DeviceInfo, DeviceLogonEvents, DeviceNetworkEvents, DeviceNetworkInfo, DeviceProcessEvents, DeviceRegistryEvents, DeviceFileCertificateInfo
+| where Timestamp >= ago(7d)
+| where DeviceName in (koneet)
+| summarize totalTableEntries = count(), TableSizeInGB = sum(estimate_data_size(*))/1000/1000/1000., estimatedSentinelprice = round(sum(estimate_data_size(*)) / (1000 * 1000 * 1000.) * Price, 2)
+by TableName
