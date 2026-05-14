@@ -1,0 +1,15 @@
+// Source: https://github.com/CyberAutomationX/SecureAzCloud-Scripts
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 30d;
+AzureActivity
+| where TimeGenerated > ago(Lookback)
+| extend Operation_l = tolower(OperationNameValue),
+         Provider_l = tolower(ResourceProviderValue),
+         Props_l = tolower(tostring(Properties_d))
+| where Provider_l has "microsoft.cognitiveservices"
+| where Operation_l has_any (dynamic(["raipolicies/write", "contentfilters/write", "contentsafety", "safetysettings/write"]))
+    or Props_l has_any (dynamic(["rai", "responsible ai", "content filter", "contentfilter", "safety"]))
+| project TimeGenerated, Caller, CallerIpAddress, OperationNameValue, ActivityStatusValue, SubscriptionId, ResourceGroup, ResourceId, Properties_d
+| sort by TimeGenerated desc

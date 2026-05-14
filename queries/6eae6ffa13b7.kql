@@ -1,0 +1,13 @@
+// Source: https://github.com/griffin31-lab/Griffin31-ToolKit
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType in ("AsrLsassCredentialTheftAudited", "AsrLsassCredentialTheftBlocked", "OpenProcessApiCall", "ReadProcessMemoryApiCall")
+| where (ActionType startswith "AsrLsassCredentialTheft")
+     or (ActionType in ("OpenProcessApiCall", "ReadProcessMemoryApiCall") and FileName =~ "lsass.exe")
+| project Timestamp, DeviceName, ActionType, FileName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountUpn, InitiatingProcessFolderPath, AdditionalFields
+| sort by Timestamp desc

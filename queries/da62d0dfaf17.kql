@@ -1,0 +1,28 @@
+// Source: https://github.com/emdeh/useful-kql-queries
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType in ("AppControlCodeIntegrityPolicyAudited", "AppControlCodeIntegrityPolicyBlocked")
+| where DeviceName startswith "XXX" // Replace with your device prefix or remove this filter
+| extend 
+    AdditionalFields = todynamic(AdditionalFields)
+| project 
+    Timestamp,
+    DeviceName,
+    ActionType,
+    FileName,
+    FolderPath,
+    InitiatingProcessFileName,
+    PolicyEnforcement = case(
+        ActionType == "AppControlCodeIntegrityPolicyBlocked", "Blocked",
+        ActionType == "AppControlCodeIntegrityPolicyAudited", "Audited",
+        "Other"
+    ),
+    InitiatingProcessAccountDomain,
+    InitiatingProcessAccountUpn,
+    InitiatingProcessCommandLine,
+    PolicyId = tostring(AdditionalFields["PolicyId"]),
+    PolicyName = tostring(AdditionalFields["PolicyName"]),
+    PolicyVersion = tostring(AdditionalFields["PolicyVersion"])
+| order by Timestamp desc

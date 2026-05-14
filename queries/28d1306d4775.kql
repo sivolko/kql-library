@@ -1,0 +1,18 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe=30d;
+let adminusers=
+IdentityInfo
+| where TimeGenerated > ago(21d)
+| where AssignedRoles has_any ("Exchange Administrator", "Global Administrator")
+| summarize arg_max(TimeGenerated, *) by AccountUPN
+| project UserId=AccountUPN;
+OfficeActivity
+| where TimeGenerated > ago(timeframe)
+| where OfficeWorkload == "Exchange"
+| where Operation == "MailItemsAccessed"
+| where UserId in (adminusers)
+| where UserId != MailboxOwnerUPN
+| project AccessTime=TimeGenerated, UserId, MailboxOwnerUPN, Folders

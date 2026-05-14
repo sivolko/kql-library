@@ -1,0 +1,22 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let BruteForceUsers = SigninLogs
+    | where ResultType != 0
+    | summarize Attempts=count() by UserPrincipalName
+    | where Attempts > 10;
+let ImpossibleTravelUsers = SigninLogs
+    | extend Location = strcat(tostring(LocationDetails.countryOrRegion), "-", tostring(LocationDetails.city))
+    | extend PreviousLocation=prev(Location), PreviousTime=prev(TimeGenerated)
+    | where Location != PreviousLocation and datetime_diff('minute', TimeGenerated, PreviousTime) < 60
+    | summarize by UserPrincipalName;
+let MaliciousContainers = AzureActivity
+    | where OperationNameValue =~ "MICROSOFT.CONTAINERINSTANCE/CONTAINERS/WRITE"
+    | where Properties has "miner" or Properties has_any ("stress", "xmrig", "cryptonight")
+    | summarize by Caller;
+BruteForceUsers
+| join kind=inner ImpossibleTravelUsers on UserPrincipalName
+| join kind=inner (MaliciousContainers) on $left.UserPrincipalName == $right.Caller
+| project CompromisedUser=UserPrincipalName
+| extend AlertName="Multi-Stage Attack Detected (Brute Force + Impossible Travel + Malicious Container)"

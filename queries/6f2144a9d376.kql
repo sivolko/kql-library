@@ -1,0 +1,89 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 7045  // Service installed
+| where ServiceName has "ScreenConnect Client"
+| where ImagePath !has "Program Files (x86)\\ScreenConnect"
+    and ImagePath !has "Program Files\\ScreenConnect"
+| extend
+    SuspiciousInstallPath = ImagePath,
+    ServiceNameFull       = ServiceName
+| project TimeGenerated, Computer, Account, ServiceNameFull, SuspiciousInstallPath
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: ScreenConnect Spawning Shell Interpreters
+//
+// Rationale: RMM tools should not spawn cmd.exe or PowerShell outside of
+// authorized IT automation contexts. Shell spawning from ScreenConnect is
+// a direct indicator of hands-on attacker activity.
+// ============================================================================
+DeviceProcessEvents
+| where InitiatingProcessFileName in~ (
+    "ScreenConnect.ClientService.exe",
+    "ScreenConnect.WindowsClient.exe",
+    "ScreenConnect.ClientLauncher.exe"
+)
+| where FileName in~ ("cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe",
+                      "cscript.exe", "mshta.exe", "regsvr32.exe", "rundll32.exe")
+| extend
+    AttackerSession  = InitiatingProcessId,
+    ShellProcess     = FileName,
+    CommandLine      = ProcessCommandLine
+| project TimeGenerated, DeviceName, AttackerSession, ShellProcess, CommandLine,
+          InitiatingProcessFileName
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 3: ScreenConnect Connections to Non-ConnectWise Relays
+//
+// Rationale: Attacker-hosted ScreenConnect infrastructure uses custom domains.
+// Any ScreenConnect network connection outside *.screenconnect.com warrants
+// investigation, particularly to newly registered or unknown domains.
+// ============================================================================
+DeviceNetworkEvents
+| where InitiatingProcessFileName in~ (
+    "ScreenConnect.ClientService.exe",
+    "ScreenConnect.WindowsClient.exe"
+)
+| where RemotePort == 443
+| where RemoteUrl !endswith ".screenconnect.com"
+    and RemoteUrl != ""
+| extend
+    AttackerRelay = RemoteUrl,
+    RemoteIPAddr  = RemoteIP
+| project TimeGenerated, DeviceName, AttackerRelay, RemoteIPAddr,
+          InitiatingProcessFileName
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 4: ScreenConnect Install + BYOVD Driver Load (Kill-Chain Correlation)
+//
+// Rationale: The highest-fidelity ransomware pre-deployment signal is
+// ScreenConnect installation followed by a vulnerable driver load (BYOVD).
+// This combination — RMM for persistence, then EDR kill via driver — is
+// observed in Akira and Qilin pre-ransomware activity.
+// ============================================================================
+let RMMInstallEvents = SecurityEvent
+    | where EventID == 7045
+    | where ServiceName has "ScreenConnect Client"
+    | project RMMInstallTime = TimeGenerated, Computer, RMMService = ServiceName;
+let BYOVDDriverLoads = SecurityEvent
+    | where EventID == 7045  // Service installed
+    | where ImagePath endswith ".sys"
+    | where ImagePath !has "Windows\\System32\\drivers\\"
+            and ImagePath !has "Windows\\SysWOW64\\drivers\\"
+    | project DriverLoadTime = TimeGenerated, Computer, DriverPath = ImagePath,
+              DriverService = ServiceName;
+RMMInstallEvents
+| join kind=inner BYOVDDriverLoads on Computer
+| where DriverLoadTime between (RMMInstallTime .. RMMInstallTime + 2h)
+| extend TimeDeltaMinutes = datetime_diff('minute', DriverLoadTime, RMMInstallTime)
+| project RMMInstallTime, DriverLoadTime, TimeDeltaMinutes, Computer,
+          RMMService, DriverPath, DriverService
+| order by TimeDeltaMinutes asc

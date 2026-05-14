@@ -1,0 +1,17 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago (7d)
+| where Operation in~("New-InboxRule", "Set-InboxRule")
+| mv-expand todynamic(Parameters)
+| where Parameters.Name in~("ForwardTo", "ForwardAsAttachmentTo")
+| extend Action = Parameters.Name
+| extend UserDomain = split(UserId,'@')[1]
+| extend Recipients = Parameters.Value
+| where Recipients !contains UserDomain
+| extend InboxRuleName = iff(OfficeObjectId contains "onmicrosoft.com", 
+    split(OfficeObjectId, '\\')[1],
+    OfficeObjectId)   
+| project TimeGenerated, Operation, Action, UserId, Recipients, InboxRuleName

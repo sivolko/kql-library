@@ -1,0 +1,10 @@
+// Source: https://github.com/tomwechsler/Microsoft_Cloud_Security
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where Category == "RoleManagement"
+| where Result == "success"
+| where OperationName == "Add member to role"
+| where (TargetResources has "Company" or TargetResources has "Tenant" or TargetResources has "Global Administrator")
+| project TargetUser = tostring(TargetResources.[0].["userPrincipalName"]), InitiatedBy = tostring(InitiatedBy.user.["userPrincipalName"])

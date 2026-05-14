@@ -1,0 +1,14 @@
+// Source: https://github.com/tgs3c/Incident-Response-Hunting
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let CompromisedDevice = "";
+let SearchWindow = 30d; //Customizable h = hours, d = days
+IdentityLogonEvents
+| where Timestamp > (now() - SearchWindow)
+| where DeviceName == CompromisedDevice
+| summarize
+     TotalDevicesAccessed = dcount(DestinationDeviceName),
+     DevicesAccessed = make_set(DestinationDeviceName),
+     ProtocolsUsed = make_set(Protocol)
+     by DeviceName

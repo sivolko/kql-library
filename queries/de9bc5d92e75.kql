@@ -1,0 +1,6 @@
+// Source: https://github.com/Khadinxc/TerraSigma
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceProcessEvents
+| where ProcessCommandLine contains " set" and (ProcessCommandLine contains "system" and ProcessCommandLine contains "syslog" and ProcessCommandLine contains "config") and FolderPath endswith "/esxcli"

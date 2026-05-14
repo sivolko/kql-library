@@ -1,0 +1,11 @@
+// Source: https://github.com/letisiapangataa/azure-sentinel-power-bi-dashboard
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where DeviceVendor == "Palo Alto Networks"
+| where Activity == "TRAFFIC"
+| extend SentBytes = todouble(SentBytes), ReceivedBytes = todouble(ReceivedBytes)
+| where SentBytes > 1000000000 or ReceivedBytes > 1000000000  // > 1GB
+| summarize TotalSent = sum(SentBytes), TotalReceived = sum(ReceivedBytes) by SourceIP, DestinationIP, bin(TimeGenerated, 1h)
+| order by TimeGenerated desc

@@ -1,0 +1,7 @@
+// Source: https://github.com/jkerai1/KQL-Queries
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where parse_json(Properties).message == "microsoft.insights/scheduledqueryrules/write"
+| where parse_json(tostring(parse_json(tostring(Properties_d.requestbody)).properties)).enabled == false

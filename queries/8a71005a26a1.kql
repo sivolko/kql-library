@@ -1,0 +1,27 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity 
+| where OperationNameValue =~ "Microsoft.Network/networkSecurityGroups/write"
+    and ActivityStatusValue == "Accept"
+| extend SecurityRules_ = todynamic(parse_json(tostring(parse_json(tostring(Properties_d.responseBody)).properties)).securityRules)
+| mv-expand SecurityRules_
+| extend SourceAddressPrefix_ = tostring(parse_json(tostring(parse_json(tostring(SecurityRules_)).properties)).sourceAddressPrefix) 
+| extend SourceAddressPrefixes_ = tostring(parse_json(tostring(parse_json(tostring(SecurityRules_)).properties)).sourceAddressPrefixes)
+| extend Access = tostring(parse_json(tostring(parse_json(tostring(SecurityRules_)).properties)).access)
+| extend Port = tostring(parse_json(tostring(parse_json(tostring(SecurityRules_)).properties)).destinationPortRange)
+| where SourceAddressPrefix_ == '*' or SourceAddressPrefixes_ == '' or SourceAddressPrefixes_ == '0.0.0.0/0' 
+| where Access == "Allow"
+| extend NsgName = split(_ResourceId, '/')[8] 
+| extend NsgRule = split(_ResourceId, '/')[10] 
+| project TimeGenerated, 
+          NsgName, 
+          NsgRule, 
+          ResourceGroup, 
+          SourceAddressPrefix_, 
+          SourceAddressPrefixes_,
+		  Port,
+          Caller,
+          CallerIpAddress
+		  

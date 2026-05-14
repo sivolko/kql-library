@@ -1,0 +1,12 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+CloudAppEvents
+| where Application == "Microsoft Exchange Online"
+| where ActionType == "TIMailData-Inline"
+| where ActivityType == "Securityevent"
+| where ISP == "kuroit limited"
+| extend CAInternetMessageId = tostring(parse_json(RawEventData)["InternetMessageId"])
+| join EmailEvents on $left.CAInternetMessageId == $right.InternetMessageId
+| where EmailDirection == "Inbound"

@@ -1,0 +1,8 @@
+// Source: https://github.com/pirateape/Azure-Security
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+search in (Heartbeat, SigninLogs, AzureActivity, SecurityEvent) *
+| summarize LastLog = max(TimeGenerated) by $table
+| extend HealthStatus = iff(LastLog > ago(1h), "✅ Healthy", "⚠️ Lagging")
+| order by LastLog asc

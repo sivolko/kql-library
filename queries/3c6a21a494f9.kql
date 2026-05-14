@@ -1,0 +1,14 @@
+// Source: https://github.com/madhuperera/Microsoft_Sentinel
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(365d)
+| where OfficeWorkload == "OneDrive"
+| where UserId startswith "urn:spo:anon#"
+| where SourceFileName != ""
+| extend StaffURL = tostring(Site_Url)
+| extend StaffName1 = split(StaffURL,"personal/",1)[0] // You will need to change this line to match your username
+| extend StaffName = split(StaffName1,"_",0)[0] // You will need to change this line to match your username
+| summarize count() by tostring(StaffName)
+| render piechart

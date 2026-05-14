@@ -1,0 +1,149 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let BroadQueryThreshold = 20;  // flag SOQL that could return > 20 records
+
+SalesforceEvents_CL  // custom log table — adjust to your ingest table name
+| where TimeGenerated > ago(7d)
+| where EventType_s == "ApiEvent"
+// Agent service accounts
+| where UserType_s in~ ("Guest", "Service", "API")
+| where ClientId_s has_any ("agentforce", "einstein", "bot", "copilot")
+| where isnotempty(QueryString_s)
+// Broad scope: SELECT from sensitive objects without specific record ID filter
+| where QueryString_s matches regex
+    @'(?i)SELECT\s+.{1,300}\s+FROM\s+(Contact|Lead|Opportunity|Account|Patient|HealthCondition|ClinicalEncounter|CarePlan)'
+| where QueryString_s !matches regex @'(?i)\bId\s*=\s*''[a-zA-Z0-9]{15,18}'''
+// Queries with high LIMIT values or no LIMIT (could return many records)
+| extend HasHighLimit =
+    QueryString_s matches regex @'(?i)LIMIT\s+([5-9][0-9]|[1-9][0-9]{2,})'
+| extend HasNoLimit =
+    QueryString_s !matches regex @'(?i)\bLIMIT\b'
+| extend BroadQuery = HasHighLimit or HasNoLimit
+| where BroadQuery == true
+| summarize
+    QueryCount = count(),
+    QuerySamples = make_set(substring(QueryString_s, 0, 200), 3),
+    SourceIPs = make_set(SourceIp_s, 5),
+    ClientIds = make_set(ClientId_s, 3)
+    by UserId_s, bin(TimeGenerated, 15m)
+| where QueryCount >= 1  // each broad query is significant
+| project-reorder TimeGenerated, UserId_s, QueryCount, QuerySamples, SourceIPs, ClientIds
+| sort by QueryCount desc
+
+
+// ============================================================================
+// Query 2: Agentforce email sends to external addresses after public form submission
+//
+// Rationale: PipeLeak exfil completes via email send. An agent service
+// account sending email to a non-organizational address immediately after
+// processing a public (guest) form submission is the canonical exfil signal.
+// ============================================================================
+let ExfilWindow = 3m;
+let InternalDomains = dynamic([
+    "corp.lab.local", "salesforce.com", "force.com"
+]);  // adjust for target org
+
+// Email events from agent service accounts
+let AgentEmailSends =
+    SalesforceEvents_CL
+    | where TimeGenerated > ago(7d)
+    | where EventType_s == "EmailEvent"
+    | where UserType_s in~ ("Service", "API", "Guest")
+    | where ClientId_s has_any ("agentforce", "einstein", "bot")
+    | extend IsExternal = not(RecipientAddress_s has_any (InternalDomains))
+    | where IsExternal == true
+    | project EmailTime = TimeGenerated, UserId = UserId_s,
+              RecipientAddress = RecipientAddress_s, Subject = Subject_s,
+              SourceIp = SourceIp_s;
+
+// Guest form submission events
+let GuestFormSubmissions =
+    SalesforceEvents_CL
+    | where TimeGenerated > ago(7d)
+    | where EventType_s in ("LightningInteraction", "LightningPageView", "ApiEvent")
+    | where UserType_s =~ "Guest"
+    | where RequestUri_s has_any ("agentforce", "einstein", "chat")
+    | project FormTime = TimeGenerated, GuestIp = SourceIp_s,
+              FormUri = RequestUri_s;
+
+// Correlate: email sends within ExfilWindow of a form submission from same session
+AgentEmailSends
+| join kind=inner (GuestFormSubmissions) on $left.SourceIp == $right.GuestIp
+| where (EmailTime - FormTime) between (0s .. ExfilWindow)
+| project EmailTime, FormTime,
+          SecondsBetween = datetime_diff('second', EmailTime, FormTime),
+          RecipientAddress, Subject, SourceIp, FormUri
+| sort by SecondsBetween asc
+
+
+// ============================================================================
+// Query 3: Salesforce API query volume spike from form-processing context
+//
+// Rationale: Normal form processing (create lead, lookup knowledge article)
+// executes 2-5 Salesforce API calls per submission. A PipeLeak injection
+// that enumerates CRM data generates 20+ API calls. Flag agent service
+// accounts with abnormal API call volume per guest session.
+// ============================================================================
+let NormalCallsPerSession = 5;
+let SessionWindow = 2m;
+
+SalesforceEvents_CL
+| where TimeGenerated > ago(7d)
+| where EventType_s == "ApiEvent"
+| where UserType_s in~ ("Guest", "Service")
+| where ClientId_s has_any ("agentforce", "einstein", "bot", "copilot")
+| summarize
+    ApiCallCount = count(),
+    ObjectsAccessed = make_set(coalesce(EntityName_s, "unknown"), 10),
+    SourceIPs = make_set(SourceIp_s, 3)
+    by UserId_s, bin(TimeGenerated, SessionWindow)
+| where ApiCallCount > NormalCallsPerSession
+| extend CRMDataAccess = ObjectsAccessed has_any (
+    "Contact", "Lead", "Opportunity", "Account",
+    "Patient", "HealthCondition", "ClinicalEncounter"
+)
+| extend Severity = case(
+    ApiCallCount > 50 and CRMDataAccess, "Critical",
+    ApiCallCount > 20 and CRMDataAccess, "High",
+    ApiCallCount > NormalCallsPerSession, "Medium",
+    "Low"
+)
+| project-reorder Severity, UserId_s, TimeGenerated, ApiCallCount,
+                  ObjectsAccessed, CRMDataAccess, SourceIPs
+| sort by ApiCallCount desc
+
+
+// ============================================================================
+// Query 4: Web access logs — injection patterns in form POST bodies
+//
+// Rationale: If a WAF or reverse proxy logs POST body content for
+// Experience Cloud / Agentforce endpoints, injection trigger phrases
+// in the body indicate a PipeLeak attempt. This query targets Sentinel's
+// CommonSecurityLog or W3CIISLog tables if the WAF forwards logs there.
+// ============================================================================
+
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where RequestMethod == "POST"
+| where RequestURL has_any ("agentforce", "einstein", "einstein/copilot",
+                             "/chat/", "ExperienceCloud")
+| where isnotempty(AdditionalExtensions)
+| extend RequestBody = extract("cs-body=([^;]+)", 1, AdditionalExtensions)
+| where RequestBody has_any (
+    "ignore previous instructions",
+    "admin mode",
+    "ADMIN MODE ACTIVATED",
+    "compliance audit",
+    "previous instructions have been superseded",
+    "list all opportunities",
+    "list all patients",
+    "SELECT.*FROM.*Contact",
+    "email the results",
+    "export.*CRM",
+    "SOQL"
+)
+| project TimeGenerated, SourceIP, DestinationHostName, RequestURL,
+          DeviceProduct, RequestBody = substring(RequestBody, 0, 500)
+| sort by TimeGenerated desc

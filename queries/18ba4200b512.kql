@@ -1,0 +1,88 @@
+// Source: https://github.com/robert-iw3/rnd_proto
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let UserAgentAllowList = dynamic([
+    "Microsoft-CryptoAPI/",
+    "Microsoft-WinRM",
+    "Windows-Update-Agent",
+    "Microsoft-Delivery-Optimization",
+    "SCCM"
+]);
+// Define a list of known suspicious User-Agents associated with tools.
+let SuspiciousUserAgents = dynamic([
+    "curl",
+    "wget",
+    "python-requests",
+    "Go-http-client",
+    "powershell",
+    "bitsadmin",
+    "winhttp",
+    "Binalyze",
+    "masscan"
+]);
+// Define a threshold for long polling in milliseconds (e.g., 30 seconds).
+// This may need tuning based on your environment's baseline.
+let LongPollingThreshold = 30000;
+// Define a list of suspicious HTTP methods not typically used in user web browsing.
+let SuspiciousHttpMethods = dynamic(["PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"]);
+// Define a list of suspicious content types often used for binary data.
+let SuspiciousContentTypes = dynamic(["application/octet-stream", "application/x-msdownload"]);
+// Define a list of destination domains/IPs to exclude from this rule.
+let DestinationAllowList = dynamic([""]); // Add known good API endpoints or update servers.
+CommonSecurityLog
+| where TimeGenerated > ago(1d)
+// This rule is designed for web proxy logs. Filter for your specific DeviceProduct if possible.
+// Example: | where DeviceProduct in ("Zscaler", "PAN-OS", "Squid")
+| where isnotempty(RequestURL) and isnotempty(UserAgent)
+// Exclude known good destinations and user agents.
+| where not(DestinationHostName has_any (DestinationAllowList) or DestinationIP has_any (DestinationAllowList))
+| where not(UserAgent has_any (UserAgentAllowList))
+// The TimeTaken field name can vary (e.g., 'ElapsedTime', 'TimeElapsed'). Adjust as needed for your log source.
+| where isnotempty(TimeTaken)
+// Calculate flags for different suspicious characteristics.
+| extend
+    // Flag 1: Non-standard or suspicious User-Agent.
+    IsSuspiciousUA = UserAgent has_any (SuspiciousUserAgents) or not(UserAgent startswith "Mozilla/5.0"),
+    // Flag 2: Suspicious HTTP Method (not common for user browsing).
+    IsSuspiciousMethod = HttpMethod in (SuspiciousHttpMethods),
+    // Flag 3: Suspicious Content-Type indicating binary transfer.
+    IsSuspiciousContentType = HttpContentType has_any (SuspiciousContentTypes),
+    // Flag 4: Long connection time, indicative of long polling.
+    IsLongPolling = tolong(TimeTaken) > LongPollingThreshold
+// Core detection logic: A suspicious UA combined with at least one other suspicious indicator.
+| where IsSuspiciousUA and (IsSuspiciousMethod or IsSuspiciousContentType or IsLongPolling)
+// Summarize to reduce noise, grouping by key indicators.
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    EventCount = count(),
+    DistinctURLs = make_set(RequestURL, 5),
+    DistinctMethods = make_set(HttpMethod),
+    DistinctContentTypes = make_set(HttpContentType),
+    TotalBytesSent = sum(SentBytes),
+    TotalBytesReceived = sum(ReceivedBytes),
+    MaxTimeTaken = max(tolong(TimeTaken))
+    by
+    SourceUserID,
+    SourceIp,
+    DestinationIp,
+    DestinationHostName,
+    UserAgent,
+    IsSuspiciousUA,
+    IsSuspiciousMethod,
+    IsSuspiciousContentType,
+    IsLongPolling
+| project-reorder
+    StartTime,
+    EndTime,
+    EventCount,
+    SourceUserID,
+    SourceIp,
+    DestinationIp,
+    DestinationHostName,
+    UserAgent,
+    IsSuspiciousUA,
+    IsSuspiciousMethod,
+    IsSuspiciousContentType,
+    IsLongPolling

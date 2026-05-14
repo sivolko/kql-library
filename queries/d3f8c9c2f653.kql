@@ -1,0 +1,11 @@
+// Source: https://github.com/mrblue223/Sentinel-Logic
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (4625, 4648) // Failed logons and explicit credential use
+| summarize 
+    FailedLogons = countif(EventID == 4625),
+    SuccessfulLogons = countif(EventID == 4624)
+    by TargetAccount
+| top 10 by FailedLogons desc

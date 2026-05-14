@@ -1,0 +1,13 @@
+// Source: https://github.com/pduggusa/dugganusa-sentinel
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+ThreatIntelligenceIndicator
+| where SourceSystem == "DugganUSA-STIX-Feed"
+| where TimeGenerated > ago(6h)
+| where ThreatType == "c2"
+| join kind=inner (
+    CommonSecurityLog
+    | where TimeGenerated > ago(24h)
+) on $left.NetworkIP == $right.DestinationIP
+| project TimeGenerated, SourceIP, DestinationIP, ThreatType, Description, Confidence

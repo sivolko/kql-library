@@ -1,0 +1,11 @@
+// Source: https://github.com/vivekrn11/AzureSentinelKQLqueries
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+//| extend UTCtime=now()
+| where TimeGenerated >= ago(1h)
+| where not(ipv4_is_match("10.0.0.0",SourceIP,8) or ipv4_is_match("172.16.0.0",SourceIP,12) or ipv4_is_match("192.168.0.0",SourceIP,16))
+| where (ipv4_is_match("10.0.0.0",DestinationIP,8) or ipv4_is_match("172.16.0.0",DestinationIP,12) or ipv4_is_match("192.168.0.0",DestinationIP,16))
+|summarize starttime=min(TimeGenerated), endtime=max(TimeGenerated), IPlist=make_set(DestinationIP), SuccessCount=count(DeviceAction=="accept"), FailureCount=count(DeviceAction=="deny"), DPc=dcount(DestinationIP) by SourceIP
+| where FailureCount>50 and SuccessCount>0 and DPc>25

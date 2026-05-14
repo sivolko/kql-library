@@ -1,0 +1,9 @@
+// Source: https://github.com/Pr0digal/kql-threat-hunting
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (4625)  // Failed logon
+| summarize FailedAttempts = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by Account, IpAddress
+| where FailedAttempts > 10 and LastSeen - FirstSeen < 10m
+| extend Tactic = "Credential Access", Technique = "Brute Force", TechniqueId = "T1110"

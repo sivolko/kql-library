@@ -1,0 +1,71 @@
+// Source: https://github.com/lenoshz/active-directory-security-lab
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4662
+| where ObjectType contains "domainDNS" or ObjectType contains "Domain-DNS"
+| where Properties has "Replicating Directory Changes" 
+    or Properties has "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"  // DS-Replication-Get-Changes
+    or Properties has "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"  // DS-Replication-Get-Changes-All
+    or Properties has "89e95b76-444d-4c62-991a-0facbeda640c"  // DS-Replication-Get-Changes-In-Filtered-Set
+| where SubjectUserName !endswith "$"  // Exclude machine accounts (legitimate DC replication)
+| project 
+    TimeGenerated,
+    SubjectUserName,
+    SubjectDomainName,
+    ObjectName,
+    Properties,
+    OperationType
+| extend AlertDescription = strcat("Potential DCSync attack: ", SubjectUserName, " requested directory replication rights")
+| extend AlertSeverity = "Critical"
+
+// Alternative: Monitor for any replication requests
+/*
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4662
+| where Properties has "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2" 
+    or Properties has "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+| project TimeGenerated, SubjectUserName, SubjectDomainName, ObjectName, Properties
+| summarize Count = count() by SubjectUserName, SubjectDomainName
+| order by Count desc
+*/
+
+// Track replication with source context
+/*
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4662
+| where Properties has "Replicating Directory Changes"
+| extend 
+    IsMachineAccount = SubjectUserName endswith "$",
+    AccountType = iff(SubjectUserName endswith "$", "Machine", "User")
+| summarize 
+    ReplicationRequests = count(),
+    UniqueObjects = dcount(ObjectName)
+  by SubjectUserName, AccountType, bin(TimeGenerated, 1h)
+| where AccountType == "User" and ReplicationRequests >= 1
+| extend 
+    AlertSeverity = "Critical",
+    AlertDescription = strcat("DCSync detected from user account: ", SubjectUserName)
+*/
+
+// Correlation with successful privilege usage
+/*
+let DCSync = SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4662
+| where Properties has "Replicating Directory Changes"
+| where SubjectUserName !endswith "$";
+
+let PrivilegeUse = SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4672
+| where SubjectUserName !endswith "$";
+
+DCSync
+| join kind=inner PrivilegeUse on SubjectUserName
+| project TimeGenerated, SubjectUserName, DCSyncEvent = Properties, PrivilegeEvent = PrivilegeList
+*/

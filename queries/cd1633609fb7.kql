@@ -1,0 +1,27 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| where TimeGenerated > ago (30d)
+| where LogonType == "LDAP cleartext"
+| summarize
+    ['Total connection count']=count(),
+    ['Distinct destination device count']=dcount(DestinationDeviceName),
+    ['List of destination devices']=make_set(DestinationDeviceName)
+    by AccountUpn
+| sort by ['Distinct destination device count'] desc 
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting license
+
+IdentityLogonEvents
+| where Timestamp > ago (30d)
+| where LogonType == "LDAP cleartext"
+| summarize
+    ['Total connection count']=count(),
+    ['Distinct destination device count']=dcount(DestinationDeviceName),
+    ['List of destination devices']=make_set(DestinationDeviceName)
+    by AccountUpn
+| sort by ['Distinct destination device count'] desc 

@@ -1,0 +1,27 @@
+// Source: https://github.com/Cybersec120/azure-soc-lab
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TamperCommands = dynamic([
+    "sc stop WinDefend",
+    "sc config WinDefend start=disabled",
+    "net stop WinDefend",
+    "Set-MpPreference -DisableRealtimeMonitoring",
+    "Set-MpPreference -DisableBehaviorMonitoring",
+    "Set-MpPreference -DisableIOAVProtection",
+    "DisableAntiSpyware",
+    "taskkill /IM MsMpEng.exe",
+    "sc stop Sense",
+    "sc config Sense start=disabled"
+]);
+SecurityEvent
+| where EventID == 4688
+| where CommandLine has_any (TamperCommands)
+| project
+    TimeGenerated,
+    Computer,
+    Account,
+    Process,
+    CommandLine,
+    ParentProcess = ParentProcessName
+| sort by TimeGenerated desc

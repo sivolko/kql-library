@@ -1,0 +1,9 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where DeviceVendor == "pfSense" or SourceSystem == "SecurityEvents"
+| where Message has "block" and SourceIP startswith "10.20."
+| summarize count() by SourceIP, DestinationIP, DestinationPort, bin(TimeGenerated, 15m)
+| order by TimeGenerated desc

@@ -1,0 +1,14 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType in ("OpenProcessApiCall", "ReadProcessMemoryApiCall", "ProcessPrimaryTokenModified")
+| where FileName has ("lsass.exe")
+| where InitiatingProcessVersionInfoInternalFileName contains @"mimikatz"
+| summarize DetectionCount = count(), 
+            FirstTimeDetected = min(Timestamp), 
+            LastTimeDetected = max(Timestamp) 
+  by DeviceName, InitiatingProcessFileName
+| project DeviceName, InitiatingProcessFileName, DetectionCount, FirstTimeDetected, LastTimeDetected 
+| order by FirstTimeDetected desc

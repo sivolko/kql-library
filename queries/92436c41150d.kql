@@ -1,0 +1,11 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let user = "changeme";
+IdentityLogonEvents 
+| where ActionType == "LogonFailed"
+| where Application == "Active Directory"
+| where AccountName has (user)
+| extend TargetOS = tostring(parse_json(AdditionalFields.TargetComputerOperatingSystem))
+| project AccountDisplayName,AccountName, AccountDomain, AccountUpn, ActionType, FailureReason,TargetDeviceName,TargetOS, DeviceName

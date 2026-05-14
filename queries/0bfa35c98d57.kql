@@ -1,0 +1,314 @@
+// Source: https://github.com/Jhope188/SecureCloudKQL
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+## AVD Troubleshoot
+https://learn.microsoft.com/en-us/azure/virtual-desktop/troubleshoot-agent
+https://learn.microsoft.com/en-us/azure/virtual-desktop/required-fqdn-endpoint?tabs=azure
+
+```
+Event
+| where EventID == 3019
+| where Source == "Application"
+| where TimeGenerated >= ago(7d) //update this to more reasonable time frame. This was bc the alert occured a week ago
+| project TimeGenerated, EventData, Computer
+
+```
+
+
+
+## BreakGlass account Monitor
+
+// checking for Globaladmin account in logs for unusual activity
+//User for ACME-GlobalAdmin-Alert in monitoring code
+
+```
+SigninLogs
+| where UserPrincipalName contains "globaladmin" //replace with the breakglass account username
+| where tostring(LocationDetails.countryOrRegion) !in ("US")
+| project TimeGenerated, UserPrincipalName, IPAddress, countryOrRegion = tostring(LocationDetails.countryOrRegion)
+```
+
+
+
+## Azure Policy Montior
+//Change to Query Rules and monitoring
+
+AzureActivity
+| where parse_json(Properties).message == "microsoft.insights/scheduledqueryrules/write"
+| extend requestBody = parse_json(tostring(Properties_d.requestbody))
+| where parse_json(tostring(requestBody.properties)).enabled == false
+| extend resource = todynamic(Properties).resource
+| project TimeGenerated, ResourceGroup, _ResourceId, Caller, CallerIpAddress, OperationNameValue, resource
+
+## Resource Lock deleted
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.AUTHORIZATION/LOCKS/DELETE"
+| where ActivityStatusValue == "Start"
+| project OperationNameValue , ResourceGroup, Caller, CallerIpAddress
+
+
+
+## Disk Space Exclusion
+
+InsightsMetrics
+| where TimeGenerated >= ago(1h) // choose time to observe 
+| where Origin == "vm.azm.ms"
+| where Namespace == "LogicalDisk" and Name == "FreeSpacePercentage"
+| where Val <= 10
+| extend Disk=tostring(todynamic(Tags)["vm.azm.ms/mountId"])
+| where Disk !in ("H:", "X:")
+| summarize AggregatedValue = avg(Val) by bin(TimeGenerated, 15m), Computer, _ResourceId, Disk
+
+
+
+## Enterpise App Registered
+
+AuditLogs
+| where TimeGenerated > ago(24h)
+| where OperationName == "Add application" or OperationName == "Add service principal"
+| where InitiatedBy.app.displayName != "Managed Service Identity"
+| mv-expand TargetResources
+| project TimeGenerated, OperationName, InitiatedByPrincipalType = tostring(bag_keys(InitiatedBy)[0]), InitiatedBy, AppName = tostring(TargetResources.displayName), ObjectId = TargetResources.id, TargetResources.modifiedProperties
+| mv-apply TR_mP = TargetResources_modifiedProperties on (summarize AppId = parse_json(tostring(take_anyif(TR_mP.newValue, TR_mP.displayName == "AppId" or TR_mP.displayName == "AppPrincipalId")))[0])
+| project TimeGenerated, OperationName, InitiatedByPrincipalType, InitiatedBy, AppName, ObjectId, AppId
+| sort by TimeGenerated desc
+
+
+
+## Detect Service-less pricipals (No Ent app registered)
+// https://learn.microsoft.com/en-us/entra/identity-platform/retire-service-principal-less-authentication
+
+AADServicePrincipalSignInLogs
+| where TimeGenerated > ago(30d)
+| where ServicePrincipalId == "00000000-0000-0000-0000-000000000000"
+| extend Result = iff(ResultSignature == "None" or ResultSignature == "FAILURE", "Failure", "Success")
+| summarize Count=count() by ServicePrincipalName, AppId, ResourceDisplayName, Result
+
+
+##Application Consent monitor
+
+AuditLogs
+| where ActivityDisplayName == "Consent to application"
+| where TimeGenerated >= ago(90d)
+| extend TargetResources = todynamic(TargetResources)
+| mv-expand TargetResources
+| project TimeGenerated, OperationName, InitiatedByPrincipalType = tostring(bag_keys(InitiatedBy)[0]), InitiatedBy, AppName = tostring(TargetResources.displayName), ObjectId = TargetResources.id, TargetResources.modifiedProperties
+| mv-apply TR_mP = TargetResources_modifiedProperties on (summarize AppId = parse_json(tostring(take_anyif(TR_mP.newValue, TR_mP.displayName == "AppId" or TR_mP.displayName == "AppPrincipalId")))[0])
+| project TimeGenerated, OperationName, InitiatedByPrincipalType, InitiatedBy, AppName, ObjectId, AppId
+| sort by TimeGenerated desc
+
+
+#Monitor for Relay accounts
+
+SigninLogs
+| where UserPrincipalName == "relay@acme.com"
+| extend authMethod = tostring(parse_json(AuthenticationDetails)[0].authenticationMethod)
+| where isnotempty(authMethod)  // This filters only authentications that required some method (interactive)
+| where TimeGenerated > ago(7d)
+| project TimeGenerated, UserPrincipalName, IPAddress, authMethod, AppDisplayName, ClientAppUsed, ConditionalAccessStatus, Status
+| order by TimeGenerated desc
+
+
+
+#Admin Operations:
+//Aligns to Policy /providers/Microsoft.Authorization/policyDefinitions/b954148f-4c11-4c38-8221-be76711e194a(45 CFR § 164.312(b) – Audit Controls<br>45 CFR § 164.308(a)(1)(ii)(D) – Information System Activity Review)
+
+Consolidated the alert rule
+AzureActivity
+| where TimeGenerated > ago(5m)
+| where CategoryValue == "Administrative"
+| extend OperationNameUpper = toupper(OperationNameValue)
+| where OperationNameUpper in (
+    "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE",
+    "MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS/WRITE",
+    "MICROSOFT.RESOURCES/SUBSCRIPTIONS/RESOURCEGROUPS/WRITE",
+    "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/WRITE",
+    "MICROSOFT.COMPUTE/VIRTUALMACHINES/DELETE"
+)
+| summarize FirstSeen = min(TimeGenerated), Count = count() by OperationNameUpper
+| order by FirstSeen desc
+
+
+#Relay account check:
+
+SigninLogs
+| where UserPrincipalName == "relay@acme.com"
+| extend authMethod = tostring(parse_json(AuthenticationDetails)[0].authenticationMethod)
+| where isnotempty(authMethod)  // This filters only authentications that required some method (interactive)
+| where TimeGenerated > ago(7d)
+| project TimeGenerated, UserPrincipalName, IPAddress, authMethod, AppDisplayName, ClientAppUsed, ConditionalAccessStatus, Status
+| order by TimeGenerated desc
+
+
+#Unpack:
+
+https://learn.microsoft.com/en-us/kusto/query/bag-unpack-plugin?view=microsoft-fabric
+
+AuditLogs
+| where ActivityDisplayName == "Consent to application"
+| where TimeGenerated >= ago(90d)
+| extend InitiatedByUser = tostring(parse_json(InitiatedBy).user.userPrincipalName)
+| extend TargetResourcesDetail = todynamic(TargetResources)
+| evaluate bag_unpack(TargetResourcesDetail, 'TR_')
+// | project ActivityDisplayName, TargetResources, TimeGenerated, InitiatedByUser, 
+
+
+Disk Space troubleshooting
+//30days of disk growth for server
+let targetVM = "ACME-AHS-SQL01";
+InsightsMetrics
+| where TimeGenerated >= ago(30d)
+| where Origin == "vm.azm.ms"
+| where Namespace == "LogicalDisk" and Name == "FreeSpacePercentage"
+| extend Disk = tostring(todynamic(Tags)["vm.azm.ms/mountId"])
+| where Computer has targetVM
+| summarize 
+    LatestVal = arg_max(TimeGenerated, Val) 
+    by bin(TimeGenerated, 1d), Computer, Disk
+| project Date = TimeGenerated, Computer, Disk, FreeSpacePercent = Val
+| order by Date asc, Disk
+
+//30 day with Render of time chart for each disk
+let targetVM = "ACME-AHS-SQL01";
+InsightsMetrics
+| where TimeGenerated >= ago(30d)
+| where Origin == "vm.azm.ms"
+| where Namespace == "LogicalDisk" and Name == "FreeSpacePercentage"
+| extend Disk = tostring(todynamic(Tags)["vm.azm.ms/mountId"])
+| where Computer has targetVM
+| summarize 
+    FreeSpacePercent = max(Val) by bin(TimeGenerated, 1d), Disk
+| order by TimeGenerated asc, Disk
+| render timechart
+
+
+
+// Logical disk space % below threshold. 
+let _minValue = 15; // Set the minValue according to your needs
+InsightsMetrics
+| where TimeGenerated >= ago(1h)
+| where Origin == "vm.azm.ms"
+| where Namespace == "LogicalDisk" and Name == "FreeSpacePercentage"
+| where Val <= _minValue
+| extend Disk = tostring(todynamic(Tags)["vm.azm.ms/mountId"])
+| summarize LatestVal = arg_min(TimeGenerated, Val) by Computer, _ResourceId, Disk
+
+//ACME-VM-Disk-Freespace
+
+let _minValue = 10;
+InsightsMetrics
+| where TimeGenerated >= ago(4h)
+| where Origin == "vm.azm.ms"
+| where Namespace == "LogicalDisk" and Name == "FreeSpacePercentage"
+| where Val <= _minValue
+| extend Disk = tostring(todynamic(Tags)["vm.azm.ms/mountId"])
+| where Disk !in ("H:", "X:")
+| where not (Computer startswith ‘ACME-RDSHD’ and Disk == "E:")
+| summarize AggregatedValue = avg(Val) by bin(TimeGenerated, 15m), Computer, _ResourceId, Disk
+
+
+
+
+//Extract XML data from a table and include two servers for potential data points
+Event
+| where TimeGenerated > ago(1h)
+| where EventLog == "Security"
+| where Computer has "ACME-AZE-DC01" or Computer has "ACME-AZE-DC02"
+| where EventID == 4728
+| where RenderedDescription has "Domain Admins"
+| where RenderedDescription !contains "_jit"
+| extend MemberName = extract(@"<Data Name=""MemberName"">(.*?)<\/Data>", 1, EventData),
+         SubjectUserName = extract(@"<Data Name=""SubjectUserName"">(.*?)<\/Data>", 1, EventData)
+| project TimeGenerated, Computer, SubjectUserName, MemberName, EventData
+
+
+
+
+
+
+//Risky Users alerting:
+//Summarizes Risky events by User, Risktype and Risklevel looking to exclude safedetails
+
+```
+let lookback = 1d;
+let safeDetails = dynamic(["aiConfirmedSigninSafe","userConfirmedSigninSafe","adminDismissedAllRiskForUser"]);
+AADUserRiskEvents
+| where TimeGenerated >= ago(lookback)
+| where RiskLevel in ("medium","high")
+| where RiskDetail !in (safeDetails)
+| summarize Count = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+          by UserPrincipalName, RiskEventType, RiskLevel
+| order by Count desc
+| extend AccountCustomEntity = UserPrincipalName
+```
+
+//Advanced Risky User
+//Excludes safe details but does a check in a 10 min window to see if MS Automation picks up the event as safe with aiconfirmedSignInSafe or admin approves 
+
+```
+// Alert only when NO safe-confirmation occurs within <window> after the risky event
+let lookback = 24h;          // how far back the rule scans
+let window   = 10m;          // grace period to wait for "safe" confirmation
+let safeDetails = dynamic(["aiConfirmedSigninSafe","userConfirmedSigninSafe","adminDismissedAllRiskForUser"]);
+
+// 1) Risky events to evaluate
+let risky =
+    AADUserRiskEvents
+    | where TimeGenerated >= ago(lookback)
+    | where RiskLevel in ("medium","high")
+    // optional: target a specific detection category
+    // | where RiskEventType =~ "anonymizedIPAddress"
+    | project UserPrincipalName, RiskEventType, RiskLevel,
+              RiskyTime = TimeGenerated;
+
+// 2) Any subsequent 'safe' outcomes
+let safes =
+    AADUserRiskEvents
+    | where TimeGenerated >= ago(lookback)
+    | where RiskDetail in (safeDetails)
+    | project UserPrincipalName, RiskEventType, SafeTime = TimeGenerated;
+
+// 3) Keep only risky events that DO NOT have a safe within the window after RiskyTime
+risky
+| join kind=leftouter safes on UserPrincipalName, RiskEventType
+| extend SafeWithinWindow = iif(isnotempty(SafeTime) and (SafeTime between (RiskyTime .. RiskyTime + window)), true, false)
+| summarize AnySafeWithinWindow = any(SafeWithinWindow),
+            Count = count(),
+            FirstSeen = min(RiskyTime),
+            LastSeen  = max(RiskyTime)
+          by UserPrincipalName, RiskEventType, RiskLevel
+| where AnySafeWithinWindow == false
+| order by Count desc
+| extend AccountCustomEntity = UserPrincipalName
+```
+
+
+let lookback = 1d;
+let BadIPs = dynamic(["216.173.112.176","198.23.157.26","198.23.255.194"]);
+let VAStates = dynamic(["virginia","va"]);
+
+SigninLogs
+| where TimeGenerated >= ago(lookback)
+| extend Country = tostring(LocationDetails.countryOrRegion),
+         StateLC  = tolower(tostring(LocationDetails.state))
+| where (ResultType == 0 and not(Country == "US" and StateLC in (VAStates)))
+   or IPAddress in (BadIPs)
+| extend Reason = case(
+        IPAddress in (BadIPs), "BadIP",
+        ResultType == 0,       "SuccessfulOutsideVirginia",
+        "Other")
+| summarize Events=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated)
+          by UserPrincipalName, Reason, StateLC, IPAddress
+| order by Events desc
+
+//Troubleshot the Sign In for affected user:
+
+let lookback = 7d;
+let BadIPs = dynamic(["216.173.112.176","198.23.157.26","198.23.255.194"]);
+let VAStates = dynamic(["virginia","va"]);
+
+SigninLogs
+|where TimeGenerated >= ago(lookback)
+|where UserPrincipalName == "acme@compromiseddomain.com"

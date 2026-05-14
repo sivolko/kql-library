@@ -1,0 +1,15 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe=30m;
+let threshold=10;
+OfficeActivity
+| where TimeGenerated > ago(1d)
+| where Operation in ("SecureLinkCreated", "AddedToSecureLink")
+| where TargetUserOrGroupType == "Guest" or TargetUserOrGroupName contains "#EXT#"
+| summarize
+    ['File Share Count']=dcount(OfficeObjectId),
+    ['List of Files']=make_set(OfficeObjectId)
+    by UserId, bin(TimeGenerated, timeframe)
+| where ['File Share Count'] >= threshold

@@ -1,0 +1,9 @@
+// Source: https://github.com/rod-trent/OpenAISecurity
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where OperationName == "Add service principal"
+
+AuditLogs
+| where OperationName == "Hard delete service principal"

@@ -1,0 +1,341 @@
+// Source: https://github.com/beathunterzero/cyber-threat-hunting-lab-logs
+// Collected: 2026-05-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID in (4720, 4722)
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    SubjectUserName,
+    TargetUserName,
+    Account
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 02 - Actividad asociada a svc_backup_new
+// Propósito:
+// Reconstruir actividad donde svc_backup_new aparece como cuenta afectada,
+// actor o cuenta utilizada.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where TargetUserName =~ "svc_backup_new"
+    or SubjectUserName =~ "svc_backup_new"
+    or Account has "svc_backup_new"
+    or MemberName has "svc_backup_new"
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    SubjectUserName,
+    TargetUserName,
+    Account,
+    MemberName,
+    GroupName,
+    LogonType,
+    IpAddress,
+    WorkstationName,
+    CommandLine
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 03 - Actividad asociada a helpdesk_temp
+// Propósito:
+// Reconstruir actividad donde helpdesk_temp aparece como cuenta afectada,
+// actor o cuenta utilizada.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where TargetUserName =~ "helpdesk_temp"
+    or SubjectUserName =~ "helpdesk_temp"
+    or Account has "helpdesk_temp"
+    or MemberName has "helpdesk_temp"
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    SubjectUserName,
+    TargetUserName,
+    Account,
+    MemberName,
+    GroupName,
+    LogonType,
+    IpAddress,
+    WorkstationName,
+    CommandLine
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 04 - Adición de cuentas al grupo local Administrators
+// Propósito:
+// Identificar cuentas agregadas a grupos locales privilegiados,
+// especialmente Administrators.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 4732
+| where GroupName =~ "Administrators"
+    or Activity has "Administrators"
+    or TargetUserName has_any ("svc_backup_new", "helpdesk_temp")
+    or MemberName has_any ("svc_backup_new", "helpdesk_temp")
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    SubjectUserName,
+    TargetUserName,
+    MemberName,
+    GroupName,
+    Account
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 05 - Uso de net.exe para manipulación de cuentas locales
+// Propósito:
+// Identificar ejecución de net.exe asociada a creación de usuarios
+// o modificación de grupos locales.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 4688
+| where NewProcessName endswith @"\net.exe"
+    or Process =~ "net.exe"
+    or CommandLine has "net user"
+    or CommandLine has "net localgroup"
+| where CommandLine has "/add"
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    SubjectUserName,
+    Account,
+    NewProcessName,
+    Process,
+    CommandLine,
+    ParentProcessName
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 06 - Inicio de sesión exitoso con Logon Type 3
+// Propósito:
+// Identificar autenticaciones de red asociadas a cuentas creadas
+// o manipuladas durante la ventana de análisis.
+// 
+// Nota:
+// Logon Type 3 indica autenticación de red.
+// No confirma por sí solo movimiento lateral.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 4624
+| where LogonType == 3
+| where TargetUserName has_any ("svc_backup_new", "helpdesk_temp")
+    or Account has_any ("svc_backup_new", "helpdesk_temp")
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    TargetUserName,
+    Account,
+    LogonType,
+    IpAddress,
+    WorkstationName,
+    LogonProcessName,
+    AuthenticationPackageName
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 07 - Uso de credenciales explícitas
+// Propósito:
+// Identificar eventos donde se utilizaron credenciales explícitas
+// para cuentas creadas o manipuladas durante la investigación.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 4648
+| where TargetUserName has_any ("svc_backup_new", "helpdesk_temp")
+    or Account has_any ("svc_backup_new", "helpdesk_temp")
+    or SubjectUserName has_any ("svc_backup_new", "helpdesk_temp")
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    SubjectUserName,
+    TargetUserName,
+    Account,
+    IpAddress,
+    WorkstationName,
+    ProcessName
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 08 - Inicios de sesión fallidos contra cuentas involucradas
+// Propósito:
+// Identificar intentos fallidos de autenticación contra cuentas
+// creadas o manipuladas durante la ventana de análisis.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 4625
+| where TargetUserName has_any ("svc_backup_new", "helpdesk_temp")
+    or Account has_any ("svc_backup_new", "helpdesk_temp")
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    TargetUserName,
+    Account,
+    LogonType,
+    IpAddress,
+    WorkstationName,
+    FailureReason,
+    Status,
+    SubStatus
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 09 - Reconstrucción completa de timeline
+// Propósito:
+// Reconstruir la secuencia de eventos relevantes asociados a creación,
+// habilitación, elevación, ejecución de comandos, autenticación y uso
+// de credenciales.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID in (4720, 4722, 4732, 4688, 4624, 4648, 4625)
+| where TargetUserName has_any ("svc_backup_new", "helpdesk_temp")
+    or SubjectUserName has_any ("svc_backup_new", "helpdesk_temp", "administrator")
+    or Account has_any ("svc_backup_new", "helpdesk_temp", "administrator")
+    or MemberName has_any ("svc_backup_new", "helpdesk_temp")
+    or CommandLine has_any ("svc_backup_new", "helpdesk_temp", "net user", "net localgroup")
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    SubjectUserName,
+    TargetUserName,
+    Account,
+    MemberName,
+    GroupName,
+    LogonType,
+    IpAddress,
+    WorkstationName,
+    NewProcessName,
+    Process,
+    CommandLine
+| order by TimeGenerated asc;
+
+// --------------------------------------------------
+// Query 10 - Correlación de cuenta creada, elevada y usada posteriormente
+// Propósito:
+// Identificar cuentas locales creadas, agregadas a un grupo privilegiado
+// y utilizadas posteriormente para autenticación o uso de credenciales.
+// 
+// Uso recomendado:
+// Hunting correlacionado.
+// Requiere validación antes de convertir en regla SOC.
+// --------------------------------------------------
+let StartTime = datetime(2026-04-08T18:00:00Z);
+
+let EndTime = datetime(2026-04-09T09:00:00Z);
+
+let CreatedAccounts =
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 4720
+| project
+    CreatedTime = TimeGenerated,
+    Computer,
+    CreatedAccount = TargetUserName,
+    CreatorAccount = SubjectUserName;
+let PrivilegedAccounts =
+    SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 4732
+| where GroupName =~ "Administrators"
+    or Activity has "Administrators"
+| project
+    PrivilegeTime = TimeGenerated,
+    Computer,
+    PrivilegedAccount = coalesce(TargetUserName, MemberName),
+    PrivilegeActor = SubjectUserName,
+    GroupName;
+let AccountUsage =
+    SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID in (4624, 4648, 4625)
+| project
+    UsageTime = TimeGenerated,
+    Computer,
+    EventID,
+    Activity,
+    UsedAccount = TargetUserName,
+    Account,
+    LogonType,
+    IpAddress,
+    WorkstationName;
+    CreatedAccounts
+| join kind = inner (
+    PrivilegedAccounts
+    ) on Computer
+| where PrivilegedAccount has CreatedAccount
+    or CreatedAccount has PrivilegedAccount
+| join kind = leftouter (
+    AccountUsage
+    ) on Computer
+| where UsedAccount has CreatedAccount
+    or Account has CreatedAccount
+| project
+    CreatedTime,
+    PrivilegeTime,
+    UsageTime,
+    Computer,
+    CreatedAccount,
+    CreatorAccount,
+    PrivilegeActor,
+    GroupName,
+    EventID,
+    Activity,
+    LogonType,
+    IpAddress,
+    WorkstationName
+| order by CreatedTime asc, PrivilegeTime asc, UsageTime asc;
