@@ -1,0 +1,12 @@
+// Source: https://github.com/kyhomelab/azure-sentinel-honeypot
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| where TimeGenerated > ago(10m) // specific short timeframe for alerting
+| where isnotempty(IpAddress)
+// Simple aggregation to minimize API load
+| summarize FailedCount = count() by IpAddress
+// Threshold for Alerting (more than 5 failures in 10 mins)
+| where FailedCount > 5

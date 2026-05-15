@@ -1,0 +1,24 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "CredentialsBackup"
+| project
+    TimeGenerated,
+    DeviceName,
+    InitiatingProcessAccountName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessFolderPath
+
+//Advanced Hunting query
+DeviceEvents
+| where ActionType == "CredentialsBackup"
+| project
+    Timestamp,
+    DeviceName,
+    InitiatingProcessAccountName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessFolderPath

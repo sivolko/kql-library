@@ -1,0 +1,8 @@
+// Source: https://github.com/vboyev-MSFT/MITRE-aligned-Advanced-Hunting-KQL-library-Windows-
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| where ActionType == "LogonFailed"
+| summarize Failures=count() by AccountUpn, DeviceName, bin(Timestamp, 5m)
+| where Failures >= 20

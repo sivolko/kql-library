@@ -1,0 +1,10 @@
+// Source: https://github.com/flattte/libKQL
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let startDateOfAlert = startofday(now());
+let StartAlertTime = startDateOfAlert + 1h;
+let StopAlertTime = startDateOfAlert + 4h;
+union SecurityEvent, SigninLogs, AADNonInteractiveUserSignInLogs
+| where TimeGenerated > StartAlertTime and TimeGenerated < StopAlertTime
+| where UserPrincipalName !contains "EmailHere"

@@ -1,0 +1,47 @@
+// Source: https://github.com/robert-iw3/rnd_proto
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 30m;
+let error_threshold = 50; // An attacker needs to send many messages. Tune based on environment specifics.
+
+// This rule assumes logs from an OPC UA-aware source (e.g., Zeek, specific vendor logs) are available.
+// The table and field names may need to be adjusted for your environment.
+union isfuzzy=true OpcUa*, Zeek*, CommonSecurityLog, DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+// Filter for events that indicate an OPC UA error. This is the most critical part for customization.
+| where (EventData has "error" or Message has "error" or EventResult =~ "Failure")
+    and (
+        // Look for generic OPC UA error indicators
+        EventData has_any ("Bad", "fail", "incorrect") or
+        Message has_any ("Bad", "fail", "incorrect") or
+        // Look for specific strings from research on padding oracles in OPC UA
+        Message has "block incorrect" or
+        Message has "BadUnexpectedError" or
+        Message has "Bad_InternalError"
+    )
+// FP Tuning: Exclude known misconfigured clients or legitimate testing activities.
+// For example: | where SrcIp !in ('10.1.1.1', '192.168.5.20')
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    ErrorCount = count(),
+    // Counting distinct error messages can be a stronger signal of probing for an error-based oracle.
+    // Adjust 'Message' to the field containing the detailed error string in your logs.
+    DistinctErrorMessages = dcountif(Message, isnotempty(Message))
+    by SrcIp, DstIp, DstHostname, bin(TimeGenerated, 5m)
+| where ErrorCount > error_threshold
+| extend
+    timestamp = StartTime,
+    HostName = DstHostname,
+    IPAddress = DstIp
+| project
+    timestamp,
+    StartTime,
+    EndTime,
+    IPAddress,
+    HostName,
+    SrcIp,
+    ErrorCount,
+    DistinctErrorMessages,
+    Description = "A high volume of OPC UA errors was detected from a single source, possibly indicating a padding oracle attack."

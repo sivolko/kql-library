@@ -1,0 +1,10 @@
+// Source: https://github.com/NourKhalil0/homelab-detection
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| where TimeGenerated > ago(5m)
+| summarize FailedAttempts = count(), Accounts = dcount(TargetAccount) by IpAddress, bin(TimeGenerated, 5m)
+| where FailedAttempts > 10 and Accounts > 3
+| order by FailedAttempts desc

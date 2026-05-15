@@ -1,0 +1,9 @@
+// Source: https://github.com/le0li9ht/Microsoft-Sentinel-Queries
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent 
+| where TimeGenerated > ago(90d) 
+| where EventID==4663 
+| where ObjectName contains "\\Microsoft\\Teams\\Cookies" or ObjectName contains "\\Microsoft\\Teams\\Local Storage\\leveldb" 
+| where ProcessName !contains "Teams.exe"

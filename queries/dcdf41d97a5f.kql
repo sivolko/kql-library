@@ -1,0 +1,177 @@
+// Source: https://github.com/Jhope188/SecureCloudKQL
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where parse_json(Properties).message == "microsoft.insights/scheduledqueryrules/write"
+| extend requestBody = parse_json(tostring(Properties_d.requestbody))
+| where parse_json(tostring(requestBody.properties)).enabled == false
+| project TimeGenerated, ResourceGroup, _ResourceId, Caller, OperationNameValue, ResourceName=tostring(split(_ResourceId, "/")[-1])
+
+
+AzureActivity
+| where parse_json(Properties).message == "microsoft.insights/scheduledqueryrules/write"
+| extend requestBody = parse_json(tostring(Properties_d.requestbody))
+| where parse_json(tostring(requestBody.properties)).enabled == false
+| extend resource = todynamic(Properties).resource
+| project TimeGenerated, ResourceGroup, _ResourceId, Caller, CallerIpAddress, OperationNameValue, resource
+
+
+
+
+```
+The | extend resource = todynamic(Properties).resource part of your query is used to parse and extract the resource field from the Properties JSON object. Here's a breakdown of what each part does:
+
+todynamic(Properties): This function converts the Properties field, which is a JSON string, into a dynamic (JSON) object.
+.resource: This accesses the resource field within the dynamic object created from the Properties JSON.
+By using extend, you create a new column called resource that contains the value of the resource field from the Properties JSON object.
+
+So, this line effectively extracts the resource field from the Properties JSON and makes it available as a separate column in your query results.
+
+If you have any more questions or need further clarification, feel free to ask!
+```
+
+
+//Monitor for Policy being deleted or Unassigned
+
+AzureActivity
+| where OperationNameValue has_any ("policyassignments/delete", "policydefinitions/delete", "policysetdefinitions/delete")
+| extend props = todynamic(Properties)
+| extend responseBodyRaw = tostring(props.responseBody)                          // ✅ Corrected casing
+| extend responseBody = todynamic(responseBodyRaw)
+| extend nestedProps = todynamic(responseBody.properties)
+| extend DisplayName = tostring(nestedProps.displayName)
+| extend PolicyType = case(
+    OperationNameValue has "policyassignments/delete", "Policy Assignment",
+    OperationNameValue has "policydefinitions/delete", "Policy Definition",
+    OperationNameValue has "policysetdefinitions/delete", "Policy Set Definition",
+    "Other"
+)
+| project TimeGenerated, PolicyType, DisplayName, OperationNameValue, ResourceGroup, _ResourceId, Caller, CallerIpAddress
+
+
+//This is how to coalesce if you need two fields to be output to the same table name
+
+AzureActivity
+| where OperationNameValue has_any ("policyassignments/delete", "policydefinitions/delete", "policysetdefinitions/delete")
+| extend props = todynamic(Properties)
+| extend responseBodyRaw = tostring(props.responseBody)
+| extend responseBody = todynamic(responseBodyRaw)
+| extend nestedProps = todynamic(responseBody.properties)
+| extend DisplayName = coalesce(
+    tostring(nestedProps.displayName),           // Preferred: displayName
+    tostring(responseBody.name)                  // Fallback: name
+)
+| extend PolicyType = case(
+    OperationNameValue has "policyassignments/delete", "Policy Assignment",
+    OperationNameValue has "policydefinitions/delete", "Policy Definition",
+    OperationNameValue has "policysetdefinitions/delete", "Policy Set Definition",
+    "Other"
+)
+| project TimeGenerated, PolicyType, DisplayName, OperationNameValue, ResourceGroup, _ResourceId, Caller, CallerIpAddress
+
+
+
+Admin Operations:
+
+//Aligns to Policy /providers/Microsoft.Authorization/policyDefinitions/b954148f-4c11-4c38-8221-be76711e194a(45 CFR § 164.312(b) – Audit Controls<br>45 CFR § 164.308(a)(1)(ii)(D) – Information System Activity Review)
+
+
+
+AzureActivity
+| where TimeGenerated > ago(15m)
+| where CategoryValue == "Administrative"
+| extend OperationNameUpper = toupper(OperationNameValue)
+| where OperationNameUpper in (
+    "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE",
+    "MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS/WRITE",
+    "MICROSOFT.RESOURCES/SUBSCRIPTIONS/RESOURCEGROUPS/WRITE",
+    "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/WRITE",
+    "MICROSOFT.COMPUTE/VIRTUALMACHINES/DELETE",
+    "MICROSOFT.COMPUTE/VIRTUALMACHINES/WRITE"
+)
+| project TimeGenerated, OperationNameValue, ActivityStatusValue, Caller, ResourceGroup, ResourceId, SubscriptionId
+
+
+
+
+Consolidated the alert rule
+AzureActivity
+| where TimeGenerated > ago(5m)
+| where CategoryValue == "Administrative"
+| extend OperationNameUpper = toupper(OperationNameValue)
+| where OperationNameUpper in (
+    "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE",
+    "MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS/WRITE",
+    "MICROSOFT.RESOURCES/SUBSCRIPTIONS/RESOURCEGROUPS/WRITE",
+    "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/WRITE",
+    "MICROSOFT.COMPUTE/VIRTUALMACHINES/DELETE"
+)
+| summarize FirstSeen = min(TimeGenerated), Count = count() by OperationNameUpper
+| order by FirstSeen desc
+
+
+
+
+
+//Risky Users alerting:
+//Summarizes Risky events by User, Risktype and Risklevel looking to exclude safedetails
+
+```
+let lookback = 1d;
+let safeDetails = dynamic(["aiConfirmedSigninSafe","userConfirmedSigninSafe","adminDismissedAllRiskForUser"]);
+AADUserRiskEvents
+| where TimeGenerated >= ago(lookback)
+| where RiskLevel in ("medium","high")
+| where RiskDetail !in (safeDetails)
+| summarize Count = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+          by UserPrincipalName, RiskEventType, RiskLevel
+| order by Count desc
+| extend AccountCustomEntity = UserPrincipalName
+```
+
+//Advanced Risky User
+//Excludes safe details but does a check in a 10 min window to see if MS Automation picks up the event as safe with aiconfirmedSignInSafe or admin approves 
+
+```
+// Alert only when NO safe-confirmation occurs within <window> after the risky event
+let lookback = 24h;          // how far back the rule scans
+let window   = 10m;          // grace period to wait for "safe" confirmation
+let safeDetails = dynamic(["aiConfirmedSigninSafe","userConfirmedSigninSafe","adminDismissedAllRiskForUser"]);
+
+// 1) Risky events to evaluate
+let risky =
+    AADUserRiskEvents
+    | where TimeGenerated >= ago(lookback)
+    | where RiskLevel in ("medium","high")
+    // optional: target a specific detection category
+    // | where RiskEventType =~ "anonymizedIPAddress"
+    | project UserPrincipalName, RiskEventType, RiskLevel,
+              RiskyTime = TimeGenerated;
+
+// 2) Any subsequent 'safe' outcomes
+let safes =
+    AADUserRiskEvents
+    | where TimeGenerated >= ago(lookback)
+    | where RiskDetail in (safeDetails)
+    | project UserPrincipalName, RiskEventType, SafeTime = TimeGenerated;
+
+// 3) Keep only risky events that DO NOT have a safe within the window after RiskyTime
+risky
+| join kind=leftouter safes on UserPrincipalName, RiskEventType
+| extend SafeWithinWindow = iif(isnotempty(SafeTime) and (SafeTime between (RiskyTime .. RiskyTime + window)), true, false)
+| summarize AnySafeWithinWindow = any(SafeWithinWindow),
+            Count = count(),
+            FirstSeen = min(RiskyTime),
+            LastSeen  = max(RiskyTime)
+          by UserPrincipalName, RiskEventType, RiskLevel
+| where AnySafeWithinWindow == false
+| order by Count desc
+| extend AccountCustomEntity = UserPrincipalName
+```
+
+
+
+
+
+

@@ -1,0 +1,45 @@
+// Source: https://github.com/romicgd/Sentinel
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback_period = 5d;
+let subscription_to_exclude = dynamic([
+    '/subscriptions/xxx'
+]);
+
+// Need use custom tables for Sentinel Analytics as they do  not atm support resourceGraph
+AzureVmTargetState_CL
+| where targetState_s != 'shutdown'
+    | join (AzureManagementGroupSubscription_CL
+        | where DirectGroup_s contains "HighSensitivity" or RootGroup_s contains "HighSensitivity")
+        on SubscriptionId
+    | project targetState_s, id = tolower(id_s) |
+join (SecurityEvent
+    | where TimeGenerated > now() - lookback_period
+    | where not (_ResourceId has_any (subscription_to_exclude))
+    | where not (
+                dayofweek(TimeGenerated) == 5  // Friday
+        and 1 + floor((dayofmonth(TimeGenerated) - 1) / 7.0, 1) in (3)  // e.g. 4th Friday
+        and hourofday(TimeGenerated) >= 4 and hourofday(TimeGenerated) < 10  // 1 AM to 3 AM UTC
+            )
+    | summarize lastLogTime=max(TimeGenerated) by Computer, _ResourceId
+    | where lastLogTime < now() - 1h
+    | extend id = tolower(_ResourceId)
+    ) on id
+| join kind = leftanti(SecurityAlert 
+| where AlertName == "Windows VM logs interrupted" 
+| extend Computer = tostring(parse_json(Entities)[0].["HostName"])
+| where TimeGenerated > ago(lookback_period)) on Computer
+
+
+// once day when Microsoft Sentinel supports resource graph (as Log Analytics alerady does) we can use this query to get VMs
+arg("").Resources
+    | where type == "microsoft.compute/virtualmachines"
+    | where tolower(id) matches regex @"resourcegroups/(.*)-your-filter-(.*)" and not (id startswith ("/subscriptions/xxx"))
+    | extend TargetState = tostring(tags["TargetState"])
+    | where TargetState != "shutdown"
+    | join (AzureManagementGroupSubscription_CL
+        | where DirectGroup_s contains "HighSensitivity" or RootGroup_s contains "HighSensitivity"
+        | extend subscriptionId = SubscriptionId)
+        on subscriptionId
+    | project TargetState, id = tolower(id)

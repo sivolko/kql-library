@@ -1,0 +1,18 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ResolvedErrorCodes = externaldata(Error: string, Description: string)['https://raw.githubusercontent.com/MorganCPatz/PSFunctions/main/EntraIDErrorCodes.json'] with (format='multijson');
+IdentityLogonEvents
+    | where Application != "Active Directory"
+    | where ActionType == "LogonFailed"
+    | where AccountUpn contains "<Account Naming Convention"
+    | extend IdentityLogonRequestId = tostring(AdditionalFields["Request ID"])
+    | project Timestamp,IdentityLogonRequestId, AccountUpn, FailureReason
+| join (AADSignInEventsBeta
+    | where LogonType == '["interactiveUser"]'
+    | extend ErrorCode = tostring(ErrorCode)
+    | project Timestamp, AccountDisplayName, DeviceName, IPAddress, RequestId, ErrorCode
+    | lookup ResolvedErrorCodes on $left.ErrorCode == $right.Error
+) on $left.IdentityLogonRequestId == $right.RequestId
+| project Timestamp, AccountDisplayName, AccountUpn, DeviceName, IPAddress, ErrorCode, FailureReason, Description

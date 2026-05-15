@@ -1,0 +1,11 @@
+// Source: https://github.com/EEN421/KQL-Queries
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent                                   //<-- Query the SecurityEvent table
+| where TimeGenerated > ago(1d)                 //<-- Query the last day
+| summarize GB=sum(_BilledSize)/1000/1000/1000  //<-- Organize results by GB
+
+//You can change the last line in the above query to the following if you’re a stickler for Gibibytes versus Gigabytes: 
+
+| summarize GB=sum(_BilledSize)/1024/1024/1024	

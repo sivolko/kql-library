@@ -1,0 +1,65 @@
+// Source: https://github.com/str4int/KQL-Repository
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated >= ago(1d)
+| where EventID == 4625
+| summarize FailedLogins=count() by Account
+| sort by FailedLogins desc
+
+
+// show all successful logins in the Azure portal
+SigninLogs
+| where AppDisplayName == "Azure Portal" and ResultType == 0
+
+
+// show all newly created users
+AuditLogs
+| where OperationName == "Add user"
+| extend userCreated = tostring(TargetResources.[0].["userPrincipalName"])
+| extend createbBy = tostring(InitiatedBy.["user"].["userPrincipalName"])
+| project TimeGenerated, userCreated, createbBy, Result
+
+
+// show all added and remove accounts
+AuditLogs
+| where TimeGenerated >= ago(48h)
+| where OperationName contains "Add user" or OperationName contains "delete user"
+| extend targetID = tostring(TargetResources.[0].["userPrincipalName"])
+| extend byWho = tostring(InitiatedBy.["user"].["userPrincipalName"])
+| project TimeGenerated, targetID, OperationName, Result, byWho
+
+
+// Get all login events that are not produced by NT Authority\System
+SecurityEvent
+| where EventID == "4624" and Account <> "NT AUTHORITY\\SYSTEM"
+
+
+// Detect interactive failure signin attempt on multiple or singleFactorAuthentication
+SigninLogs
+| where IsInteractive == true
+| mv-expand details = Status.["additionaDetails"]
+| mv-expand errorCode = Status.["errorCode"]
+//| mv-expand failure = Status.["failureReason"]
+| mv-expand city = LocationDetails.["city"]
+| mv-expand device = DeviceDetail.["displayName"]
+| mv-expand OS = DeviceDetail.["operaatingSystem"]
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| where AppDisplayName != "Microsoft Authentication Broker"
+| where errorCode != 0
+| project TimeGenerated,UserDisplayName, ResultDescription, AuthenticationRequirement, AppDisplayName, device, OS, Location, city, ConditionalAccessStatus
+| sort by TimeGenerated desc
+//| summarize count() by UserDisplayName
+//| sort by count_
+
+
+// check external invitation
+AuditLogs
+| where TimeGenerated >= ago(60d)
+| where OperationName == "Invite external user"
+| extend GuestUPN = tolower(tostring(TargetResources[0].userPrincipalName))
+| extend createdBy = tostring(InitiatedBy.["user"].["userPrincipalName"])
+| extend originalMail = tostring(AdditionalDetails[5].value)
+| where GuestUPN contains "****" //change user name to check
+| project TimeGenerated, createdBy, OperationName, GuestUPN, originalMail

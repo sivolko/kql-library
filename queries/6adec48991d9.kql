@@ -1,0 +1,14 @@
+// Source: https://github.com/egrzeszczak/kql
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(24h)
+| where ActionType in ('AsrObfuscatedScriptAudited', 'AsrObfuscatedScriptBlocked')
+| project ActionType, ReportId, Timestamp, DeviceId, DeviceName, SHA256, FileName, FolderPath, 
+    ProcessSHA256 = InitiatingProcessSHA256, 
+    ProcessName = InitiatingProcessFileName, 
+    SourceUser = InitiatingProcessAccountName, 
+    SourceUserId = InitiatingProcessAccountObjectId, 
+    SourceUserSid = InitiatingProcessAccountSid,
+    AdditionalFields

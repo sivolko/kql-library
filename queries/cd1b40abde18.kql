@@ -1,0 +1,16 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timerange=14d;
+IdentityInfo
+| where TimeGenerated > ago(21d)
+| summarize arg_max(TimeGenerated, *) by AccountUPN
+| where AssignedRoles has_any ("Global Administrator", "Exchange Administrator", "Teams Administrator", "SharePoint Administrator")
+| project UserId=AccountUPN
+| join kind=inner (
+    OfficeActivity
+    | where TimeGenerated > ago(timerange)
+    )
+    on UserId
+| summarize AdminActivities=make_list(Operation)by UserId, startofday(TimeGenerated)

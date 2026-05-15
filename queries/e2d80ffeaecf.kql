@@ -1,0 +1,11 @@
+// Source: https://github.com/AnthonyByansi/AZ-104_Microsoft-Azure-Administrator-Associate
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let resourceAccess = azureactivity
+    | where Resource == "<resource_id>"  // Replace <resource_id> with your actual resource ID
+    | where OperationName == "Access Resource"  // Filter by access operations
+    | project TimeGenerated, UserName, ResourceName, AccessType, Details;
+resourceAccess
+| order by TimeGenerated desc
+| limit 50  // Display the latest 50 resource access logs

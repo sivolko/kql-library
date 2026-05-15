@@ -1,0 +1,15 @@
+// Source: https://github.com/reversinglabs/reversinglabs-siem-rules
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4688
+| where Process == "rundll32.exe" and CommandLine matches regex @"C:\\Users\\.*\\AppData\\Roaming\\Microsoft\\Templates\\.*\.(dat|dll)"
+| union isfuzzy=true
+((DeviceProcessEvents
+| where FileName == "rundll32.exe" and ProcessCommandLine matches regex @"C:\\Users\\.*\\AppData\\Roaming\\Microsoft\\Templates\\.*\.(dat|dll)"
+),
+(SysmonParser
+| where EventID == 1
+| where Image == "rundll32.exe" and CommandLine matches regex @"C:\\Users\\.*\\AppData\\Roaming\\Microsoft\\Templates\\.*\.(dat|dll))
+)

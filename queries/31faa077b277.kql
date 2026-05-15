@@ -1,0 +1,62 @@
+// Source: https://github.com/ahmada00a/detection-engineering-portfolio
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 14d;
+let correlationWindow = 2h;
+
+let riskyScopes = dynamic([
+  "Mail.Read", "Mail.ReadWrite", "MailboxSettings.ReadWrite",
+  "Files.Read.All", "Files.ReadWrite.All",
+  "Directory.ReadWrite.All", "RoleManagement.ReadWrite.Directory",
+  "User.ReadWrite.All", "Group.ReadWrite.All",
+  "Sites.Read.All", "Sites.ReadWrite.All"
+]);
+
+let consentEvents =
+    AuditLogs
+    | where TimeGenerated >= ago(lookback)
+    | where Category in~ ("ApplicationManagement", "Consent")
+    | where OperationName has_any ("Consent", "OAuth2PermissionGrant", "delegated permission grant", "app role assignment", "service principal")
+    | extend UserUPN = tostring(InitiatedBy.user.userPrincipalName)
+    | extend UserIP = tostring(InitiatedBy.user.ipAddress)
+    | extend TargetApp = tostring(TargetResources[0].displayName)
+    | extend TargetId = tostring(TargetResources[0].id)
+    | extend Modified = tostring(TargetResources[0].modifiedProperties)
+    | extend HasRiskyScope = Modified has_any (riskyScopes)
+    | where HasRiskyScope == true
+    | project ConsentTime=TimeGenerated, UserUPN, UserIP, TargetApp, TargetId, OperationName, Modified;
+
+let exchangeActivity =
+    OfficeActivity
+    | where TimeGenerated >= ago(lookback)
+    | where OfficeWorkload =~ "Exchange"
+    | where Operation in~ (
+        "MailItemsAccessed",
+        "UpdateInboxRules",
+        "New-InboxRule",
+        "Set-Mailbox",
+        "Add-MailboxPermission",
+        "Add-MailboxFolderPermission"
+    )
+    | extend Actor = tostring(UserId)
+    | extend ClientIP = tostring(ClientIP)
+    | extend UA = tostring(UserAgent)
+    | project ExchangeTime=TimeGenerated, Actor, Operation, ClientIP, UA;
+
+consentEvents
+| join kind=innerunique (exchangeActivity) on $left.UserUPN == $right.Actor
+| where ExchangeTime between (ConsentTime .. ConsentTime + correlationWindow)
+| extend MinutesAfterConsent = datetime_diff("minute", ExchangeTime, ConsentTime)
+| project
+    ConsentTime,
+    ExchangeTime,
+    MinutesAfterConsent,
+    UserUPN,
+    UserIP,
+    TargetApp,
+    OperationName,
+    Operation,
+    ClientIP,
+    UA
+| order by ExchangeTime desc

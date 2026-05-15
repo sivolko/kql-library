@@ -1,0 +1,12 @@
+// Source: https://github.com/DancinDinoo/KQL
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+  DeviceEvents
+  | where ActionType == "NamedPipeEvent"
+  | extend ParsedFields=parse_json(AdditionalFields)
+  | where ParsedFields.FileOperation == "File created"
+  | extend PipeName = ParsedFields.PipeName //| where PipeName has_any (badpipenames)
+  | project TimeGenerated, ActionType, DeviceName, InitiatingProcessAccountDomain, InitiatingProcessAccountName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, ParsedFields.FileOperation, ParsedFields.PipeName
+
+// Description: Identifies matches between known C2 pipenames and new pipe creation events.

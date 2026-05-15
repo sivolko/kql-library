@@ -1,0 +1,25 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let UserMailbox = <User>;
+let TimeDelivered = <Time Delivered>;
+let MailAccessedTimeframe = <Time Mailbox Accessed>;
+let EmailActivity = EmailEvents
+    | where TimeGenerated > ago (TimeDelivered)
+    | where RecipientEmailAddress contains UserMailbox
+    | extend EmailDelivered = TimeGenerated
+    | project EmailDelivered, InternetMessageId, SenderFromAddress, Subject;
+let newOfficeActivity = OfficeActivity
+    | where TimeGenerated > ago (MailAccessedTimeframe)
+    | where Operation == "MailItemsAccessed"
+    | where MailboxOwnerUPN == UserMailbox
+    | mv-expand todynamic(Folders)
+    | extend InternetMessageId = tostring(Folders.FolderItems.[0].InternetMessageId)
+    | extend TimeAccessed = TimeGenerated
+    | project InternetMessageId, UserId, TimeAccessed, Operation
+    | join kind=inner(EmailActivity
+    ) on InternetMessageId;
+newOfficeActivity
+    | summarize arg_max(TimeAccessed, *) by Subject
+    | project TimeAccessed, UserId, Operation, SenderFromAddress, Subject, EmailDelivered

@@ -1,0 +1,103 @@
+// Source: https://github.com/quintindk/fabric-shield
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+FabricPolicyCompliance_CL
+| where TimeGenerated > ago(24h)
+| where Status == "NonCompliant"
+| summarize ViolationCount = count() by Severity
+| order by case(
+    Severity == "Critical", 0,
+    Severity == "High", 1,
+    Severity == "Medium", 2,
+    Severity == "Low", 3,
+    4)
+
+
+// ----------------------------------------------------------------------------
+// 2. Compliance Trend Over Time
+// Daily violation count over the last 30 days, broken down by severity.
+// Use with a Sentinel workbook time-chart visualization.
+// ----------------------------------------------------------------------------
+FabricPolicyCompliance_CL
+| where TimeGenerated > ago(30d)
+| where Status == "NonCompliant"
+| summarize ViolationCount = count() by bin(TimeGenerated, 1d), Severity
+| order by TimeGenerated asc
+
+
+// ----------------------------------------------------------------------------
+// 3. Most Violated Rules
+// Top 10 policy rules by violation count in the last 7 days.
+// Helps prioritize remediation efforts.
+// ----------------------------------------------------------------------------
+FabricPolicyCompliance_CL
+| where TimeGenerated > ago(7d)
+| where Status == "NonCompliant"
+| summarize ViolationCount = count() by RuleName, Severity
+| top 10 by ViolationCount desc
+
+
+// ----------------------------------------------------------------------------
+// 4. Workspace Compliance Status
+// Per-workspace summary showing the number of compliant vs non-compliant
+// policy evaluations. Provides a quick view of which workspaces need attention.
+// ----------------------------------------------------------------------------
+FabricPolicyCompliance_CL
+| where TimeGenerated > ago(24h)
+| summarize
+    CompliantCount   = countif(Status == "Compliant"),
+    NonCompliantCount = countif(Status == "NonCompliant")
+    by WorkspaceName
+| extend TotalEvaluated = CompliantCount + NonCompliantCount
+| extend CompliancePercent = round(100.0 * CompliantCount / TotalEvaluated, 1)
+| order by NonCompliantCount desc
+
+
+// ----------------------------------------------------------------------------
+// 5. Critical Violations Detail
+// Full detail of all Critical-severity violations in the last 24 hours.
+// Use for incident triage and immediate remediation.
+// ----------------------------------------------------------------------------
+FabricPolicyCompliance_CL
+| where TimeGenerated > ago(24h)
+| where Status == "NonCompliant"
+| where Severity == "Critical"
+| project
+    TimeGenerated,
+    WorkspaceName,
+    ResourceName,
+    ResourceType,
+    RuleName,
+    Severity,
+    Details = Description
+| order by TimeGenerated desc
+
+
+// ----------------------------------------------------------------------------
+// 6. Compliance Score
+// Overall compliance percentage — compliant rules as a share of total
+// evaluations in the last 24 hours.
+// ----------------------------------------------------------------------------
+FabricPolicyCompliance_CL
+| where TimeGenerated > ago(24h)
+| summarize
+    TotalEvaluated = count(),
+    CompliantCount  = countif(Status == "Compliant")
+| extend ComplianceScore = round(100.0 * CompliantCount / TotalEvaluated, 1)
+| project TotalEvaluated, CompliantCount, NonCompliantCount = TotalEvaluated - CompliantCount, ComplianceScore
+
+
+// ----------------------------------------------------------------------------
+// 7. Tenant Settings Drift History
+// All changes to Fabric tenant settings over the last 30 days from the
+// OfficeActivity audit log. Useful for tracking configuration drift.
+// ----------------------------------------------------------------------------
+OfficeActivity
+| where TimeGenerated > ago(30d)
+| where OfficeWorkload == "PowerBI"
+| where Operation == "UpdateFabricTenantSetting"
+| extend SettingName = tostring(ItemName)
+| extend ChangedBy = UserId
+| project TimeGenerated, SettingName, ChangedBy, ClientIP
+| order by TimeGenerated desc

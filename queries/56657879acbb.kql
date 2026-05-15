@@ -1,0 +1,17 @@
+// Source: https://github.com/flattte/libKQL
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType !in (
+    "DpapiAccessed", "NamedPipeEvent",
+    "NtAllocateVirtualMemoryRemoteApiCall",
+    "ProcessPrimaryTokenModified", "NtProtectVirtualMemoryApiCall",
+    "ProcessCreatedUsingWmiQuery", "PnpDeviceConnected",
+    "ScheduledTaskUpdated", "LdapSearch"
+    )
+
+DeviceEvents
+| where ActionType in (
+    "SensitiveFileRead"
+)

@@ -1,0 +1,9 @@
+// Source: https://github.com/ge0mant1s/soacframe-community
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+union OfficeActivity, SalesforceAuditLogs, GWorkspaceActivity
+| where Operation in ("FileDownloaded", "BulkExport", "DownloadContent")
+| summarize EventCount = count() by UserEmail, bin(TimeGenerated, 30m), ClientIP
+| where EventCount > 50
+| project TimeGenerated, UserEmail, EventCount, ClientIP

@@ -1,0 +1,71 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookBack       = 15m;
+let BurstThreshold = 3;        // ≥3 certs/10 min from 1 account = suspicious
+
+// High-value SANs (if SAN contains these → Critical)
+let SensitiveSANPatterns = dynamic([
+    "administrator", "domain admins", "enterprise admins",
+    "krbtgt", "dc$", "-dc@", "dc01", "dc02"
+]);
+
+// Event 4887: Certificate Issued — extract SAN from EventData
+SecurityEvent
+| where TimeGenerated > ago(LookBack)
+| where EventID == 4887
+| extend
+    RequesterAccount = SubjectUserName,
+    RequesterDomain  = SubjectDomainName,
+    CertificateDetails = EventData
+// Parse the Subject and Requester from raw EventData (XML-style)
+| extend SubjectField     = extract(@"<Data Name=""SubjectKeyIdentifier"">[^<]*</Data>", 0, EventData)
+| extend TemplateName     = extract(@"<Data Name=""CertificateTemplate"">(.*?)</Data>", 1, EventData)
+| extend RequestAttributes= extract(@"<Data Name=""RequestAttributes"">(.*?)</Data>", 1, EventData)
+// Look for SAN that doesn't match the requester
+| extend SANValue = extract(@"(?i)(san|subjectaltname|upn)=([^;,]+)", 2, RequestAttributes)
+| extend SANNormalized = tolower(SANValue)
+| extend RequesterNorm  = tolower(RequesterAccount)
+| extend
+    SANMismatch       = isnotempty(SANValue) and not(SANNormalized contains RequesterNorm),
+    SensitiveSAN      = isnotempty(SANValue) and SANNormalized has_any (SensitiveSANPatterns)
+// Burst enrollment detection
+| summarize
+    TotalCerts         = count(),
+    MismatchedCerts    = countif(SANMismatch),
+    SensitiveSANCerts  = countif(SensitiveSAN),
+    Templates          = make_set(TemplateName, 10),
+    SANValues          = make_set(SANValue, 10),
+    EarliestCert       = min(TimeGenerated),
+    LatestCert         = max(TimeGenerated)
+    by RequesterAccount, RequesterDomain, Computer
+| where TotalCerts >= BurstThreshold
+    or MismatchedCerts >= 1
+    or SensitiveSANCerts >= 1
+| extend
+    Severity = case(
+        SensitiveSANCerts >= 1, "Critical",
+        MismatchedCerts >= 1,   "High",
+        TotalCerts >= BurstThreshold, "Medium",
+        "Low"
+    ),
+    WhySuspicious = strcat(
+        iff(SensitiveSANCerts >= 1, "SensitiveSAN_DA_or_DC; ", ""),
+        iff(MismatchedCerts >= 1,   "SAN_Mismatch_ESC1_Pattern; ", ""),
+        iff(TotalCerts >= BurstThreshold, "BurstEnrollment_>=3_certs; ", ""),
+        "Templates: ", strcat_array(Templates, ",")
+    )
+| project
+    TimeGenerated    = LatestCert,
+    Severity,
+    WhySuspicious,
+    RequesterAccount,
+    RequesterDomain,
+    Computer,
+    TotalCerts,
+    MismatchedCerts,
+    SensitiveSANCerts,
+    SANValues,
+    Templates
+| order by SensitiveSANCerts desc, MismatchedCerts desc

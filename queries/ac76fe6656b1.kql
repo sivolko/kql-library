@@ -1,0 +1,18 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let phishingDomain = "example.com"; // Set to a suspicious domain name to search for
+let allowedClicks = DeviceNetworkEvents
+| where RemoteUrl contains phishingDomain
+| distinct DeviceName
+| extend BlockedStatus="No";
+DeviceEvents
+| where ActionType == "BrowserLaunchedToOpenUrl"
+| where RemoteUrl contains phishingDomain
+| extend User=InitiatingProcessAccountUpn
+| summarize Clicks=count() by DeviceName, User
+| join kind=leftouter allowedClicks on DeviceName
+| extend Blocked = iff(BlockedStatus=="", "Yes", "No")
+| project User, Clicks, Blocked, DeviceName
+| sort by Blocked asc, Clicks desc

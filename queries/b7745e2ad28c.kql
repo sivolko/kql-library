@@ -1,0 +1,10 @@
+// Source: https://github.com/LearningGallery/Azure-Monitor-AI-Analytics
+// Collected: 2026-05-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4625
+| summarize FailedAttempts = count() by Account, Computer, IpAddress, bin(TimeGenerated, 1h)
+| where FailedAttempts > 5
+| order by FailedAttempts desc
