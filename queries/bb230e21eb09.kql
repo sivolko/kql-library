@@ -1,0 +1,7 @@
+// Source: https://github.com/xpinux/Project-SABER
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where RequestURL contains "api.telegram.com"
+| project TimeGenerated, SourceIP, DestinationIP, DestinationPort, RequestURL, DeviceName, Message, Computer

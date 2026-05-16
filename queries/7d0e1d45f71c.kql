@@ -1,0 +1,85 @@
+// Source: https://github.com/iDea82/siem-detection-rules
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod = 1d;
+let SuspiciousPaths = dynamic([
+    "\\temp\\", "\\tmp\\", "\\appdata\\local\\temp\\"
+]);
+let SuspiciousEngines = dynamic([
+    "powershell", "pwsh", "cmd.exe",
+    "wscript", "cscript", "mshta",
+    "rundll32", "regsvr32"
+]);
+let DownloadCradles = dynamic([
+    "downloadstring", "downloadfile",
+    "webclient", "invoke-webrequest",
+    "curl", "wget"
+]);
+let EncodedFlags = dynamic([
+    "-enc", "-encoded", "-encodedcommand"
+]);
+let PersistenceTriggers = dynamic([
+    "onlogon", "onidle", "onboot", "onevent"
+]);
+
+let ScheduledTaskEvents =
+SecurityEvent
+| where TimeGenerated >= ago(LookbackPeriod)
+| where EventID == 4698
+| extend TaskDetails = tolower(EventData)
+| extend Source = "SecurityEvent-4698";
+
+let SysmonTaskEvents =
+Sysmon
+| where TimeGenerated >= ago(LookbackPeriod)
+| where EventID == 1
+| where tolower(Image) endswith "schtasks.exe"
+    or tolower(Image) endswith "taskschd.msc"
+| extend TaskDetails = tolower(CommandLine)
+| extend Source = "Sysmon-ProcessCreate";
+
+union ScheduledTaskEvents, SysmonTaskEvents
+| extend SuspiciousIndicator = case(
+
+    SuspiciousPaths has_any (TaskDetails),
+        "Suspicious Path — task runs from temp directory",
+
+    EncodedFlags has_any (TaskDetails),
+        "Encoded Command — task contains encoded payload",
+
+    SuspiciousEngines has_any (TaskDetails),
+        "Script Interpreter — task uses scripting engine",
+
+    DownloadCradles has_any (TaskDetails),
+        "Download Cradle — task pulls content from internet",
+
+    PersistenceTriggers has_any (TaskDetails),
+        "Persistence Trigger — task runs on system events",
+
+    dynamic(null)
+)
+| where isnotempty(SuspiciousIndicator)
+| extend Severity = case(
+    (TaskDetails contains "\\temp\\" or TaskDetails contains "\\tmp\\")
+    and (TaskDetails contains "-enc" or TaskDetails contains "-encoded"),
+        "CRITICAL",
+    DownloadCradles has_any (TaskDetails),
+        "HIGH",
+    "MEDIUM"
+)
+| extend MitreTechnique = "T1053.005 - Scheduled Task"
+| extend Tactic = "Persistence / Privilege Escalation"
+| project
+    TimeGenerated,
+    Computer,
+    Account,
+    TaskDetails,
+    SuspiciousIndicator,
+    ParentImage,
+    ParentCommandLine,
+    Source,
+    Severity,
+    MitreTechnique,
+    Tactic
+| sort by TimeGenerated desc

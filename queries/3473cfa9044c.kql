@@ -1,0 +1,60 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookBack       = 1h;
+let MinAcctCreated = 3;      // ≥3 machine accounts in the window
+
+// Known admin groups
+let AdminAccounts = SecurityEvent
+    | where TimeGenerated > ago(30d)
+    | where EventID in (4728, 4732, 4756)
+    | where TargetUserName has_any ("Domain Admins", "Enterprise Admins",
+                                    "Administrators", "Account Operators")
+    | summarize by AdminMember = tolower(MemberName);
+
+// Machine account creation events
+let MachineAccountCreations = SecurityEvent
+    | where TimeGenerated > ago(LookBack)
+    | where EventID == 5137
+    | where ObjectClass =~ "computer"
+    | extend
+        CreatorNorm  = tolower(SubjectUserName),
+        CreatorAcct  = strcat(SubjectDomainName, "\\", SubjectUserName),
+        NewMachine   = ObjectDN;
+
+// Find non-admin creators with ≥MinAcctCreated
+MachineAccountCreations
+| join kind=leftanti (AdminAccounts) on $left.CreatorNorm == $right.AdminMember
+| where not(SubjectUserName =~ "SYSTEM" or SubjectUserName has "$")
+| summarize
+    AccountsCreated   = count(),
+    MachineAccounts   = make_set(NewMachine, 20),
+    EarliestCreation  = min(TimeGenerated),
+    LatestCreation    = max(TimeGenerated),
+    SourceHosts       = make_set(Computer, 5)
+    by CreatorAcct, SubjectUserName, SubjectDomainName
+| where AccountsCreated >= MinAcctCreated
+| extend
+    WindowMinutes = datetime_diff("minute", LatestCreation, EarliestCreation),
+    Severity = case(
+        AccountsCreated >= 7, "Critical",
+        AccountsCreated >= 4, "High",
+        "Medium"
+    ),
+    WhySuspicious = strcat(
+        tostring(AccountsCreated), "_MachineAccounts_Created_By_NonAdmin; ",
+        "Potential_RBCD_KrbRelayUp_noPac_Prep; ",
+        "Creator: ", CreatorAcct, "; ",
+        "Accounts: ", tostring(MachineAccounts)
+    )
+| project
+    TimeGenerated    = LatestCreation,
+    Severity,
+    WhySuspicious,
+    CreatorAcct,
+    AccountsCreated,
+    WindowMinutes,
+    MachineAccounts,
+    SourceHosts
+| order by AccountsCreated desc

@@ -1,0 +1,128 @@
+// Source: https://github.com/GarethMSheldon/cve-2026-22557-unifi-detection
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DeviceProduct has_any ("UniFi", "nginx", "unifi-network")
+| where RequestURL has_any (
+    "../",
+    "..%2f",
+    "..%2F",
+    "..%5c",
+    "..%5C",
+    "%2e%2e%2f",
+    "%2e%2e/",
+    "..;/",
+    "..%00"
+)
+| extend
+    SourceIP     = SourceIP,
+    DestPort     = DestinationPort,
+    RequestPath  = RequestURL,
+    ResponseCode = EventOutcome
+| project
+    TimeGenerated,
+    SourceIP,
+    DestinationIP,
+    DestPort,
+    RequestPath,
+    ResponseCode,
+    DeviceProduct,
+    Activity
+| order by TimeGenerated desc
+
+
+// -------------------------------------------------------------
+// QUERY 2: Sensitive file access patterns in URL
+// Catches attempts to read /etc/passwd, SSH keys, keystore
+// -------------------------------------------------------------
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where RequestURL has_any (
+    "/etc/passwd",
+    "/etc/shadow",
+    "/.ssh/",
+    "/root/",
+    "/data/db",
+    "keystore",
+    "system.properties",
+    "mongod.conf"
+)
+| project
+    TimeGenerated,
+    SourceIP,
+    DestinationIP,
+    RequestURL,
+    EventOutcome,
+    DeviceProduct
+| order by TimeGenerated desc
+
+
+// -------------------------------------------------------------
+// QUERY 3: High frequency 4xx from single IP against UniFi port
+// Identifies enumeration / scanning behaviour
+// -------------------------------------------------------------
+CommonSecurityLog
+| where TimeGenerated > ago(1d)
+| where DestinationPort in (8443, 8080)
+| where EventOutcome in ("400", "403", "404")
+| summarize
+    RequestCount  = count(),
+    UniqueURLs    = dcount(RequestURL),
+    FirstSeen     = min(TimeGenerated),
+    LastSeen      = max(TimeGenerated)
+    by SourceIP, DestinationIP
+| where RequestCount > 20
+| order by RequestCount desc
+
+
+// -------------------------------------------------------------
+// QUERY 4: Defender for Endpoint — Java reading sensitive files
+// Catches server-side file access post-exploitation
+// -------------------------------------------------------------
+DeviceFileEvents
+| where TimeGenerated > ago(7d)
+| where InitiatingProcessFileName in~ ("java", "java.exe", "mongod", "mongod.exe")
+| where FolderPath has_any (
+    "/etc/passwd",
+    "/etc/shadow",
+    "/root/.ssh",
+    "/home/",
+    "keystore",
+    "mongod.conf",
+    "system.properties"
+)
+| project
+    TimeGenerated,
+    DeviceName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    FolderPath,
+    FileName,
+    ActionType
+| order by TimeGenerated desc
+
+
+// -------------------------------------------------------------
+// QUERY 5: Threat hunting — baseline deviation
+// Flags source IPs making requests with encoded dot-dot sequences
+// that have not been seen in the prior 30 days
+// -------------------------------------------------------------
+let known_ips =
+    CommonSecurityLog
+    | where TimeGenerated between (ago(37d) .. ago(7d))
+    | where DestinationPort in (8443, 8080)
+    | summarize by SourceIP;
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DestinationPort in (8443, 8080)
+| where RequestURL matches regex @"(\.\.|%2[eE]%2[eE]|%2[eE]\.|\.%2[eE])"
+| where SourceIP !in (known_ips)
+| project
+    TimeGenerated,
+    SourceIP,
+    DestinationIP,
+    RequestURL,
+    EventOutcome
+| order by TimeGenerated desc

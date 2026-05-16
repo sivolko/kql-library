@@ -1,0 +1,11 @@
+// Source: https://github.com/ZeroDeltaSEC/Exploring-KQL
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+let start = datetime(2025-01-13 00:00:00);
+let end   = datetime(2025-01-13 23:59:59);
+CommonSecurityLog
+| extend FormattedTime = format_datetime(TimeGenerated, "yyyy-MM-dd HH:mm:ss")
+| where TimeGenerated between (start .. end)
+| where DestinationUserName contains "<ADMIN_ACCOUNT_OR_PATTERN>"
+| project FormattedTime, DestinationUserName, SourceIP, DestinationIP, DeviceVendor, DeviceProduct, Activity, Message

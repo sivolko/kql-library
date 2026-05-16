@@ -1,0 +1,10 @@
+// Source: https://github.com/RidwanHaque/CyberSecurityLab-SOC-Honeynet-on-Azure
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+let GeoIPDB_FULL = _GetWatchlist("geoip");
+let WindowsEvents = SecurityEvent;
+WindowsEvents | where EventID == 4625
+| order by TimeGenerated desc
+| evaluate ipv4_lookup(GeoIPDB_FULL, IpAddress, network)
+| project TimeGenerated, Account, AccountType, Computer, EventID, Activity, IpAddress, LogonTypeName, network, latitude, longitude, city = cityname, country = countryname, friendly_location = strcat(cityname, " (", countryname, ")");

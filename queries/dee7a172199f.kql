@@ -1,0 +1,77 @@
+// Source: https://github.com/jonahchn/security-engineering
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 5136
+    or EventID == 5137
+    or EventID == 5138
+    or EventID == 5139
+    or EventID == 5141
+    or EventID == 4724
+    or EventID == 4725
+    or EventID == 4722
+    or EventID == 4740
+| where AccountType != "Machine" 
+| parse EventData with * 'ObjectClass">' ObjectClass '<' * 
+| parse EventData with * 'AttributeLDAPDisplayName">' AttributeLDAPDisplayName '<' *
+| parse EventData with * 'SubjectUserName">' Administrator '<' *
+| where Administrator !endswith "$" or Administrator != "SYSTEM"
+| where ObjectClass == "group"
+    or ObjectClass == "computer"
+    or ObjectClass == "user"
+    or ObjectClass == "organizationalUnit"
+    or ObjectClass == "container"
+    or ObjectClass == "domainDNS"
+    or ObjectClass == "group"
+    or ObjectClass == "computer"
+    or ObjectClass == "user"
+    or ObjectClass == "group"
+    or ObjectClass == "computer"
+    or ObjectClass == "user"
+    or AttributeLDAPDisplayName == "gPLink"
+    or AttributeLDAPDisplayName == "member"
+| extend
+    Add_User=iff(ObjectClass == "user", ObjectClass, ""),
+    Add_Group=iff(ObjectClass == "group", ObjectClass, ""),
+    Add_Computer=iff(ObjectClass == "computer", ObjectClass, ""),
+    Delete_User=iff(ObjectClass == "user", ObjectClass, ""),
+    Delete_Group=iff(ObjectClass == "group", ObjectClass, ""),
+    Delete_Computer=iff(ObjectClass == "computer", ObjectClass, ""),
+    delete_ou=iff(ObjectClass == "organizationalUnit", ObjectClass, ""),
+    delete_container=iff(ObjectClass == "container", ObjectClass, ""),
+    delete_domaindns=iff(ObjectClass == "domainDNS", ObjectClass, ""),
+    restored=iff(EventID == "5138", Activity, ""),
+    pwdattpt=iff(EventID == "4724", Account, ""),
+    acctenable=iff(EventID == "4722", Account, ""),
+    acctdisable=iff(EventID == "4725", Account, ""),
+    acctlock=iff(EventID == "4740", Activity, ""),
+    move_user=iff(ObjectClass == "user", ObjectClass, ""),
+    move_group=iff(ObjectClass == "group", ObjectClass, ""),
+    move_computer=iff(ObjectClass == "computer", ObjectClass, ""),
+    gpo_link=iff(AttributeLDAPDisplayName == "gPLink", OperationType, ""),
+    del_member=iff(AttributeLDAPDisplayName == "member", ObjectClass, ""),
+    member=iff(AttributeLDAPDisplayName == "member", OperationType, "")  
+| extend Operation1=iff(Add_User == "user", Add_User="Added users", Add_Group)
+| extend Operation2=iff(Operation1 == "group", Operation1="Added groups", Operation1)
+| extend Operation3=iff(Add_Computer == "computer", Add_Computer="Added computers", Operation2)
+| extend Operation4=iff(Delete_Computer == "computer", Delete_Computer="Deleted computers", Operation3)
+| extend Operation5=iff(Delete_Group == "group", Delete_Group="Deleted groups", Operation4)
+| extend Operation6=iff(Delete_User == "user", Delete_User="Deleted users", Operation5)
+| extend Operation7=iff(delete_ou == "organizationalUnit", Delete_User="Deleted organizational units", Operation6)
+| extend Operation8=iff(delete_container == "container", Delete_User="Deleted containers", Operation7)
+| extend Operation9=iff(delete_domaindns == "domainDNS", Delete_User="Deleted domain objects", Operation8)
+| extend Operation10=iff(pwdattpt != "", pwdattpt="Password reset attempts", Operation9) 
+| extend Operation11=iff(acctdisable != "", acctdisable="Disabled accounts", Operation10) 
+| extend Operation12=iff(acctenable != "", acctenable="Enabled accounts", Operation11) 
+| extend Operation13=iff(move_user == "user", move_user="Relocated users", Operation12)
+| extend Operation14=iff(move_computer == "computer", move_computer="Relocated computers", Operation13) 
+| extend Operation15=iff(move_group == "group", move_group="Relocated groups", Operation14) 
+| extend Operation16=iff(gpo_link == "%%14674", gpo_link="GPO linked to an OU", Operation15)
+| extend Operation17=iff(gpo_link == "%%14675", gpo_link="GPO unlinked from an OU", Operation16) 
+| extend Operation18=iff(member == "%%14674", member="Group members added", Operation17)
+| extend Operation19=iff(member == "%%14675", member="Group members removed", Operation18)  
+| extend Operation20=iff(acctlock != "", acctlock="User lockouts", Operation19) 
+| extend Operation=iff(restored != "", restored="Restored from Recycle Bin", Operation20) 
+| summarize Amount= count() by Operation
+| sort by Operation asc

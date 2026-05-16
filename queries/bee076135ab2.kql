@@ -1,0 +1,6 @@
+// Source: https://github.com/Rakesh-b002/SOC-lab-azure-sentinel
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625

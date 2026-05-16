@@ -1,0 +1,13 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+let failedLogons = SecurityEvent
+    | where EventID == 4625
+    | summarize FailedCount = count() by Account, IpAddress;
+let successfulLogons = SecurityEvent
+    | where EventID == 4624
+    | project Account, IpAddress, TimeGenerated;
+failedLogons
+| join kind=inner (successfulLogons) on Account, IpAddress
+| extend Tactic = "Credential Access", Technique = "Brute Force", TechniqueId = "T1110"

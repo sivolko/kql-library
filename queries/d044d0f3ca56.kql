@@ -1,0 +1,8 @@
+// Source: https://github.com/flattte/libKQL
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where SourceIP has_any("") // paste adressess here must be with ""
+| distinct DeviceAction, SourceIP
+| sort by SourceIP

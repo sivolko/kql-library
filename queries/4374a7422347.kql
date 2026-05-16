@@ -1,0 +1,57 @@
+// Source: https://github.com/iDea82/siem-detection-rules
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ThresholdMB = 500;
+let CriticalThresholdMB = 2000;
+let HighThresholdMB = 1000;
+let LookbackPeriod = 1h;
+
+CommonSecurityLog
+| where TimeGenerated >= ago(1d)
+| where CommunicationDirection == "Outbound"
+    or DeviceAction !in ("deny", "block", "drop")
+| extend BytesOutMB = SentBytes / 1024 / 1024
+| summarize
+    TotalMBTransferred = sum(BytesOutMB),
+    DestinationIPs = make_set(DestinationIP),
+    DestinationPorts = make_set(DestinationPort),
+    Applications = make_set(ApplicationProtocol),
+    UniqueDestinations = dcount(DestinationIP),
+    ConnectionCount = count(),
+    WindowStart = min(TimeGenerated),
+    WindowEnd = max(TimeGenerated)
+    by bin(TimeGenerated, LookbackPeriod), SourceIP, SourceHostName
+| where TotalMBTransferred >= ThresholdMB
+| extend Severity = case(
+    TotalMBTransferred >= CriticalThresholdMB, "CRITICAL",
+    TotalMBTransferred >= HighThresholdMB,     "HIGH",
+    TotalMBTransferred >= ThresholdMB,         "MEDIUM",
+    "LOW"
+)
+| extend MitreTechnique = "T1048 / T1041 - Exfiltration"
+| extend Tactic = "Exfiltration"
+| extend InvestigationPriority = case(
+    UniqueDestinations == 1 and TotalMBTransferred >= HighThresholdMB,
+        "PRIORITY 1 — Large transfer to single destination",
+    UniqueDestinations <= 3 and TotalMBTransferred >= ThresholdMB,
+        "PRIORITY 2 — Large transfer to few destinations",
+    "PRIORITY 3 — Review required"
+)
+| project
+    TimeGenerated,
+    SourceHostName,
+    SourceIP,
+    TotalMBTransferred,
+    DestinationIPs,
+    DestinationPorts,
+    Applications,
+    UniqueDestinations,
+    ConnectionCount,
+    WindowStart,
+    WindowEnd,
+    Severity,
+    InvestigationPriority,
+    MitreTechnique,
+    Tactic
+| sort by TotalMBTransferred desc

@@ -1,0 +1,38 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TimePeriod1_Start = datetime(2025-03-16 00:00:00);
+let TimePeriod1_End = datetime(2025-03-18 11:59:59);
+let TimePeriod2_Start = datetime(2025-03-18 12:00:00);
+let TimePeriod2_End = datetime(2025-03-20 23:59:59);
+let SecurityEvent_Annotated = SecurityEvent
+| where TimeGenerated between (TimePeriod1_Start .. TimePeriod2_End)  
+| extend TimePeriod = case(
+    TimeGenerated >= TimePeriod1_Start and TimeGenerated <= TimePeriod1_End, "Period1",
+    TimeGenerated >= TimePeriod2_Start and TimeGenerated <= TimePeriod2_End, "Period2",
+    "Other"
+)
+| where TimePeriod in ("Period1", "Period2");
+let TotalCounts = SecurityEvent_Annotated
+| summarize TotalCount = count() by TimePeriod;
+let EventCounts = SecurityEvent_Annotated
+| summarize 
+    CountPerGroup = count() 
+    by EventID, TimePeriod
+| join kind=leftouter (TotalCounts) on TimePeriod
+| extend Percentage = round((CountPerGroup * 100.0) / TotalCount, 4);
+let PivotedResults = EventCounts
+| summarize 
+    CountPerGroup_Period1 = sumif(CountPerGroup, TimePeriod == "Period1"),
+    CountPerGroup_Period2 = sumif(CountPerGroup, TimePeriod == "Period2"),
+    Percentage_Period1 = sumif(Percentage, TimePeriod == "Period1"),
+    Percentage_Period2 = sumif(Percentage, TimePeriod == "Period2") 
+    by EventID
+| extend 
+    CountIncrease = CountPerGroup_Period2 - CountPerGroup_Period1,
+    PercentageIncrease = Percentage_Period2 - Percentage_Period1,
+    PercentageChange = iff(CountPerGroup_Period1 > 0, round(((CountPerGroup_Period2 - CountPerGroup_Period1) * 100.0) / CountPerGroup_Period1, 2), real(null))
+| project EventID, Before_March18_Noon = CountPerGroup_Period1, After_March18_Noon = CountPerGroup_Period2, CountIncrease, PercentageChange
+| order by CountIncrease desc nulls last;
+PivotedResults

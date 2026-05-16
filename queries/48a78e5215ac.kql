@@ -1,0 +1,61 @@
+// Source: https://github.com/lenoshz/active-directory-security-lab
+// Collected: 2026-05-16
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4625
+| where LogonType == 3  // Network logon
+| extend SourceIP = IpAddress
+| summarize 
+    FailedCount = count(),
+    UniqueUsers = dcount(TargetUserName),
+    TargetUsers = make_set(TargetUserName, 100),  // Increased limit for complete attack data
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated)
+  by SourceIP, bin(TimeGenerated, 10m)
+| where UniqueUsers >= 5 and FailedCount >= 10
+| extend AttackDuration = datetime_diff('minute', LastAttempt, FirstAttempt)
+// Note: make_set may still truncate if > 100 users. Use make_list for complete capture if needed.
+| project 
+    TimeGenerated,
+    SourceIP,
+    FailedCount,
+    UniqueUsers,
+    TargetUsers,
+    AttackDuration,
+    AlertSeverity = case(
+        UniqueUsers > 20, "High",
+        UniqueUsers > 10, "Medium",
+        "Low"
+    )
+| order by FailedCount desc
+
+// Alternative: Time-series based detection
+// Useful for detecting slow password sprays
+/*
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4625
+| where LogonType in (3, 10)
+| summarize FailedAttempts = count() by IpAddress, bin(TimeGenerated, 1h)
+| where FailedAttempts > 20
+| project TimeGenerated, IpAddress, FailedAttempts
+| order by TimeGenerated desc
+*/
+
+// Detection with Workstation Context
+/*
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4625
+| where LogonType == 3
+| summarize 
+    FailedCount = count(),
+    UniqueUsers = dcount(TargetUserName),
+    UniqueWorkstations = dcount(WorkstationName),
+    TargetUsers = make_set(TargetUserName)
+  by IpAddress, bin(TimeGenerated, 5m)
+| where UniqueUsers > 3 and UniqueWorkstations <= 2
+| project TimeGenerated, IpAddress, FailedCount, UniqueUsers, TargetUsers
+*/
