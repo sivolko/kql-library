@@ -1,0 +1,72 @@
+// Source: https://github.com/mhartson310/Azure-Cost-Optimization-Toolkit
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+Usage
+| where TimeGenerated > ago(30d)
+| where ResourceId !contains "/providers/microsoft.resources/deployments"  // Exclude deployments
+| extend 
+    ResourceName = tostring(split(ResourceId, '/')[-1]),
+    ResourceGroup = tostring(split(ResourceId, '/')[4]),
+    Subscription = tostring(split(ResourceId, '/')[2]),
+    ServiceType = tostring(split(ResourceId, '/')[6])
+| summarize 
+    TotalCost_USD = sum(todouble(Quantity) * todouble(ResourceRate)),
+    UsageQuantity = sum(todouble(Quantity)),
+    DaysWithUsage = dcount(format_datetime(TimeGenerated, 'yyyy-MM-dd'))
+    by ResourceId, ResourceName, ResourceGroup, Subscription, ServiceType
+| where TotalCost_USD > 100  // Only show resources >$100/month
+| extend 
+    AvgDailyCost = round(TotalCost_USD / DaysWithUsage, 2),
+    ProjectedMonthlyCost = round(AvgDailyCost * 30, 2),
+    ProjectedAnnualCost = round(AvgDailyCost * 365, 2)
+| project 
+    ResourceName,
+    ServiceType,
+    ResourceGroup,
+    Subscription,
+    TotalCost_USD = round(TotalCost_USD, 2),
+    AvgDailyCost,
+    ProjectedMonthlyCost,
+    ProjectedAnnualCost,
+    DaysWithUsage,
+    ResourceId
+| order by TotalCost_USD desc
+| take 20
+
+// ALTERNATIVE: Top 10 Services by Cost
+// Usage
+// | where TimeGenerated > ago(30d)
+// | summarize 
+//     TotalCost = sum(todouble(Quantity) * todouble(ResourceRate)),
+//     ResourceCount = dcount(ResourceId)
+//     by MeterCategory, MeterSubCategory
+// | extend AvgCostPerResource = round(TotalCost / ResourceCount, 2)
+// | project 
+//     MeterCategory,
+//     MeterSubCategory,
+//     TotalCost = round(TotalCost, 2),
+//     ResourceCount,
+//     AvgCostPerResource
+// | order by TotalCost desc
+// | take 10
+
+// ALTERNATIVE: Cost Trend (Month-over-Month)
+// Usage
+// | where TimeGenerated > ago(180d)
+// | extend Month = format_datetime(TimeGenerated, 'yyyy-MM')
+// | summarize 
+//     MonthlyCost = sum(todouble(Quantity) * todouble(ResourceRate))
+//     by Month, MeterCategory
+// | extend MonthlyCost = round(MonthlyCost, 2)
+// | order by Month desc, MonthlyCost desc
+// | evaluate pivot(Month, sum(MonthlyCost))
+
+// NEXT STEPS:
+// 1. Review top 10 most expensive resources
+// 2. For each, ask:
+//    - Is this resource still needed?
+//    - Is it right-sized?
+//    - Can it benefit from Reserved Instances?
+//    - Should it move to a cheaper region?
+// 3. Use companion queries to analyze specific optimization opportunities

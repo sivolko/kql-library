@@ -1,0 +1,9 @@
+// Source: https://github.com/rod-trent/Sentinel-SOC-101
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(1h)
+| where Operation =~ \"TeamDeleted\"
+| summarize count() by ClientIP
+| where count_ > 5

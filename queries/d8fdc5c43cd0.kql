@@ -1,0 +1,10 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation == "New-RoleGroup"
+| where RecordType == "ExchangeAdmin"
+| parse Parameters with * 'Name","Value":"' ['Role Name'] '"' *
+| parse Parameters with * 'Roles","Value":"' ['Permissions Added'] '"' *
+| project TimeGenerated, Actor=UserId, ['Role Name'], ['Permissions Added']

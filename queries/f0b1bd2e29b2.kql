@@ -1,0 +1,9 @@
+// Source: https://github.com/Cyberlorians/KQL
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where Activity == "4657 - A registry value was modified."
+| where ObjectName == "\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Control\\SecurityProviders\\WDigest"
+| where ObjectValueName contains "UseLogonCredential"
+| where NewValue == "1"

@@ -1,0 +1,9 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where ActionType startswith "Asr"
+| summarize ASRCount=count()by ActionType, InitiatingProcessCommandLine
+| sort by ActionType asc, ASRCount desc 

@@ -1,0 +1,107 @@
+// Source: https://github.com/LaurieRhodes/Powershell-Kusto-Schema-Tools
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+﻿// ============================================================================
+// Azure Data Explorer KQL Script for AzureActivity - UPDATED VERSION
+// ============================================================================
+// Generated: 2025-09-17 07:20:33
+// Table type: Microsoft
+// Schema discovered using hybrid approach (Management API + getschema)
+// Data type corrections applied: TenantId->guid, Double->real (empirical fixes)
+// All columns including underscore columns included
+// Original columns: 34, Final columns: 34
+// ============================================================================
+
+.create-merge table AzureActivityRaw (records:dynamic)
+
+.alter-merge table AzureActivityRaw policy retention softdelete = 1d
+
+.alter table AzureActivityRaw policy caching hot = 1h
+
+// JSON mapping - choose appropriate option based on data structure
+.create-or-alter table AzureActivityRaw ingestion json mapping 'AzureActivityRawMapping' '[{"column":"records","Properties":{"path":"$.records"}}]'
+// Alternative for direct events: '[{"column":"records","Properties":{"path":"$"}}]'
+
+.create-merge table AzureActivity(
+TimeGenerated:datetime,
+TenantId:guid,
+ResourceId:string,
+Category:string,
+ActivitySubstatus:string,
+ActivityStatus:string,
+OperationName:string,
+SubscriptionId:guid,
+Hierarchy:string,
+ActivitySubstatusValue:string,
+ActivityStatusValue:string,
+ResourceProviderValue:string,
+ResourceGroup:string,
+OperationId:string,
+HTTPRequest:string,
+ResourceProvider:string,
+EventSubmissionTimestamp:datetime,
+Caller:string,
+Properties_d:dynamic,
+Properties:string,
+OperationNameValue:string,
+Level:string,
+Claims_d:dynamic,
+Claims:string,
+Authorization_d:dynamic,
+Authorization:string,
+CorrelationId:string,
+CategoryValue:string,
+CallerIpAddress:string,
+SourceSystem:string,
+EventDataId:string,
+Resource:string,
+Type:string,
+_ResourceId:string,
+_TimeReceived:datetime)
+
+.alter table AzureActivity policy caching hot = 1d
+
+.create-or-alter function AzureActivityExpand() {
+AzureActivityRaw
+| mv-expand events = records
+// Alternative for non-nested: | extend events = records
+| project
+TimeGenerated=todatetime(events.TimeGenerated),
+TenantId=toguid(events.TenantId),
+ResourceId=tostring(events.ResourceId),
+Category=tostring(events.Category),
+ActivitySubstatus=tostring(events.ActivitySubstatus),
+ActivityStatus=tostring(events.ActivityStatus),
+OperationName=tostring(events.OperationName),
+SubscriptionId=toguid(events.SubscriptionId),
+Hierarchy=tostring(events.Hierarchy),
+ActivitySubstatusValue=tostring(events.ActivitySubstatusValue),
+ActivityStatusValue=tostring(events.ActivityStatusValue),
+ResourceProviderValue=tostring(events.ResourceProviderValue),
+ResourceGroup=tostring(events.ResourceGroup),
+OperationId=tostring(events.OperationId),
+HTTPRequest=tostring(events.HTTPRequest),
+ResourceProvider=tostring(events.ResourceProvider),
+EventSubmissionTimestamp=todatetime(events.EventSubmissionTimestamp),
+Caller=tostring(events.Caller),
+Properties_d=todynamic(events.Properties_d),
+Properties=tostring(events.Properties),
+OperationNameValue=tostring(events.OperationNameValue),
+Level=tostring(events.Level),
+Claims_d=todynamic(events.Claims_d),
+Claims=tostring(events.Claims),
+Authorization_d=todynamic(events.Authorization_d),
+Authorization=tostring(events.Authorization),
+CorrelationId=tostring(events.CorrelationId),
+CategoryValue=tostring(events.CategoryValue),
+CallerIpAddress=tostring(events.CallerIpAddress),
+SourceSystem=tostring(events.SourceSystem),
+EventDataId=tostring(events.EventDataId),
+Resource=tostring(events.Resource),
+Type=tostring(events.Type),
+_ResourceId=tostring(events._ResourceId),
+_TimeReceived=todatetime(now())
+}
+
+.alter table AzureActivity policy update @'[{"Source": "AzureActivityRaw", "Query": "AzureActivityExpand()", "IsEnabled": "True", "IsTransactional": true}]'

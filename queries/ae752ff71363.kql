@@ -1,0 +1,13 @@
+// Source: https://github.com/RidwanHaque/CyberSecurityLab-SOC-Honeynet-on-Azure
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let GeoIPDB_FULL = _GetWatchlist("geoip");
+let IpAddress_REGEX_PATTERN = @"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b";
+Syslog
+| where Facility == "auth"
+| where SyslogMessage startswith "Failed password for"
+| order by TimeGenerated desc
+| project TimeGenerated, SourceIP = extract(IpAddress_REGEX_PATTERN, 0, SyslogMessage), DestinationHostName = HostName, DestinationIP = HostIP, Facility, SyslogMessage, ProcessName, SeverityLevel, Type
+| evaluate ipv4_lookup(GeoIPDB_FULL, SourceIP, network)
+| project TimeGenerated, SourceIP, DestinationHostName, DestinationIP, Facility, SyslogMessage, ProcessName, SeverityLevel, Type, latitude, longitude, city = cityname, country = countryname, friendly_location = strcat(cityname, " (", countryname, ")");

@@ -1,0 +1,22 @@
+// Source: https://github.com/rod-trent/SentinelKQL
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let table1= OfficeActivity
+| where isnotempty(Type)
+| summarize maxTimeGenerated=max(TimeGenerated) by Type
+| where maxTimeGenerated  < ago(48h);
+let table2= SecurityAlert
+| where isnotempty(Type)
+| summarize maxTimeGenerated=max(TimeGenerated) by Type
+| where maxTimeGenerated  < ago(72h);
+let table3= DeviceInfo
+| where isnotempty(Type)
+| summarize maxTimeGenerated=max(TimeGenerated) by Type
+| where maxTimeGenerated  < ago(72h);
+let table4= SigninLogs
+| where isnotempty(Type)
+| summarize maxTimeGenerated=max(TimeGenerated) by Type
+| where maxTimeGenerated  < ago(14d);
+union isfuzzy=true 
+table1,table2,table3,table4

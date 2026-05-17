@@ -1,0 +1,11 @@
+// Source: https://github.com/ugurkocde/kql_search_submissions
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType has_any ("AntivirusScanCompleted", "AntivirusScanCancelled")
+| extend AdditionalFields = parse_json(AdditionalFields)
+| extend ScanType = AdditionalFields.["ScanTypeIndex"]
+| where ScanType == "Full"
+| summarize make_set(ActionType) by DeviceId, DeviceName
+| where set_ActionType !has ("AntivirusScanCompleted") 

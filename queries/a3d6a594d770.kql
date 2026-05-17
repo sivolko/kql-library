@@ -1,0 +1,36 @@
+// Source: https://github.com/Jesse-CyberSix/KQL-Hunting-Queries
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let startTime = ago(1d);
+let endTime = now();
+// Search for failed login attempts
+SecurityEvent
+| where TimeGenerated between (startTime .. endTime)
+| where EventID == 4625 // Event ID for failed logins
+| where AccountType == "User" // Filter out system accounts
+// Options for LogonType:
+// 2 – Interactive 3 – Network 4 – Batch 5 – Service 7 – Unlock 
+// 8 – NetworkCleartext 9 – NewCredentials 10 – RemoteInteractive
+// 11 – CachedInteractive 12 – CachedRemoteInteractive 13 – CachedUnlock
+| extend LogonType = tostring(parse_json(AdditionalFields)["LogonType"])
+| summarize FailedLogins = count() by IPAddress, Account, UserID, LogonType
+| where FailedLogins > 5 // Set the threshold for failed login attempts
+// Identify consecutive failed login attempts from the same IP address
+| extend ConsecutiveFailures = row_cumsum(FailedLogins, IPAddress != prev(IPAddress) or Account != prev(Account) or UserID != prev(UserID))
+// Filter for high-frequency consecutive failures
+| where ConsecutiveFailures >= 5
+// Filter out known IP addresses (optional)
+| where not (IPAddress in ("127.0.0.1", "localhost", "x.x.x.x")) // Add known IP addresses to exclude
+// Output the results
+| project IPAddress, Account, UserID, LogonType, ConsecutiveFailures
+
+
+SecurityEvent
+| where TimeGenerated between (startTime .. endTime)
+| where EventID == 4625
+| where AccountType == "User"
+| summarize FailedLogins = count() by IPAddress, Account, TargetUserName, LogonType
+| where FailedLogins > 5
+| where not(IPAddress in ("127.0.0.1", "localhost", "x.x.x.x"))
+| project IPAddress, Account, TargetUserName, LogonType, FailedLogins

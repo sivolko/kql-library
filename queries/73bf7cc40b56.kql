@@ -1,0 +1,8 @@
+// Source: https://github.com/vivekrn11/AzureSentinelKQLqueries
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4624
+| where LogonType == 9
+| where LogonProcessName contains "seclogo" and AuthenticationPackageName contains "Negotiate"

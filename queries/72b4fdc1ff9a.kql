@@ -1,0 +1,40 @@
+// Source: https://github.com/mattiasborg82/Talks
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Q1 = IdentityQueryEvents
+| where QueryType has_any ("AllAccounts", 
+"QueryUser",
+"AllObjects",
+"AllSecurityPrincipals, AllDomains",
+"AllSecurityPrincipals",
+"AllUsers")
+| where Query contains "WholeSubtree"
+| project QueryTime = Timestamp, Query, DeviceName;
+let Q2 = IdentityLogonEvents
+| where Protocol == "Kerberos"
+| where ActionType == "LogonSuccess"
+| where Application == "Active Directory"
+| extend SPNs = AdditionalFields.Spns,
+         KerberosType = tostring(AdditionalFields.KerberosType),
+         EncryptionType = tostring(AdditionalFields.EncryptionType)
+| where isnotempty(KerberosType) and isnotempty(SPNs)
+| where SPNs has_any("HTTP","MSSQLSvc")
+//| where EncryptionType =~ "rc4hmac"
+| project TicketTime = Timestamp,
+          AccountDomain,
+          AccountName,
+          SPNs,
+          KerberosType,
+          EncryptionType,
+          DeviceName;
+let Correlated = Q1
+| join kind=inner (Q2) on DeviceName
+| where TicketTime between (QueryTime .. datetime_add('minute',3, QueryTime))
+| extend TimeDiffSeconds = datetime_diff("second", TicketTime, QueryTime);
+Correlated
+| summarize DistinctSPNs = dcount(tostring(SPNs)),
+           SPNList = make_set(SPNs),
+           TicketCount = count()
+  by DeviceName, QueryTime, EncryptionType
+| order by DistinctSPNs desc

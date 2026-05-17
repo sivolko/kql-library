@@ -1,0 +1,53 @@
+// Source: https://github.com/n1ops/sentinel-detection-lab
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe = 1h;
+OfficeActivity
+| where TimeGenerated >= ago(timeframe)
+| where Operation == "New-InboxRule"
+| where RecordType == "ExchangeAdmin" or RecordType == "ExchangeItem"
+| extend
+    RuleParameters = tostring(Parameters)
+| extend
+    RuleName = extract("\"Name\"\\s*:\\s*\"([^\"]+)\"", 1, RuleParameters),
+    MoveToFolder = extract("\"MoveToFolder\"\\s*:\\s*\"([^\"]+)\"", 1, RuleParameters),
+    DeleteMessage = extract("\"DeleteMessage\"\\s*:\\s*\"([^\"]+)\"", 1, RuleParameters),
+    MarkAsRead = extract("\"MarkAsRead\"\\s*:\\s*\"([^\"]+)\"", 1, RuleParameters),
+    SubjectContains = extract("\"SubjectContainsWords\"\\s*:\\s*\"([^\"]+)\"", 1, RuleParameters),
+    BodyContains = extract("\"BodyContainsWords\"\\s*:\\s*\"([^\"]+)\"", 1, RuleParameters),
+    FromAddress = extract("\"From\"\\s*:\\s*\"([^\"]+)\"", 1, RuleParameters)
+| where
+    // Flag rules that delete messages
+    DeleteMessage =~ "True"
+    // Or move to suspicious folders
+    or MoveToFolder has_any ("RSS Feeds", "RSS Subscriptions", "Deleted Items", "Junk Email", "Archive", "Conversation History")
+    // Or mark as read (to hide from user)
+    or MarkAsRead =~ "True"
+    // Also flag rules that move to any non-standard folder (catch custom evasion folders)
+    or (strlen(MoveToFolder) > 0 and MoveToFolder !in~ ("Inbox", "Sent Items", "Drafts", "Outbox", "Calendar", "Contacts", "Tasks", "Notes"))
+| extend
+    SuspiciousIndicators = bag_pack(
+        "DeletesMessages", DeleteMessage =~ "True",
+        "MovesToFolder", isnotempty(MoveToFolder),
+        "MarksAsRead", MarkAsRead =~ "True",
+        "TargetFolder", MoveToFolder
+    ),
+    Entity_Account = UserId,
+    Entity_IP = ClientIP
+| project
+    TimeGenerated,
+    UserId,
+    ClientIP,
+    RuleName,
+    MoveToFolder,
+    DeleteMessage,
+    MarkAsRead,
+    SubjectContains,
+    BodyContains,
+    FromAddress,
+    SuspiciousIndicators,
+    Operation,
+    Entity_Account,
+    Entity_IP
+| order by TimeGenerated desc

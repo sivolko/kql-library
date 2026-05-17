@@ -1,0 +1,103 @@
+// Source: https://github.com/LaurieRhodes/Powershell-Kusto-Schema-Tools
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+﻿// ============================================================================
+// Azure Data Explorer KQL Script for IdentityLogonEvents - UPDATED VERSION
+// ============================================================================
+// Generated: 2025-09-17 07:26:03
+// Table type: Microsoft
+// Schema discovered using hybrid approach (Management API + getschema)
+// Data type corrections applied: TenantId->guid, Double->real (empirical fixes)
+// All columns including underscore columns included
+// Original columns: 32, Final columns: 32
+// ============================================================================
+
+.create-merge table IdentityLogonEventsRaw (records:dynamic)
+
+.alter-merge table IdentityLogonEventsRaw policy retention softdelete = 1d
+
+.alter table IdentityLogonEventsRaw policy caching hot = 1h
+
+// JSON mapping - choose appropriate option based on data structure
+.create-or-alter table IdentityLogonEventsRaw ingestion json mapping 'IdentityLogonEventsRawMapping' '[{"column":"records","Properties":{"path":"$.records"}}]'
+// Alternative for direct events: '[{"column":"records","Properties":{"path":"$"}}]'
+
+.create-merge table IdentityLogonEvents(
+TimeGenerated:datetime,
+TenantId:guid,
+LastSeenForUser:dynamic,
+AdditionalFields:dynamic,
+ReportId:string,
+ISP:string,
+Location:string,
+TargetAccountDisplayName:string,
+TargetDeviceName:string,
+DestinationPort:string,
+DestinationIPAddress:string,
+DestinationDeviceName:string,
+Port:string,
+IPAddress:string,
+OSPlatform:string,
+DeviceType:string,
+DeviceName:string,
+AccountDisplayName:string,
+AccountObjectId:string,
+AccountSid:string,
+AccountUpn:string,
+AccountDomain:string,
+AccountName:string,
+FailureReason:string,
+Protocol:string,
+LogonType:string,
+Application:string,
+ActionType:string,
+Timestamp:datetime,
+UncommonForUser:dynamic,
+SourceSystem:string,
+Type:string,
+_TimeReceived:datetime)
+
+.alter table IdentityLogonEvents policy caching hot = 1d
+
+.create-or-alter function IdentityLogonEventsExpand() {
+IdentityLogonEventsRaw
+| mv-expand events = records
+// Alternative for non-nested: | extend events = records
+| project
+TimeGenerated=todatetime(events.TimeGenerated),
+TenantId=toguid(events.TenantId),
+LastSeenForUser=todynamic(events.LastSeenForUser),
+AdditionalFields=todynamic(events.AdditionalFields),
+ReportId=tostring(events.ReportId),
+ISP=tostring(events.ISP),
+Location=tostring(events.Location),
+TargetAccountDisplayName=tostring(events.TargetAccountDisplayName),
+TargetDeviceName=tostring(events.TargetDeviceName),
+DestinationPort=tostring(events.DestinationPort),
+DestinationIPAddress=tostring(events.DestinationIPAddress),
+DestinationDeviceName=tostring(events.DestinationDeviceName),
+Port=tostring(events.Port),
+IPAddress=tostring(events.IPAddress),
+OSPlatform=tostring(events.OSPlatform),
+DeviceType=tostring(events.DeviceType),
+DeviceName=tostring(events.DeviceName),
+AccountDisplayName=tostring(events.AccountDisplayName),
+AccountObjectId=tostring(events.AccountObjectId),
+AccountSid=tostring(events.AccountSid),
+AccountUpn=tostring(events.AccountUpn),
+AccountDomain=tostring(events.AccountDomain),
+AccountName=tostring(events.AccountName),
+FailureReason=tostring(events.FailureReason),
+Protocol=tostring(events.Protocol),
+LogonType=tostring(events.LogonType),
+Application=tostring(events.Application),
+ActionType=tostring(events.ActionType),
+Timestamp=todatetime(events.Timestamp),
+UncommonForUser=todynamic(events.UncommonForUser),
+SourceSystem=tostring(events.SourceSystem),
+Type=tostring(events.Type),
+_TimeReceived=todatetime(now())
+}
+
+.alter table IdentityLogonEvents policy update @'[{"Source": "IdentityLogonEventsRaw", "Query": "IdentityLogonEventsExpand()", "IsEnabled": "True", "IsTransactional": true}]'

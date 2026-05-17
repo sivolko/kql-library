@@ -1,0 +1,7 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == 'MICROSOFT.WEB/SITES/CONFIG/WRITE'
+| project EventSubmissionTimestamp, Caller, CallerIpAddress, OperationNameValue,CorrelationId, RequestBody=parse_json(Properties).requestbody, RespondBody=parse_json(Properties).responseBody,  Level,ActivityStatusValue,ResourceProviderValue, Authorization,Claims,Properties, _ResourceId

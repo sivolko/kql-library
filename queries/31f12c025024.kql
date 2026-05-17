@@ -1,0 +1,22 @@
+// Source: https://github.com/NourKhalil0/detection-rules
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| where LogonType == 10  // RemoteInteractive = RDP
+| where TimeGenerated > ago(10m)
+| summarize
+    FailedAttempts = count(),
+    UniqueAccounts = dcount(TargetAccount),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by IpAddress, Computer
+| where FailedAttempts > 15
+| extend RiskScore = case(
+    UniqueAccounts > 5, "High - likely password spraying",
+    FailedAttempts > 50, "High - likely brute force",
+    "Medium - investigate"
+)
+| project IpAddress, Computer, FailedAttempts, UniqueAccounts, RiskScore, FirstSeen, LastSeen
+| order by FailedAttempts desc

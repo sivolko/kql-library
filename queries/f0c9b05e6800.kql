@@ -1,0 +1,38 @@
+// Source: https://github.com/ZaymarSolutions/thedopecloudteacher-website
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TimeRange = 1h;
+let SecurityEvents = FunctionAppLogs
+| where TimeGenerated > ago(TimeRange)
+| where FunctionName == "IngestSensorData"
+| extend 
+    SensorId = tostring(parse_json(Message).sensor_id),
+    Temperature = toreal(parse_json(Message).temperature),
+    AnomalyDetected = tobool(parse_json(Message).anomaly_detected),
+    AnomalyType = tostring(parse_json(Message).anomaly_type),
+    Severity = tostring(parse_json(Message).severity);
+
+// Summary Statistics
+SecurityEvents
+| summarize 
+    TotalRequests = count(),
+    UniqueSensors = dcount(SensorId),
+    AnomaliesDetected = countif(AnomalyDetected == true),
+    CriticalIncidents = countif(Severity == "Critical"),
+    HighSeverity = countif(Severity == "High"),
+    MediumSeverity = countif(Severity == "Medium"),
+    NormalActivity = countif(AnomalyDetected == false)
+| extend 
+    AnomalyRate = round((todouble(AnomaliesDetected) / todouble(TotalRequests)) * 100, 2),
+    SecurityScore = 100 - AnomalyRate
+| project 
+    ["Total Requests"] = TotalRequests,
+    ["Unique Sensors"] = UniqueSensors,
+    ["Anomalies Detected"] = AnomaliesDetected,
+    ["Anomaly Rate %"] = AnomalyRate,
+    ["Security Score"] = SecurityScore,
+    ["Critical"] = CriticalIncidents,
+    ["High"] = HighSeverity,
+    ["Medium"] = MediumSeverity,
+    ["Normal"] = NormalActivity

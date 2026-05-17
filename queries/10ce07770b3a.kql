@@ -1,0 +1,25 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago (1d)
+| where ActionType startswith "Asr"
+| extend isAudit = tostring(AdditionalFields.IsAudit)
+| where isAudit = true
+| project
+    TimeGenerated,
+    ActionType,
+    DeviceName,
+    FileName,
+    InitiatingProcessAccountDomain,
+    InitiatingProcessAccountName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessParentFileName,
+    ProcessTokenElevation
+| summarize
+    ['Total ASR audit hits']=count(),
+    ['Distinct ASR audit rule hits']=dcount(ActionType),
+    ['List of processes']=make_set(InitiatingProcessCommandLine)
+    by DeviceName
+| sort by ['Total ASR audit hits'] desc  

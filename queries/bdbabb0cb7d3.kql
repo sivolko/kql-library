@@ -1,0 +1,33 @@
+// Source: https://github.com/pluralsight-cloud/azure-automated-incident-response
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 7d;
+let port_opening = 
+    AzureActivity
+    | where TimeGenerated >= ago(lookback)
+    | where OperationNameValue has_any ("ipfilterrules", "securityRules", "publicIPAddresses", "firewallrules")
+          and OperationNameValue endswith "write"
+    | where ActivityStatusValue has_any("Accepted", "Accept")
+    | extend parsed_properties = parse_json(tostring(parse_json(Properties).responseBody)).properties
+    | extend segs = split(_ResourceId, "/")
+    | extend NSGRuleId = strcat_array(array_slice(segs, 0, array_length(segs)-3), "/")
+    | extend destinationPortRange = case(Properties has_cs 'destinationPortRange', tostring(parsed_properties.destinationPortRange), "")
+    | extend Name = tostring(split(Caller,'@',0)[0]), UPNSuffix = tostring(split(Caller,'@',1)[0])
+    | project TimeGenerated, destinationPortRange, IPAddress = CallerIpAddress, Operation = OperationNameValue, NSGRuleId, Name, ETypeId='IMPROPER_PORT';
+// Get NICs associated with NSGs
+port_opening
+| join kind=leftouter (
+    arg("").Resources
+    | where type == "microsoft.network/networkinterfaces"
+    | extend attachedNSG = tostring(properties.networkSecurityGroup.id)
+    | project nic_id = id, attachedNSG
+) on $left.NSGRuleId == $right.attachedNSG
+// Join NICs to their corresponding resource
+| join kind=leftouter (
+    arg("").Resources
+    | mv-expand nics=properties.networkProfile.networkInterfaces
+    | extend vm_id = id, nic_ref = tostring(nics.id)
+    | project vm_id, nic_ref
+) on $left.nic_id == $right.nic_ref
+| project TimeGenerated, destinationPortRange, IPAddress, Operation, NSGRuleId, Name, VMResourceId=vm_id, ETypeId

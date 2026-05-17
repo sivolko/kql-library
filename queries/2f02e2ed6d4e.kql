@@ -1,0 +1,11 @@
+// Source: https://github.com/Cameloo1/sharepoint-toolshell-micro-postmortem
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let suspiciousIIS = SecurityEvent
+| where EventID == 4688 and ParentProcessName has "\\w3wp.exe";
+DnsEvents
+| summarize firstSeen=min(TimeGenerated), count() by Name, ClientIP
+| where firstSeen > ago(24h) and count() < 5
+| join kind=inner (suspiciousIIS) on $left.ClientIP == $right.IpAddress
+| project firstSeen, Name, ClientIP, Account, CommandLine

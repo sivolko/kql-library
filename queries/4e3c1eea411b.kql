@@ -1,0 +1,6 @@
+// Source: https://github.com/xpinux/Project-SABER
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID =="1102"

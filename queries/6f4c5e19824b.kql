@@ -1,0 +1,10 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation in~ ("SoftDelete","MoveToDeletedItems","HardDelete")
+| extend AffectedItemsPath = tostring(parse_json(Folder).Path)
+| project-reorder UserId, ClientIP, UserType, MailboxOwnerUPN, Logon_Type, AffectedItemsPath
+//| where UserId != MailboxOwnerUPN
+| where AffectedItemsPath contains "Sent Items" 

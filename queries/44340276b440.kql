@@ -1,0 +1,9 @@
+// Source: https://github.com/h0ffayyy/MicrosoftSentinelStuff
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where DeviceVendor == "Palo Alto Networks"
+| where Activity == "SYSTEM"
+| where DeviceEventClassID == "device-telemetry"
+| summarize by DeviceName

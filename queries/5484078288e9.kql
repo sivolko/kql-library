@@ -1,0 +1,31 @@
+// Source: https://github.com/gearmobile1505/Cloud-Sec-Projects
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookbackTime = 24h;
+let suspiciousProcesses = dynamic(["powershell.exe", "cmd.exe", "wmic.exe", "cscript.exe", "wscript.exe"]);
+let suspiciousArgs = dynamic(["-enc", "Base64", "-windowstyle hidden", "-noprofile", "-executionpolicy bypass"]);
+let processThreshold = 2;
+
+SecurityEvent
+| where TimeGenerated > ago(lookbackTime)
+| where EventID == 4688  // Process creation
+| where ProcessCommandLine has_any (suspiciousProcesses)
+| where ProcessCommandLine has_any (suspiciousArgs)
+| extend 
+    ProcessName = tostring(split(NewProcessName, @"\")[-1]),
+    CommandLength = strlen(ProcessCommandLine),
+    HasEncodedCommand = iff(ProcessCommandLine contains "-enc" or ProcessCommandLine contains "Base64", true, false)
+| summarize 
+    ProcessCount = count(),
+    UniqueCommands = dcount(ProcessCommandLine),
+    Commands = make_set(ProcessCommandLine),
+    FirstExecution = min(TimeGenerated),
+    LastExecution = max(TimeGenerated)
+    by Account, Computer, ProcessName, bin(TimeGenerated, 1h)
+| where ProcessCount > processThreshold
+| extend RiskScore = case(
+    HasEncodedCommand and ProcessCount > 10, "Critical",
+    HasEncodedCommand or ProcessCount > 5, "High",
+    "Medium")
+| order by ProcessCount desc

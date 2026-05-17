@@ -1,0 +1,15 @@
+// Source: https://github.com/EmmanuelEnc/siem-threat-map
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Geo = _GetWatchlist("geoip");
+let SecurityEvent = Event;
+SecurityEvent
+| where EventID == 4625
+| order by TimeGenerated desc
+| extend IpAddress = extract(@"<Data Name=""IpAddress"">([^<]+)<", 1, tostring(EventData))
+| where isnotempty(IpAddress) and IpAddress !in ("-", "0", "127.0.0.1", "::1")
+| evaluate ipv4_lookup(Geo, IpAddress, network)
+| summarize FailureCount = count() by IpAddress, latitude, longitude, cityname, countryname
+| project FailureCount, AttackerIp = IpAddress, latitude, longitude, city = cityname, country = countryname,
+friendly_location = strcat(cityname, " (", countryname, ")");

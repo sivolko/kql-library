@@ -1,0 +1,30 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let starttime = 7d;
+let timeframe = 2h;
+let operations = dynamic(["FileSyncDownloadedFull", "FileDownloaded"]);
+OfficeActivity
+| where TimeGenerated > ago(starttime)
+| where Operation == "MemberAdded"
+| mv-expand Members
+| extend UserAdded = tostring(Members.UPN)
+| where UserAdded contains "#EXT#"
+| where CommunicationType == "Team"
+| project TimeAdded=TimeGenerated, UserId=tolower(UserAdded)
+| join kind=inner
+    (
+    OfficeActivity
+    | where TimeGenerated > ago(starttime)
+    | where Operation in (['operations'])
+    )
+    on UserId
+| project DownloadTime=TimeGenerated, TimeAdded, FileName=SourceFileName, UserId
+| where (DownloadTime - TimeAdded) between (0min .. timeframe)
+//Optionally summarize the data into the activity by each guest
+| summarize
+    ['Count of Files Downloaded']=count(),
+    ['List of Files Downloaded']=make_set(FileName)
+    by UserId
+| sort by ['Count of Files Downloaded'] desc 

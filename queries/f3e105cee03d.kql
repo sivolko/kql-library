@@ -1,0 +1,12 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago (30d)
+| where ActionType == "SmartScreenUrlWarning"
+| parse RemoteUrl with * '://' Domain '/' *
+| where isnotempty(Domain)
+| summarize Count=count()by Domain
+| sort by Count
+| render barchart  

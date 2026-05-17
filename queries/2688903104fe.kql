@@ -1,0 +1,30 @@
+// Source: https://github.com/devcaiada/monitoramento-azure-vm
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+/*
+    exclusao-vm.kql
+    Consultas de logs para monitoramento e exclusão de VMs no Azure
+*/
+
+/* 1. Listar eventos de exclusão de VMs */
+AzureActivity
+| where OperationNameValue == "Microsoft.Compute/virtualMachines/delete"
+| project TimeGenerated, ResourceGroup, Resource, Caller, ActivityStatusValue, CorrelationId
+
+/* 2. Listar falhas de exclusão de VMs */
+AzureActivity
+| where OperationNameValue == "Microsoft.Compute/virtualMachines/delete"
+| where ActivityStatusValue == "Failed"
+| project TimeGenerated, ResourceGroup, Resource, Caller, StatusCode, CorrelationId, Properties
+
+/* 3. Contar exclusões de VMs por usuário */
+AzureActivity
+| where OperationNameValue == "Microsoft.Compute/virtualMachines/delete"
+| summarize Count = count() by Caller
+
+/* 4. Últimas 10 exclusões de VMs */
+AzureActivity
+| where OperationNameValue == "Microsoft.Compute/virtualMachines/delete"
+| top 10 by TimeGenerated desc
+| project TimeGenerated, ResourceGroup, Resource, Caller, ActivityStatusValue

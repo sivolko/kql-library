@@ -1,0 +1,32 @@
+// Source: https://github.com/ZeroDeltaSEC/Exploring-KQL
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let start = {TimeRange:start};
+let end   = {TimeRange:end};
+let keywords = dynamic(["parola","parole","password","passwords","mot","mots","passe","passwort","passwörter","passwoerter",
+                        "contraseña","contraseñas","senha","senhas","heslo","heslá","hesla","focal","focail","faire"]);
+let sensitiveFiles =
+union
+(
+    DeviceFileEvents
+    | where TimeGenerated between (start .. end)
+    | where FileName has_any (".txt",".doc",".xls",".docx",".xlsx",".one")
+    | where FileName has_any (keywords) or FolderPath has_any (keywords)
+    | extend Source="LocalDevice", ActorUpn=InitiatingProcessAccountUpn
+    | project Timestamp=TimeGenerated, DeviceName, ActorUpn, FolderPath, FileName, FileSize, ActionType, Source
+),
+(
+    OfficeActivity
+    | where TimeGenerated between (start .. end)
+    | where OfficeWorkload in ("OneDrive","SharePoint")
+    | where SourceFileName has_any (".txt",".doc",".xls",".docx",".xlsx",".one")
+    | where SourceFileName has_any (keywords) or SourceRelativeUrl has_any (keywords)
+    | extend Source="O365", DeviceName=tostring(UserId), ActorUpn=tostring(UserId),
+             FolderPath=tostring(SourceRelativeUrl), FileName=tostring(SourceFileName),
+             FileSize=tolong(SourceFileSize), ActionType=tostring(Operation)
+    | project Timestamp=TimeGenerated, DeviceName, ActorUpn, FolderPath, FileName, FileSize, ActionType, Source
+);
+sensitiveFiles
+| summarize TotalEvents=count(), FirstSeen=min(Timestamp), LastSeen=max(Timestamp) by DeviceName, Source
+| order by TotalEvents desc

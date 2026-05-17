@@ -1,0 +1,20 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "ProcessPrimaryTokenModified"
+| where InitiatingProcessFileName has "reg.exe" and InitiatingProcessVersionInfoCompanyName has "Microsoft Corporation"
+| where InitiatingProcessCommandLine matches regex @"(?i)h[^a-zA-Z]*k[^a-zA-Z]*l[^a-zA-Z]*m"
+| where InitiatingProcessCommandLine matches regex @"(?i)s[^a-zA-Z]*a[^a-zA-Z]*m"
+or InitiatingProcessCommandLine matches regex @"(?i)s[^a-zA-Z]*y[^a-zA-Z]*s[^a-zA-Z]*t[^a-zA-Z]*e[^a-zA-Z]*m" 
+or InitiatingProcessCommandLine matches regex @"(?i)s[^a-zA-Z]*e[^a-zA-Z]*c[^a-zA-Z]*u[^a-zA-Z]*r[^a-zA-Z]*i[^a-zA-Z]*t[^a-zA-Z]*y"
+| extend ifTokenChange = tostring(parse_json(AdditionalFields).TokenModificationProperties)
+| extend tokenChangeDesc = parse_json(ifTokenChange).tokenChangeDescription
+| where tokenChangeDesc has "Privileges were added to the process"
+| summarize DetectionCount = count(), 
+            FirstTimeDetected = min(Timestamp), 
+            LastTimeDetected = max(Timestamp) 
+  by DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine
+| project DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, DetectionCount, FirstTimeDetected, LastTimeDetected 
+| order by FirstTimeDetected desc

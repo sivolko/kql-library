@@ -1,0 +1,27 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Price = 3.0;
+union withsource=TableName
+    SecurityEvent, Syslog, Event, Heartbeat, CommonSecurityLog,
+    Perf, ConfigurationData, WindowsFirewall
+| where TimeGenerated > ago(7d)
+| where isnotempty(Computer)
+| summarize 
+    TotalEvents = count(),
+    SizeInMB = round(sum(estimate_data_size(*)) / 1000.0 / 1000.0, 2),
+    Tables = make_set(TableName),
+    TableCount = dcount(TableName),
+    LastSeen = max(TimeGenerated)
+    by Computer
+| extend 
+    SizeInGB = round(SizeInMB / 1024.0, 3),
+    DailyAvgMB = round(SizeInMB / 7.0, 2),
+    EstMonthlyCostUSD = round((SizeInMB / 1024.0 / 7.0) * 30 * Price, 2)
+| project 
+    Computer, SizeInGB, SizeInMB, DailyAvgMB,
+    TotalEvents, TableCount, Tables,
+    EstMonthlyCostUSD, LastSeen
+| order by SizeInGB desc
+| take 50

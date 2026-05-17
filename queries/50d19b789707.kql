@@ -1,0 +1,100 @@
+// Source: https://github.com/shayshab/Azure_Sentinel_SOC_Lab
+// Collected: 2026-05-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| order by TimeGenerated desc
+
+// Failed logins with detailed information
+SecurityEvent
+| where EventID == 4625
+| project TimeGenerated, Account, Computer, IpAddress, WorkstationName, LogonType
+| order by TimeGenerated desc
+
+// Failed logins by IP address (top attackers)
+SecurityEvent
+| where EventID == 4625
+| summarize count() by IpAddress
+| order by count_ desc
+| take 20
+
+// Failed logins by account name
+SecurityEvent
+| where EventID == 4625
+| summarize count() by Account
+| order by count_ desc
+| take 10
+
+// Brute force detection (5+ attempts in 5 minutes)
+SecurityEvent
+| where EventID == 4625
+| summarize count() by IpAddress, bin(TimeGenerated, 5m)
+| where count_ > 5
+| order by count_ desc
+
+// Failed login timeline
+SecurityEvent
+| where EventID == 4625
+| summarize count() by bin(TimeGenerated, 1h)
+| render timechart
+
+// Recent failed logins (last 24 hours)
+SecurityEvent
+| where EventID == 4625 and TimeGenerated > ago(24h)
+| project TimeGenerated, Account, Computer, IpAddress
+| order by TimeGenerated desc
+
+// Failed logins by logon type
+SecurityEvent
+| where EventID == 4625
+| summarize count() by LogonType
+| order by count_ desc
+
+// Account enumeration detection
+SecurityEvent
+| where EventID == 4625
+| summarize count() by IpAddress, Account
+| where count_ > 3
+| summarize TotalAccounts = dcount(Account) by IpAddress
+| where TotalAccounts > 5
+| order by TotalAccounts desc
+
+// High-volume attack detection
+SecurityEvent
+| where EventID == 4625
+| summarize count() by IpAddress, bin(TimeGenerated, 10m)
+| where count_ > 20
+| order by count_ desc
+
+// Failed logins with geographic data (requires geoip watchlist)
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| project TimeGenerated, Account, Computer, IpAddress, CityName, CountryName, Latitude, Longitude
+| order by TimeGenerated desc
+
+// Attacks by country
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CountryName
+| order by count_ desc
+| take 20
+
+// Suspicious account targeting
+let suspiciousAccounts = datatable(Account:string) [
+    "admin",
+    "administrator", 
+    "root",
+    "test",
+    "guest",
+    "user",
+    "default"
+];
+SecurityEvent
+| where EventID == 4625
+| where Account in (suspiciousAccounts)
+| order by TimeGenerated desc 
