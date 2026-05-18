@@ -1,0 +1,18 @@
+// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "UsbDriveMounted" or ActionType == "UsbDriveUnmounted"
+| extend parsed = parse_json(AdditionalFields)
+| project 
+    Timestamp,
+    DeviceName,
+    DeviceId,
+    ActionType,
+    DriveLetter = tostring(parsed.DriveLetter),
+    Manufacturer = tostring(parsed.Manufacturer),
+    ProductName = tostring(parsed.ProductName),
+    SerialNumber = tostring(parsed.SerialNumber),
+    Volume = tostring(parsed.Volume)
+| sort by Timestamp desc

@@ -1,0 +1,48 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let AbsoluteThreshold = 100;        // files per hour trigger regardless of baseline
+let BaselineMultiplier = 3.0;
+let LookbackPeriod     = 1h;
+let BaselineDays       = 14d;
+
+// Per-user baseline download average per hour
+let Baseline = OfficeActivity
+    | where TimeGenerated between (ago(BaselineDays) .. ago(LookbackPeriod))
+    | where RecordType in ("SharePoint", "OneDrive")
+    | where Operation in ("FileDownloaded", "FileSyncDownloadedFull", "FileSyncDownloadedPartial")
+    | summarize HourlyEvents = count() by UserId, bin(TimeGenerated, 1h)
+    | summarize AvgHourly = avg(HourlyEvents), StdDev = stdev(HourlyEvents) by UserId;
+
+// Current hour
+OfficeActivity
+| where TimeGenerated > ago(LookbackPeriod)
+| where RecordType in ("SharePoint", "OneDrive")
+| where Operation in ("FileDownloaded", "FileSyncDownloadedFull", "FileSyncDownloadedPartial")
+| summarize
+    DownloadCount   = count(),
+    FileList        = make_set(SourceFileName, 20),
+    SiteURLs        = make_set(SiteUrl, 5),
+    ClientIPs       = make_set(ClientIP, 5),
+    UserAgents      = make_set(UserAgent, 3)
+    by UserId
+| join kind=leftouter Baseline on UserId
+| extend
+    AvgHourly       = coalesce(AvgHourly, 0.0),
+    Threshold       = max_of(todouble(AbsoluteThreshold), AvgHourly * BaselineMultiplier)
+| where DownloadCount >= Threshold
+| extend AlertSeverity = case(
+    DownloadCount >= 500, "High",
+    DownloadCount >= 200, "Medium",
+    "Low")
+| project
+    TimeGenerated  = now(),
+    UserId,
+    DownloadCount,
+    AvgHourlyBaseline = round(AvgHourly, 1),
+    Threshold      = round(Threshold, 0),
+    FileList,
+    SiteURLs,
+    ClientIPs,
+    AlertSeverity

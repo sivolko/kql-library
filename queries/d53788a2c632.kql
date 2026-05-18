@@ -1,0 +1,14 @@
+// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let AzureActivityIPs = AzureActivity
+    | project CallerIpAddress, Caller, TimeGenerated, OperationNameValue
+    | where not(tostring(Caller) matches regex "^[0-9a-fA-F-]{36}$") and Caller != "Microsoft.Advisor" and Caller != "" and Caller != "AcmClient@microsoft.com";
+let SignInLogsIPs = SigninLogs
+    | summarize by IPAddress;
+AzureActivityIPs
+    | join kind=leftanti (SignInLogsIPs) on $left.CallerIpAddress == $right.IPAddress
+    | summarize by Caller
+    // Use the below to investigate
+    //| project CallerIpAddress, Caller, TimeGenerated, OperationNameValue

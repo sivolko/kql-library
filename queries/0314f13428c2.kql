@@ -1,0 +1,103 @@
+// Source: https://github.com/shayshab/Azure_Sentinel_SOC_Lab
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let maliciousIPs = datatable(IP:string, ThreatType:string) [
+    "192.168.1.100", "Botnet",
+    "10.0.0.50", "Malware",
+    "172.16.0.25", "Phishing"
+];
+SecurityEvent
+| where EventID == 4625
+| where IpAddress in (maliciousIPs)
+| project TimeGenerated, Account, Computer, IpAddress, ThreatType
+| order by TimeGenerated desc
+
+// High-Risk Country Detection
+let highRiskCountries = datatable(Country:string) [
+    "Russia",
+    "China", 
+    "North Korea",
+    "Iran"
+];
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| where CountryName in (highRiskCountries)
+| project TimeGenerated, Account, Computer, IpAddress, CountryName
+| order by TimeGenerated desc
+
+// Suspicious Account Names
+let suspiciousAccounts = datatable(Account:string) [
+    "admin",
+    "administrator",
+    "root",
+    "test",
+    "guest",
+    "user",
+    "default"
+];
+SecurityEvent
+| where EventID == 4625
+| where Account in (suspiciousAccounts)
+| project TimeGenerated, Account, Computer, IpAddress
+| order by TimeGenerated desc
+
+// Brute Force Attack Detection
+SecurityEvent
+| where EventID == 4625
+| summarize count() by IpAddress, bin(TimeGenerated, 5m)
+| where count_ > 10
+| extend ThreatLevel = case(
+    count_ > 50, "Critical",
+    count_ > 20, "High",
+    "Medium"
+  )
+| order by count_ desc
+
+// Account Enumeration Detection
+SecurityEvent
+| where EventID == 4625
+| summarize count() by IpAddress, Account
+| where count_ > 3
+| summarize TotalAccounts = dcount(Account) by IpAddress
+| where TotalAccounts > 10
+| extend ThreatType = "Account Enumeration"
+| order by TotalAccounts desc
+
+// Geographic Attack Patterns
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625 and TimeGenerated > ago(24h)
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CountryName
+| order by count_ desc
+| take 10
+
+// Simple Threat Score
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by IpAddress, CountryName
+| extend ThreatScore = case(
+    CountryName in ("Russia", "China", "North Korea"), count_ * 3,
+    CountryName in ("Iran", "Syria"), count_ * 2,
+    count_
+  )
+| where ThreatScore > 10
+| order by ThreatScore desc
+
+// Threat Intelligence Summary
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625 and TimeGenerated > ago(7d)
+| lookup geo on $left.IpAddress == $right.Network
+| summarize 
+    TotalAttempts = count(),
+    UniqueIPs = dcount(IpAddress),
+    UniqueCountries = dcount(CountryName)
+    by CountryName
+| order by TotalAttempts desc
+| take 15 

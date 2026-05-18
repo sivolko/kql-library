@@ -1,0 +1,7 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 8002
+| where TimeGenerated > ago(5m)

@@ -1,0 +1,116 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "SetThreadContextApiCall"
+| where isnotempty(AdditionalFields)
+| extend Fields = parse_json(AdditionalFields)
+| where tolong(Fields.ContextFlags) has "0x10"
+    // CONTEXT_DEBUG_REGISTERS = 0x00000010
+    or tolong(Fields.ContextFlags) band 0x10 > 0
+| where InitiatingProcessFileName !in~
+    ("WinDbg.exe", "msvsmon.exe", "devenv.exe", "x64dbg.exe", "ida64.exe")
+| project Timestamp, DeviceName, ProcessId, InitiatingProcessFileName,
+          TargetProcessId = tolong(Fields.TargetProcessId),
+          ContextFlags = Fields.ContextFlags,
+          Dr0 = Fields.Dr0,
+          ActionType, ReportId
+| order by Timestamp desc
+
+// ── Query 2: NtContinue Called Outside Exception Handler Context (Variant B) ───
+//
+// Rationale: NtContinue is legitimately called only within exception dispatch:
+// KiDispatchException → RtlDispatchException → VEH/SEH handler → NtContinue.
+// Calling NtContinue from application code outside that chain is anomalous
+// and indicates the NtContinue HWBP bypass technique.
+//
+// This query looks for NtContinue events where the call stack does not include
+// exception dispatch frames.
+DeviceEvents
+| where ActionType == "NtContinueApiCall"
+| where isnotempty(CallStackReturnAddresses)
+| extend Frames = parse_json(CallStackReturnAddresses)
+// Legitimate NtContinue call chain includes KiDispatchException or RtlDispatchException
+| extend HasExceptionDispatch = array_length(
+    Frames
+    | mv-expand F = Frames
+    | where F.SymbolName contains "DispatchException"
+        or F.SymbolName contains "KiUserExceptionDispatch"
+    ) > 0
+| where HasExceptionDispatch == false
+// Filter known debugger processes
+| where InitiatingProcessFileName !in~
+    ("WinDbg.exe", "msvsmon.exe", "devenv.exe", "x64dbg.exe", "ida64.exe")
+| project Timestamp, DeviceName, ProcessId, InitiatingProcessFileName,
+          CallStackReturnAddresses, ReportId
+| order by Timestamp desc
+
+// ── Query 3: Debug Register Anomaly Scan — DR0 Set to AMSI Range ───────────────
+//
+// Rationale: Regardless of how debug registers were set (SetThreadContext or
+// NtContinue), they remain set in the thread state until explicitly cleared.
+// Scanning for threads with DR0 set to addresses inside amsi.dll catches
+// both variants and any other HWBP technique targeting AMSI.
+//
+// This requires MDE telemetry that includes thread debug register state.
+DeviceProcessEvents
+| where isnotempty(AdditionalFields)
+| extend Fields = parse_json(AdditionalFields)
+| where isnotempty(Fields.Dr0) and tolong(Fields.Dr0) > 0
+// Approximate amsi.dll load range check — actual range varies per system
+// In practice, correlate with DeviceImageLoadEvents to get exact amsi.dll base
+| where InitiatingProcessFileName !in~
+    ("WinDbg.exe", "msvsmon.exe", "devenv.exe", "x64dbg.exe", "ida64.exe")
+| project Timestamp, DeviceName, ProcessId, ProcessFileName = InitiatingProcessFileName,
+          Dr0Value = Fields.Dr0, ReportId
+| order by Timestamp desc
+
+// ── Query 4: AmsiScanBuffer Near-Zero Latency (VEH Redirect Active) ───────────
+//
+// Rationale: When the HWBP bypass is armed, AmsiScanBuffer returns
+// AMSI_RESULT_CLEAN (0) without executing its scan body. This produces
+// anomalously fast AMSI scan events — measurable if MDE captures AMSI
+// event timing. Normal AmsiScanBuffer takes ~1ms for a small payload;
+// the bypassed version returns in microseconds.
+//
+// Note: This query requires MDE AMSI telemetry with duration fields.
+DeviceEvents
+| where ActionType == "AmsiScanned"
+| where isnotempty(AdditionalFields)
+| extend Fields = parse_json(AdditionalFields)
+| extend ScanResult = tolong(Fields.ScanResult)
+| extend ScanDurationUs = tolong(Fields.DurationUs)
+// AMSI_RESULT_CLEAN = 0; sub-100 microsecond scan suggests VEH redirect
+| where ScanResult == 0 and ScanDurationUs < 100
+| project Timestamp, DeviceName, ProcessId, InitiatingProcessFileName,
+          ScanResult, ScanDurationUs, Fields.Content, ReportId
+| order by Timestamp desc
+
+// ── Query 5: Combined HWBP Bypass Indicator Correlation ───────────────────────
+//
+// Rationale: Correlate SetThreadContext (Variant A) or anomalous NtContinue
+// (Variant B) events with subsequent near-instant AMSI scans from the same
+// process — high-confidence HWBP bypass detection.
+let hwbp_setup_events =
+    DeviceEvents
+    | where ActionType in ("SetThreadContextApiCall", "NtContinueApiCall")
+    | where isnotempty(AdditionalFields)
+    | extend Fields = parse_json(AdditionalFields)
+    | where ActionType == "SetThreadContextApiCall"
+        and tolong(Fields.ContextFlags) band 0x10 > 0
+    | project SetupTimestamp = Timestamp, DeviceName, ProcessId,
+              InitiatingProcessFileName, ReportId;
+let amsi_clean_fast =
+    DeviceEvents
+    | where ActionType == "AmsiScanned"
+    | extend Fields = parse_json(AdditionalFields)
+    | where tolong(Fields.ScanResult) == 0 and tolong(Fields.DurationUs) < 100
+    | project AmsiTimestamp = Timestamp, DeviceName, ProcessId, ReportId;
+hwbp_setup_events
+| join kind=inner amsi_clean_fast on DeviceName, ProcessId
+| where AmsiTimestamp > SetupTimestamp
+    and AmsiTimestamp < datetime_add('minute', 5, SetupTimestamp)
+| project SetupTimestamp, AmsiTimestamp, DeviceName, ProcessId,
+          InitiatingProcessFileName
+| order by SetupTimestamp desc

@@ -1,0 +1,8 @@
+// Source: https://github.com/Matt-C-G/sentinel-labs
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago(14d)
+| where ActionType in ("TamperProtectionFailure","SenseServiceStopped","RealTimeProtectionDisabled")
+| project TimeGenerated, DeviceName, ActionType, InitiatingProcessAccountName

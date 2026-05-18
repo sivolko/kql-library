@@ -1,0 +1,27 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let FailedLogonsThreshold = 20;
+let SuccessfulLogonsThreshold = 1;
+let TimeWindow = 15m;
+let SearchWindow = 120; // minutes between successful brute force and password change
+IdentityLogonEvents
+| where isnotempty(AccountUpn)
+| summarize 
+    TotalAttempts = count(), 
+    SuccessfulAttempts = countif(ActionType == "LogonSuccess"), 
+    FailedAttempts = countif(ActionType == "LogonFailed") 
+    by bin(Timestamp, TimeWindow), AccountUpn
+| where SuccessfulAttempts >= SuccessfulLogonsThreshold and FailedAttempts >= FailedLogonsThreshold
+| join kind=inner (
+    IdentityDirectoryEvents
+    | where Timestamp > ago(30d)
+    | where ActionType == "Account Password changed"
+    | where isnotempty(TargetAccountUpn)
+    | extend PasswordChangeTime = Timestamp
+    | project PasswordChangeTime, TargetAccountUpn
+) on $left.AccountUpn == $right.TargetAccountUpn
+| extend TimeDifference = datetime_diff('minute', PasswordChangeTime, Timestamp)
+| where TimeDifference > 0
+| where TimeDifference <= SearchWindow

@@ -1,0 +1,8 @@
+// Source: https://github.com/jkerai1/KQL-Queries
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(90d)
+| where Operation == "Set-SafeLinksPolicy"
+| where parse_json(Parameters)[13].Value == "True" and parse_json(Parameters)[13].Name == "AllowClickThrough"

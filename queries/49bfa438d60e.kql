@@ -1,0 +1,11 @@
+// Source: https://github.com/kehaitcfyn/DefenderXDR
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let MonitoredCommands = dynamic(['net', 'wmic', 'schtasks', 'psexec', 'cmdkey', 'winrs', 'pscp', 'winscp']);
+DeviceEvents
+| where Timestamp > ago(30d)
+| where InitiatingProcessCommandLine has_any(MonitoredCommands) 
+| where InitiatingProcessCommandLine matches regex '(?:(?:(?:-p)|(?:-password)|(?:-passwd)|(?:--password)|(?:--passwd)|(?:/P)|(?:/PASSWD)|(?:/PASSWORD))(?:\\s+|\\:)(?<password>(?:"((?:\\\\.|[^"\\\\])*)")|(?:[^\\s"]+)))'
+or InitiatingProcessCommandLine matches regex '(?:(?:(?:-u)|(?:-user)|(?:-username)|(?:--user)|(?:--username)|(?:/u)|(?:/USER)|(?:/USERNAME))(?:\\s+|\\:)(?<username>(?:"((?:\\\\.|[^"\\\\])*)")|(?:[^\\s"]+)))'
+| distinct DeviceName,InitiatingProcessCommandLine,InitiatingProcessAccountDomain;

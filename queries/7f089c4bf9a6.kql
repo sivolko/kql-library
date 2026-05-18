@@ -1,0 +1,24 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let BrowserList = dynamic(["msedge.exe", "chrome.exe", "firefox.exe", "brave.exe"]);
+let MonitoredProcesses = dynamic ( ["cmd.exe", "powershell.exe", "powershell_ise.exe", "wscript.exe", "cscript.exe",
+    "mshta.exe", "certutil.exe", "bitsadmin.exe", "regsvr32.exe", "rundll32.exe", "wmic.exe", "msbuild.exe", "ftp.exe",
+    "curl.exe", "wget.exe", "python.exe", "java.exe", "javaw.exe", "csc.exe", "msiexec.exe"]);
+let DevProcEvents = 
+    DeviceProcessEvents
+    | extend DevProcTime = bin(Timestamp, 1s)
+    | where FileName has_any (MonitoredProcesses)
+    | where InitiatingProcessFileName has_any (BrowserList)
+    | project DevProcTime, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, AccountUpn, 
+    ParentBrowserPID = InitiatingProcessParentId;
+// 
+DeviceEvents
+| extend DevTime = bin(Timestamp, 1s)
+| where ActionType == "GetClipboardData"
+| join kind=inner DevProcEvents on DeviceId
+| where abs(datetime_diff('second', DevTime, DevProcTime)) <= 10
+| where InitiatingProcessParentId == ParentBrowserPID
+| project DevProcTime, DeviceId, DeviceName, FileName1, ProcessCommandLine1, InitiatingProcessFileName1, InitiatingProcessCommandLine1, InitiatingProcessParentFileName1, AccountUpn, 
+ParentBrowserPID

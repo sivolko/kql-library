@@ -1,0 +1,10 @@
+// Source: https://github.com/ugurkocde/kql_search_submissions
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| where Timestamp > ago(30d)
+| project ISP, Location, IPAddress, FailureReason
+| summarize valid = countif(isempty(FailureReason) or FailureReason contains "Success"), failure = countif( isnotempty(FailureReason) and FailureReason !contains "Success"), make_set(IPAddress) by ISP, Location
+| order by failure
+| where valid == 0 and failure > 5 

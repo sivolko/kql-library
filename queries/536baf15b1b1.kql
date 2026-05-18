@@ -1,0 +1,7 @@
+// Source: https://github.com/jkerai1/KQL-Queries
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/DELETE"
+| where ActivityStatusValue <> "Start" //so we only see successes or failures, feel free to remove

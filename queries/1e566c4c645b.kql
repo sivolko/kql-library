@@ -1,0 +1,57 @@
+// Source: https://github.com/johnstel/azure-sre-agent-energy-grid
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TimeRange = 7d;            // Parameter: Time window
+let timeBin = 1h;              // Parameter: Time bucket granularity
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUERY LOGIC
+// ─────────────────────────────────────────────────────────────────────────────
+
+// RBAC role assignments and modifications
+AzureActivity
+| where TimeGenerated > ago(TimeRange)
+| where OperationNameValue contains "roleAssignments" or OperationNameValue contains "roleDefinitions"
+| extend
+    Operation = tostring(OperationNameValue),
+    Caller = tostring(Caller),
+    Status = tostring(ActivityStatusValue),
+    ResourceId = tostring(_ResourceId),  // ARM resource ID for RBAC operation
+    CorrelationId = tostring(CorrelationId),  // ARM operation correlation ID (native field)
+    PrincipalId = tostring(parse_json(Properties).principalId),
+    RoleDefinitionId = tostring(parse_json(Properties).roleDefinitionId)
+| extend
+    TimeBucket = bin(TimeGenerated, timeBin)  // Time bucket for trending
+| project
+    TimeBucket,
+    TimeGenerated,
+    Operation,
+    Caller,
+    Status,
+    ResourceGroup,
+    ResourceId,
+    PrincipalId,
+    RoleDefinitionId,
+    CorrelationId
+| order by TimeGenerated desc
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPECTED RESULTS & TROUBLESHOOTING
+// ─────────────────────────────────────────────────────────────────────────────
+// This query will return no results until Activity Log diagnostic export is configured.
+//
+// Wave 1 UAT verification steps:
+// 1. Verify Bicep module exists: infra/bicep/modules/activity-log-diagnostics.bicep
+// 2. Verify module is called from main.bicep
+// 3. Deploy infrastructure with Activity Log export enabled
+// 4. Wait 10-15 minutes for first Activity Log events to appear in Log Analytics
+// 5. Run this query to verify RBAC audit trail is queryable
+//
+// Expected results after deployment:
+// - Role assignments during deployment (Contributor, Log Analytics Reader, etc.)
+// - SRE Agent managed identity principal ID in results
+// - Correlation IDs for troubleshooting deployment issues
+//
+// Workaround: Azure Portal > Activity Log (90-day platform retention, not KQL queryable)
+// or az monitor activity-log list --resource-group <rg> (Azure CLI)

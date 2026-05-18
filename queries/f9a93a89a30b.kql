@@ -1,0 +1,57 @@
+// Source: https://github.com/AmeenShareif/HomeLab
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 1h;
+let failthreshold = 3;
+
+let failed_logons =
+    SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | where EventID == 4625
+    | where LogonType in (3, 10)               // network or remote interactive
+    | summarize
+        FailCount = count(),
+        FailStart = min(TimeGenerated),
+        FailEnd = max(TimeGenerated)
+        by TargetUserName, IpAddress, Computer;
+
+let successful_logons =
+    SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | where EventID == 4624
+    | where LogonType in (3, 10)
+    | project
+        SuccessTime = TimeGenerated,
+        TargetUserName,
+        IpAddress,
+        Computer,
+        LogonType;
+
+failed_logons
+| where FailCount >= failthreshold
+| join kind=inner successful_logons
+    on TargetUserName, IpAddress, Computer
+| where SuccessTime > FailEnd                  // success came AFTER the failures
+| project
+    Computer,
+    IpAddress,
+    TargetUserName,
+    FailCount,
+    FailStart,
+    FailEnd,
+    SuccessTime,
+    MinutesBetween = datetime_diff('minute', SuccessTime, FailEnd)
+| order by SuccessTime desc
+
+// -----------------------------------------------------------------------------
+// NTLM credential validation correlation (optional, adds context)
+// Event 4776 fires when NTLM is used - useful for detecting pass-the-hash
+// -----------------------------------------------------------------------------
+
+// SecurityEvent
+// | where TimeGenerated > ago(lookback)
+// | where EventID == 4776
+// | where Keywords == "Audit Failure"
+// | summarize NTLMFailures = count() by TargetUserName, IpAddress
+// | where NTLMFailures >= failthreshold

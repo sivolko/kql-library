@@ -1,0 +1,31 @@
+// Source: https://github.com/ep3p/Sentinel_KQL
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let query_frequency = 1h;
+let query_period = 14d;
+IdentityLogonEvents
+| where TimeGenerated > ago(query_period)
+| where LogonType == "Delegated resource access"
+| extend
+    KerberosDelegationType = tostring(AdditionalFields["KerberosDelegationType"]),
+    ActorObjectSid = AccountSid,
+    ActorObjectName = tostring(AdditionalFields["ACTOR.DEVICE"]),
+    TargetServicePrincipalNames = tostring(AdditionalFields["Spns"])
+| summarize TimeGenerated = arg_min(TimeGenerated, *) by KerberosDelegationType, ActorObjectSid, ActorObjectName, IPAddress, TargetServicePrincipalNames, TargetDeviceName, TargetAccountDisplayName
+| where TimeGenerated > ago(query_frequency)
+| project
+    TimeGenerated,
+    Application,
+    ActionType,
+    LogonType,
+    Protocol,
+    DeviceName,
+    KerberosDelegationType,
+    ActorObjectSid,
+    ActorObjectName,
+    IPAddress,
+    TargetServicePrincipalNames,
+    TargetDeviceName,
+    TargetAccountDisplayName,
+    AdditionalFields

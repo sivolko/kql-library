@@ -1,0 +1,229 @@
+// Source: https://github.com/kevinflint-cs2/sentinel-threat-hunting
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeWindow = 24h;
+let beaconThreshold = 10;
+CommonSecurityLog
+| where TimeGenerated > ago(timeWindow)
+| where DeviceAction != "Deny"
+| extend ConnectionTime = bin(TimeGenerated, 1m)
+| summarize 
+    ConnectionCount = count(),
+    AvgBytes = avg(SentBytes + ReceivedBytes),
+    StdDevBytes = stdev(SentBytes + ReceivedBytes),
+    Intervals = make_list(ConnectionTime)
+    by SourceIP, DestinationIP, DestinationPort, ApplicationProtocol
+| extend IntervalConsistency = iff(StdDevBytes < AvgBytes * 0.2, "High", "Low")
+| where ConnectionCount > beaconThreshold and IntervalConsistency == "High"
+| extend Severity = case(
+    DestinationPort in (443, 80, 8080, 53), "High", // Common C2 ports
+    "Medium"
+)
+| project 
+    SourceIP,
+    DestinationIP,
+    DestinationPort,
+    Protocol = ApplicationProtocol,
+    BeaconCount = ConnectionCount,
+    IntervalConsistency,
+    AvgBytes,
+    Severity
+| order by BeaconCount desc
+
+// ----------------------------------------------------------------------------
+// 2. DNS Tunneling Detection
+// ----------------------------------------------------------------------------
+// Detects DNS queries with characteristics of data exfiltration tunnels
+DnsEvents
+| where TimeGenerated > ago(24h)
+| extend QueryLength = strlen(Name)
+| extend SubdomainCount = countof(Name, ".")
+| extend EntropyScore = hash_md5(Name) // Simplified entropy calculation
+| where QueryLength > 50 or SubdomainCount > 5
+| where Name !has_any (".microsoft.com", ".windows.com", ".azure.com") // Exclude legitimate domains
+| summarize 
+    QueryCount = count(),
+    AvgQueryLength = avg(QueryLength),
+    MaxQueryLength = max(QueryLength),
+    UniqueDomains = dcount(Name),
+    Queries = make_set(Name, 5)
+    by ClientIP, IPAddresses
+| where QueryCount > 20 or MaxQueryLength > 100
+| extend TunnelingScore = case(
+    MaxQueryLength > 100 and QueryCount > 50, "High",
+    MaxQueryLength > 75 or QueryCount > 30, "Medium",
+    "Low"
+)
+| project 
+    ClientIP,
+    ResolvedIP = IPAddresses,
+    QueryCount,
+    AvgQueryLength,
+    MaxQueryLength,
+    UniqueDomains,
+    TunnelingScore,
+    SampleQueries = Queries
+| order by TunnelingScore desc, QueryCount desc
+
+// ----------------------------------------------------------------------------
+// 3. Suspicious Outbound Connections to Rare Destinations
+// ----------------------------------------------------------------------------
+// Detects connections to rarely accessed external IPs
+let LookbackPeriod = 30d;
+let RecentPeriod = 24h;
+let RareConnectionThreshold = 5; // Seen by fewer than 5 hosts
+let HistoricalConnections = CommonSecurityLog
+| where TimeGenerated between (ago(LookbackPeriod) .. ago(RecentPeriod))
+| where DeviceDirection == "Outbound"
+| summarize HistoricalHosts = dcount(SourceIP) by DestinationIP;
+CommonSecurityLog
+| where TimeGenerated > ago(RecentPeriod)
+| where DeviceDirection == "Outbound"
+| where DestinationIP !startswith "10." and DestinationIP !startswith "172.16." and DestinationIP !startswith "192.168."
+| summarize 
+    RecentHosts = dcount(SourceIP),
+    ConnectionCount = count(),
+    SourceHosts = make_set(SourceIP, 10),
+    Ports = make_set(DestinationPort, 10)
+    by DestinationIP
+| join kind=leftouter (HistoricalConnections) on DestinationIP
+| extend HistoricalHosts = coalesce(HistoricalHosts, 0)
+| where HistoricalHosts < RareConnectionThreshold
+| extend NewDestination = iff(HistoricalHosts == 0, "Yes", "No")
+| project 
+    DestinationIP,
+    ConnectionCount,
+    RecentHosts,
+    HistoricalHosts,
+    NewDestination,
+    SourceHosts,
+    Ports
+| order by ConnectionCount desc
+
+// ----------------------------------------------------------------------------
+// 4. Non-Standard Port Usage for Common Protocols
+// ----------------------------------------------------------------------------
+// Detects HTTP/HTTPS traffic on non-standard ports
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DeviceDirection == "Outbound"
+| where ApplicationProtocol in ("HTTP", "HTTPS", "SSL")
+| where DestinationPort !in (80, 443, 8080, 8443)
+| summarize 
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    ConnectionCount = count(),
+    SourceHosts = make_set(SourceIP, 10),
+    DestinationHosts = make_set(DestinationIP, 10)
+    by DestinationPort, ApplicationProtocol
+| extend Severity = case(
+    DestinationPort in (1337, 4444, 5555, 31337), "High", // Known malicious ports
+    "Medium"
+)
+| order by ConnectionCount desc
+
+// ----------------------------------------------------------------------------
+// 5. Long Connection Duration (Potential Interactive Session)
+// ----------------------------------------------------------------------------
+// Detects long-lasting connections that may indicate an active C2 session
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DeviceDirection == "Outbound"
+| extend ConnectionDuration = ReceivedBytes + SentBytes // Proxy for duration
+| where isnotempty(SessionID)
+| summarize 
+    SessionStart = min(TimeGenerated),
+    SessionEnd = max(TimeGenerated),
+    TotalBytes = sum(ReceivedBytes + SentBytes),
+    EventCount = count()
+    by SessionID, SourceIP, DestinationIP, DestinationPort
+| extend SessionDuration = datetime_diff('minute', SessionEnd, SessionStart)
+| where SessionDuration > 60 // Sessions longer than 1 hour
+| project 
+    SessionID,
+    SourceIP,
+    DestinationIP,
+    DestinationPort,
+    SessionStart,
+    SessionEnd,
+    DurationMinutes = SessionDuration,
+    TotalBytes,
+    EventCount
+| order by DurationMinutes desc
+
+// ----------------------------------------------------------------------------
+// 6. TOR/Proxy Detection
+// ----------------------------------------------------------------------------
+// Detects connections to known TOR nodes or proxy services
+let TORNodes = externaldata(IPAddress:string)
+[@"https://check.torproject.org/exit-addresses"] with (format="txt");
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DeviceDirection == "Outbound"
+| where DestinationIP in (TORNodes) or DestinationPort in (9001, 9030, 9050, 9051)
+| summarize 
+    FirstConnection = min(TimeGenerated),
+    LastConnection = max(TimeGenerated),
+    ConnectionCount = count(),
+    SourceHosts = make_set(SourceIP, 20),
+    TORNodes = make_set(DestinationIP, 10)
+    by DestinationPort
+| project-reorder FirstConnection, LastConnection, ConnectionCount, TORNodes, SourceHosts
+
+// ----------------------------------------------------------------------------
+// 7. Domain Generation Algorithm (DGA) Detection
+// ----------------------------------------------------------------------------
+// Detects DNS queries matching DGA patterns
+DnsEvents
+| where TimeGenerated > ago(24h)
+| extend DomainName = tostring(split(Name, ".")[0])
+| extend DomainLength = strlen(DomainName)
+| extend VowelCount = countof(DomainName, "[aeiou]", "regex")
+| extend ConsonantCount = DomainLength - VowelCount
+| extend VowelRatio = todouble(VowelCount) / todouble(DomainLength)
+| extend HasNumbers = iff(DomainName matches regex "[0-9]", 1, 0)
+| where DomainLength > 10
+| where VowelRatio < 0.3 or VowelRatio > 0.7 // Unusual vowel distribution
+| where HasNumbers == 1
+| where Name !has_any (".microsoft.", ".windows.", ".azure.", ".cloudapp.", ".google.", ".amazon.")
+| summarize 
+    QueryCount = count(),
+    UniqueQueries = dcount(Name),
+    SampleDomains = make_set(Name, 10)
+    by ClientIP
+| where UniqueQueries > 10
+| extend DGAScore = case(
+    UniqueQueries > 50, "High",
+    UniqueQueries > 20, "Medium",
+    "Low"
+)
+| order by DGAScore desc, UniqueQueries desc
+
+// ----------------------------------------------------------------------------
+// 8. Fast Flux DNS Detection
+// ----------------------------------------------------------------------------
+// Detects domains with rapidly changing IP addresses
+let TimeWindow = 24h;
+DnsEvents
+| where TimeGenerated > ago(TimeWindow)
+| where isnotempty(IPAddresses)
+| extend IP = tostring(split(IPAddresses, ",")[0])
+| summarize 
+    UniqueIPs = dcount(IP),
+    IPs = make_set(IP, 20),
+    QueryCount = count()
+    by Name, bin(TimeGenerated, 1h)
+| where UniqueIPs > 5
+| summarize 
+    MaxUniqueIPsPerHour = max(UniqueIPs),
+    TotalUniqueIPs = dcount(tostring(IPs)),
+    TotalQueries = sum(QueryCount)
+    by Name
+| where MaxUniqueIPsPerHour > 10
+| extend Severity = case(
+    MaxUniqueIPsPerHour > 20, "High",
+    "Medium"
+)
+| project Name, MaxUniqueIPsPerHour, TotalUniqueIPs, TotalQueries, Severity
+| order by MaxUniqueIPsPerHour desc

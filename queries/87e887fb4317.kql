@@ -1,0 +1,18 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago (30d)
+| where ActionType == "UserAccountAddedToLocalGroup"
+| where InitiatingProcessAccountSid !="S-1-5-18"
+| extend AddtlFields = parse_json(AdditionalFields)
+| project Timestamp, DeviceName, InitiatingProcessAccountName, AccountSid, AddtlFields
+| join kind=inner IdentityInfo on $left.AccountSid==$right.OnPremSid
+| summarize arg_max(Timestamp, *) by DeviceName, AccountUpn
+| project Timestamp,
+          DeviceName,
+          ["Modified Group"] = AddtlFields["GroupName"],
+          ["Account Added"] = AccountUpn,
+          ["Account Added By"] = InitiatingProcessAccountName
+| sort by Timestamp desc

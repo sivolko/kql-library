@@ -1,0 +1,516 @@
+// Source: https://github.com/Zurackus/Public
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ReconWindow = 1h;
+let ExfilWindow = 2h;
+let MinReconOperations = 5;
+
+// Identify reconnaissance activities on Azure SQL/RDS resources
+let ReconActivities = AzureActivity
+| where TimeGenerated >= ago(24h)
+| where OperationNameValue has_any ("SQL", "DATABASE", "SERVER", "EXPORT", "BACKUP")
+    and CategoryValue == "Administrative"
+| where ActivityStatusValue == "Success"
+| extend UserName = Caller
+| extend SourceIP = CallerIpAddress
+| where isnotempty(UserName) and isnotempty(SourceIP)
+| summarize 
+    ReconCount = count(),
+    FirstRecon = min(TimeGenerated),
+    LastRecon = max(TimeGenerated),
+    ReconOperations = make_set(OperationNameValue),
+    ResourceGroups = make_set(ResourceGroup),
+    UniqueResources = dcount(ResourceId)
+    by UserName, SourceIP
+| where ReconCount >= MinReconOperations;
+
+// Look for subsequent data exfiltration indicators via Netskope
+let ExfilActivities = NetskopeEventsApplication_CL
+| where TimeGenerated >= ago(24h)
+| where activity in ("Download", "Export", "Browse")
+    and (app has_any ("SQL", "Database", "Azure") or appsuite == "Microsoft")
+| extend UserName = coalesce(ur_normalized, user_id)
+| extend SourceIP = srcip
+| where isnotempty(UserName)
+| summarize 
+    ExfilCount = count(),
+    ExfilActivities = make_set(activity),
+    ExfilApps = make_set(app),
+    TotalFileSize = sum(file_size),
+    UniqueFiles = dcount(file_path)
+    by UserName, SourceIP, bin(TimeGenerated, 1h);
+
+// Correlate reconnaissance with exfiltration
+ReconActivities
+| join kind=inner (ExfilActivities) on UserName
+| where ExfilActivities.TimeGenerated >= LastRecon 
+    and ExfilActivities.TimeGenerated <= LastRecon + ExfilWindow
+| extend TimeSinceReconHours = datetime_diff('hour', ExfilActivities.TimeGenerated, LastRecon)
+| extend AlertReason = strcat("Database reconnaissance (", ReconCount, " operations) followed by data exfiltration (", 
+    ExfilCount, " downloads) after ", tostring(TimeSinceReconHours), " hours")
+| project 
+    AlertTime = ExfilActivities.TimeGenerated,
+    Severity = "High",
+    UserName,
+    SourceIP,
+    ReconCount,
+    UniqueResources,
+    ExfilCount,
+    UniqueFiles,
+    TotalFileSize,
+    TimeSinceReconHours,
+    ReconOperations,
+    ResourceGroups,
+    ExfilActivities,
+    ExfilApps,
+    AlertReason
+| sort by AlertTime desc;
+
+// ======================================================================
+// Name: Penetration Testing Activity Detection
+// Severity: Medium
+// Description: Detects potential penetration testing activities through network reconnaissance and authentication attempts
+
+let PentestWindow = 4h;
+let MinNetworkConnections = 20;
+let MinUniqueTargets = 10;
+
+// Network reconnaissance patterns from device network events
+let NetworkRecon = DeviceNetworkEvents
+| where TimeGenerated >= ago(24h)
+| where ActionType in ("ConnectionSuccess", "ConnectionFailed", "NetworkSignatureInspected")
+| extend SourceUser = InitiatingProcessAccountName
+| extend SourceDevice = DeviceName
+| where not(InitiatingProcessFileName in~ ("svchost.exe", "system", "chrome.exe", "msedge.exe", "outlook.exe"))
+| summarize 
+    ConnectionCount = count(),
+    FailedConnections = countif(ActionType == "ConnectionFailed"),
+    UniqueRemoteIPs = dcount(RemoteIP),
+    UniquePorts = dcount(RemotePort),
+    FirstConnection = min(TimeGenerated),
+    LastConnection = max(TimeGenerated),
+    SampleRemoteIPs = make_set(RemoteIP, 10),
+    SamplePorts = make_set(RemotePort, 10),
+    Processes = make_set(InitiatingProcessFileName)
+    by SourceUser, SourceDevice, bin(TimeGenerated, 1h)
+| where ConnectionCount >= MinNetworkConnections and UniqueRemoteIPs >= MinUniqueTargets;
+
+// Authentication attempts from Netskope audit logs
+let AuthAttempts = NetskopeEventsAudit_CL
+| where TimeGenerated >= ago(24h)
+| where audit_log_event has_any ("Login", "SSO", "API")
+| extend UserName = ur_normalized
+| summarize 
+    AuthCount = count(),
+    AuthEvents = make_set(audit_log_event),
+    FirstAuth = min(TimeGenerated),
+    LastAuth = max(TimeGenerated)
+    by UserName, bin(TimeGenerated, 1h);
+
+// Correlate network reconnaissance with authentication activities
+NetworkRecon
+| join kind=leftouter (AuthAttempts) on $left.SourceUser == $right.UserName, $left.TimeGenerated == $right.TimeGenerated
+| extend PentestScore = case(
+    ConnectionCount >= 50 and UniqueRemoteIPs >= 20, 4,
+    ConnectionCount >= 30 and UniquePorts >= 10, 3,
+    FailedConnections >= 10, 2,
+    1
+)
+| where PentestScore >= 2
+| extend AlertReason = strcat("Potential penetration testing: ", ConnectionCount, " connections to ", 
+    UniqueRemoteIPs, " unique IPs with ", FailedConnections, " failures")
+| project 
+    AlertTime = LastConnection,
+    Severity = "Medium",
+    SourceUser,
+    SourceDevice,
+    ConnectionCount,
+    FailedConnections,
+    UniqueRemoteIPs,
+    UniquePorts,
+    AuthCount,
+    PentestScore,
+    SampleRemoteIPs,
+    SamplePorts,
+    Processes,
+    AuthEvents,
+    AlertReason
+| sort by PentestScore desc, AlertTime desc;
+
+// ======================================================================
+// Name: Suspicious Process Network Activity with Registry Persistence
+// Severity: High  
+// Description: Detects suspicious processes making network connections followed by registry modifications for persistence
+
+let SuspiciousWindow = 30m;
+let MinNetworkActivity = 5;
+
+// Suspicious network activity from device network events
+let SuspiciousNetwork = DeviceNetworkEvents
+| where TimeGenerated >= ago(24h)
+| where ActionType in ("ConnectionSuccess", "ConnectionFailed")
+| where InitiatingProcessFileName in~ ("powershell.exe", "cmd.exe", "wscript.exe", "cscript.exe", 
+    "regsvr32.exe", "rundll32.exe", "mshta.exe", "certutil.exe")
+| extend ProcessKey = strcat(DeviceName, "|", InitiatingProcessId)
+| summarize 
+    NetworkConnections = count(),
+    FirstNetwork = min(TimeGenerated),
+    LastNetwork = max(TimeGenerated),
+    RemoteIPs = make_set(RemoteIP, 5),
+    RemotePorts = make_set(RemotePort, 5)
+    by DeviceName, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessAccountName;
+
+// Registry persistence modifications
+let RegistryPersistence = DeviceRegistryEvents
+| where TimeGenerated >= ago(24h)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has_any ("Run", "RunOnce", "Winlogon")
+| extend ProcessKey = strcat(DeviceName, "|", InitiatingProcessId)
+| project 
+    RegistryTime = TimeGenerated,
+    DeviceName,
+    InitiatingProcessFileName,
+    InitiatingProcessId,
+    RegistryKey,
+    RegistryValueName,
+    RegistryValueData,
+    InitiatingProcessCommandLine;
+
+// Correlate network activity with registry modifications
+SuspiciousNetwork
+| join kind=inner (RegistryPersistence) on DeviceName, InitiatingProcessFileName, InitiatingProcessId
+| where RegistryTime >= FirstNetwork and RegistryTime <= LastNetwork + SuspiciousWindow
+| extend TimeDiffMinutes = datetime_diff('minute', RegistryTime, LastNetwork)
+| extend AlertReason = strcat("Suspicious process ", InitiatingProcessFileName, " made ", NetworkConnections, 
+    " network connections and modified registry for persistence")
+| project 
+    AlertTime = RegistryTime,
+    Severity = "High",
+    DeviceName,
+    InitiatingProcessFileName,
+    InitiatingProcessId,
+    InitiatingProcessAccountName,
+    InitiatingProcessCommandLine,
+    NetworkConnections,
+    RemoteIPs,
+    RemotePorts,
+    RegistryKey,
+    RegistryValueName,
+    RegistryValueData,
+    TimeDiffMinutes,
+    AlertReason
+| sort by AlertTime desc
+
+// ======================================================================
+// Name: Privilege Escalation with Suspicious Network Activity
+// Severity: High
+// Description: Detects potential privilege escalation followed by suspicious network communications
+
+let PrivEscWindow = 1h;
+let NetworkFollowWindow = 2h;
+let MinNetworkConnections = 10;
+
+// Identify potential privilege escalation through process creation
+let PrivilegeEscalation = DeviceProcessEvents
+| where TimeGenerated >= ago(24h)
+| where ProcessIntegrityLevel == "High" or ProcessTokenElevation == "TokenElevationTypeFull"
+| where InitiatingProcessIntegrityLevel in ("Medium", "Low") 
+| where not(FileName in~ ("consent.exe", "dllhost.exe", "svchost.exe", "winlogon.exe"))
+| extend EscalationKey = strcat(DeviceName, "|", AccountName)
+| summarize 
+    EscalationCount = count(),
+    FirstEscalation = min(TimeGenerated),
+    LastEscalation = max(TimeGenerated),
+    EscalatedProcesses = make_set(FileName),
+    CommandLines = make_set(ProcessCommandLine, 5)
+    by DeviceName, AccountName;
+
+// Look for suspicious network activity after privilege escalation
+let PostEscalationNetwork = DeviceNetworkEvents
+| where TimeGenerated >= ago(24h)
+| where ActionType == "ConnectionSuccess"
+| where not(RemoteIP startswith "10." or RemoteIP startswith "192.168." or RemoteIP startswith "172.")
+| where not(InitiatingProcessFileName in~ ("chrome.exe", "msedge.exe", "firefox.exe", "outlook.exe"))
+| extend EscalationKey = strcat(DeviceName, "|", InitiatingProcessAccountName)
+| summarize 
+    NetworkCount = count(),
+    FirstNetwork = min(TimeGenerated),
+    LastNetwork = max(TimeGenerated),
+    RemoteIPs = make_set(RemoteIP, 10),
+    RemotePorts = make_set(RemotePort, 10),
+    NetworkProcesses = make_set(InitiatingProcessFileName)
+    by DeviceName, InitiatingProcessAccountName, bin(TimeGenerated, 1h);
+
+// Correlate privilege escalation with network activity
+PrivilegeEscalation
+| join kind=inner (PostEscalationNetwork) on $left.EscalationKey == $right.EscalationKey
+| where PostEscalationNetwork.TimeGenerated >= LastEscalation 
+    and PostEscalationNetwork.TimeGenerated <= LastEscalation + NetworkFollowWindow
+| where NetworkCount >= MinNetworkConnections
+| extend TimeSinceEscalationHours = datetime_diff('hour', PostEscalationNetwork.TimeGenerated, LastEscalation)
+| extend AlertReason = strcat("Privilege escalation detected followed by ", NetworkCount, 
+    " external network connections after ", tostring(TimeSinceEscalationHours), " hours")
+| project 
+    AlertTime = PostEscalationNetwork.TimeGenerated,
+    Severity = "High",
+    DeviceName,
+    AccountName,
+    EscalationCount,
+    NetworkCount,
+    TimeSinceEscalationHours,
+    EscalatedProcesses,
+    CommandLines,
+    RemoteIPs,
+    RemotePorts,
+    NetworkProcesses,
+    AlertReason
+| sort by AlertTime desc;
+
+// ======================================================================
+// Name: Token Elevation with External Command and Control
+// Severity: High
+// Description: Detects processes with token elevation launching suspicious child processes followed by external network communications
+
+let TokenElevationWindow = 30m;
+let NetworkFollowWindow = 1h;
+let MinChildProcesses = 3;
+let MinNetworkConnections = 5;
+
+// Identify token elevation events with suspicious child process spawning
+let TokenElevation = DeviceProcessEvents
+| where TimeGenerated >= ago(24h)
+| where InitiatingProcessTokenElevation in ("TokenElevationTypeLimited", "TokenElevationTypeDefault") 
+    and ProcessTokenElevation == "TokenElevationTypeFull"
+| where not(FileName in~ ("consent.exe", "dllhost.exe", "svchost.exe", "winlogon.exe", "userinit.exe"))
+| where not(InitiatingProcessFileName in~ ("explorer.exe", "services.exe", "winlogon.exe"))
+| extend ElevationKey = strcat(DeviceName, "|", ProcessId, "|", AccountName)
+| project 
+    TimeGenerated,
+    DeviceName,
+    ProcessId,
+    FileName,
+    ProcessCommandLine,
+    AccountName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessTokenElevation,
+    ProcessTokenElevation,
+    ProcessIntegrityLevel,
+    InitiatingProcessIntegrityLevel,
+    ElevationKey;
+
+// Look for suspicious child processes spawned by elevated processes
+let SuspiciousChildren = DeviceProcessEvents
+| where TimeGenerated >= ago(24h)
+| where InitiatingProcessFileName in~ ("powershell.exe", "cmd.exe", "wmic.exe", "regsvr32.exe", 
+    "rundll32.exe", "mshta.exe", "certutil.exe", "bitsadmin.exe", "wscript.exe", "cscript.exe")
+    or ProcessCommandLine has_any ("bypass", "encoded", "hidden", "noprofile", "windowstyle")
+    or FileName in~ ("net.exe", "net1.exe", "whoami.exe", "tasklist.exe", "sc.exe")
+| extend ParentKey = strcat(DeviceName, "|", InitiatingProcessId, "|", InitiatingProcessAccountName)
+| summarize 
+    ChildCount = count(),
+    FirstChild = min(TimeGenerated),
+    LastChild = max(TimeGenerated),
+    ChildProcesses = make_set(FileName),
+    ChildCommands = make_set(ProcessCommandLine, 5),
+    SuspiciousIndicators = make_set_if(ProcessCommandLine, ProcessCommandLine has_any ("bypass", "encoded", "hidden"))
+    by DeviceName, InitiatingProcessId, InitiatingProcessAccountName, ParentKey;
+
+// Look for external network communications from elevated or child processes
+let ExternalNetworkActivity = DeviceNetworkEvents
+| where TimeGenerated >= ago(24h)
+| where ActionType == "ConnectionSuccess"
+| where not(RemoteIP startswith "10." or RemoteIP startswith "192.168." or RemoteIP startswith "172." or RemoteIP startswith "127.")
+| where RemotePort !in (80, 443, 53, 123)  // Exclude common legitimate ports
+| where not(InitiatingProcessFileName in~ ("chrome.exe", "msedge.exe", "firefox.exe", "outlook.exe", "teams.exe"))
+| extend NetworkKey = strcat(DeviceName, "|", InitiatingProcessId, "|", InitiatingProcessAccountName)
+| summarize 
+    NetworkCount = count(),
+    FirstNetwork = min(TimeGenerated),
+    LastNetwork = max(TimeGenerated),
+    RemoteIPs = make_set(RemoteIP, 10),
+    RemotePorts = make_set(RemotePort, 10),
+    NetworkProcesses = make_set(InitiatingProcessFileName),
+    UniqueDestinations = dcount(RemoteIP)
+    by DeviceName, InitiatingProcessId, InitiatingProcessAccountName, NetworkKey, bin(TimeGenerated, 30m);
+
+// First correlation: Token elevation with suspicious child processes
+let ElevationWithChildren = TokenElevation
+| join kind=inner (SuspiciousChildren) on $left.ElevationKey == $right.ParentKey
+| where SuspiciousChildren.FirstChild >= TokenElevation.TimeGenerated 
+    and SuspiciousChildren.FirstChild <= TokenElevation.TimeGenerated + TokenElevationWindow
+| where ChildCount >= MinChildProcesses
+| extend TimeSinceElevationMins = datetime_diff('minute', SuspiciousChildren.FirstChild, TokenElevation.TimeGenerated);
+
+// Second correlation: Add network activity from either parent or child processes
+ElevationWithChildren
+| join kind=inner (ExternalNetworkActivity) on DeviceName, AccountName
+| where (ExternalNetworkActivity.NetworkKey == TokenElevation.ElevationKey or 
+         ExternalNetworkActivity.NetworkKey == SuspiciousChildren.ParentKey)
+| where ExternalNetworkActivity.TimeGenerated >= SuspiciousChildren.LastChild
+    and ExternalNetworkActivity.TimeGenerated <= SuspiciousChildren.LastChild + NetworkFollowWindow
+| where NetworkCount >= MinNetworkConnections
+| extend TimeSinceChildrenHours = datetime_diff('hour', ExternalNetworkActivity.TimeGenerated, SuspiciousChildren.LastChild)
+| extend AlertReason = strcat("Token elevation followed by ", ChildCount, " suspicious child processes and ", 
+    NetworkCount, " external connections to ", UniqueDestinations, " destinations")
+| project 
+    AlertTime = ExternalNetworkActivity.TimeGenerated,
+    Severity = "High",
+    DeviceName,
+    AccountName,
+    ElevatedProcess = TokenElevation.FileName,
+    ElevatedProcessCommand = TokenElevation.ProcessCommandLine,
+    ParentProcess = TokenElevation.InitiatingProcessFileName,
+    ChildCount,
+    NetworkCount,
+    UniqueDestinations,
+    TimeSinceElevationMins,
+    TimeSinceChildrenHours,
+    ChildProcesses,
+    ChildCommands,
+    SuspiciousIndicators,
+    RemoteIPs,
+    RemotePorts,
+    NetworkProcesses,
+    InitialTokenElevation = TokenElevation.InitiatingProcessTokenElevation,
+    FinalTokenElevation = TokenElevation.ProcessTokenElevation,
+    InitialIntegrityLevel = TokenElevation.InitiatingProcessIntegrityLevel,
+    FinalIntegrityLevel = TokenElevation.ProcessIntegrityLevel,
+    AlertReason
+| sort by AlertTime desc;
+
+// ======================================================================
+// Name: Cloud Resource Manipulation with Data Access
+// Severity: Medium
+// Description: Detects Azure resource modifications followed by suspicious data access patterns
+
+let CloudModWindow = 4h;
+let MinCloudOperations = 3;
+let MinDataOperations = 5;
+
+// Azure resource manipulation activities
+let CloudManipulation = AzureActivity
+| where TimeGenerated >= ago(24h)
+| where OperationNameValue has_any ("CREATE", "DELETE", "WRITE", "UPDATE", "MODIFY")
+    and CategoryValue == "Administrative"
+| where ActivityStatusValue == "Success"
+| where not(OperationNameValue has_any ("AUDITIFNOTEXISTS", "AUDIT/ACTION", "POLICIES"))
+| extend UserName = Caller
+| extend SourceIP = CallerIpAddress
+| summarize 
+    CloudOpCount = count(),
+    FirstCloudOp = min(TimeGenerated),
+    LastCloudOp = max(TimeGenerated),
+    CloudOperations = make_set(OperationNameValue),
+    AffectedResourceGroups = make_set(ResourceGroup),
+    UniqueResourceTypes = dcount(ResourceProviderValue)
+    by UserName, SourceIP
+| where CloudOpCount >= MinCloudOperations;
+
+// Data access via Netskope applications
+let DataAccess = NetskopeEventsApplication_CL
+| where TimeGenerated >= ago(24h)
+| where activity in ("Download", "Upload", "View", "Edit", "Browse")
+| where app has_any ("Drive", "SharePoint", "OneDrive", "Storage", "S3")
+| extend UserName = coalesce(ur_normalized, user_id)
+| extend SourceIP = srcip
+| summarize 
+    DataOpCount = count(),
+    DataActivities = make_set(activity),
+    DataApps = make_set(app),
+    TotalSize = sum(file_size),
+    UniqueFiles = dcount(file_path)
+    by UserName, SourceIP, bin(TimeGenerated, 1h);
+
+// Correlate cloud manipulation with data access
+CloudManipulation
+| join kind=inner (DataAccess) on UserName, SourceIP
+| where DataAccess.TimeGenerated >= FirstCloudOp 
+    and DataAccess.TimeGenerated <= LastCloudOp + CloudModWindow
+| where DataOpCount >= MinDataOperations
+| extend TimeSinceCloudOpHours = datetime_diff('hour', DataAccess.TimeGenerated, LastCloudOp)
+| extend AlertReason = strcat("Azure resource manipulation (", CloudOpCount, " operations) followed by data access (", 
+    DataOpCount, " operations) after ", tostring(TimeSinceCloudOpHours), " hours")
+| project 
+    AlertTime = DataAccess.TimeGenerated,
+    Severity = "Medium",
+    UserName,
+    SourceIP,
+    CloudOpCount,
+    DataOpCount,
+    UniqueResourceTypes,
+    UniqueFiles,
+    TotalSize,
+    TimeSinceCloudOpHours,
+    CloudOperations,
+    AffectedResourceGroups,
+    DataActivities,
+    DataApps,
+    AlertReason
+| sort by AlertTime desc;
+
+// ======================================================================
+// Name: Lateral Movement with Registry Persistence Combo
+// Severity: High
+// Description: Detects lateral movement patterns combined with registry-based persistence mechanisms
+
+let LateralWindow = 2h;
+let MinLateralConnections = 5;
+
+// Identify lateral movement patterns through network connections
+let LateralMovement = DeviceNetworkEvents
+| where TimeGenerated >= ago(24h)
+| where ActionType == "ConnectionSuccess"
+| where RemotePort in (445, 135, 139, 3389, 5985, 5986)  // SMB, RPC, RDP, WinRM
+| where InitiatingProcessFileName in~ ("powershell.exe", "cmd.exe", "wmic.exe", "psexec.exe", 
+    "winrs.exe", "mstsc.exe", "net.exe", "sc.exe")
+| extend LateralKey = strcat(DeviceName, "|", InitiatingProcessAccountName)
+| summarize 
+    LateralCount = count(),
+    FirstLateral = min(TimeGenerated),
+    LastLateral = max(TimeGenerated),
+    TargetIPs = make_set(RemoteIP, 10),
+    TargetPorts = make_set(RemotePort),
+    LateralProcesses = make_set(InitiatingProcessFileName),
+    UniqueTargets = dcount(RemoteIP)
+    by DeviceName, InitiatingProcessAccountName
+| where LateralCount >= MinLateralConnections;
+
+// Registry persistence mechanisms
+let RegistryPersistence = DeviceRegistryEvents
+| where TimeGenerated >= ago(24h)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has_any ("Run", "RunOnce", "Winlogon", "Image File Execution Options", "Services")
+| where not(RegistryValueData has_any ("Microsoft", "Windows", "System32"))
+| extend LateralKey = strcat(DeviceName, "|", InitiatingProcessAccountName)
+| summarize 
+    PersistenceCount = count(),
+    PersistenceKeys = make_set(RegistryKey),
+    PersistenceValues = make_set(RegistryValueData, 5)
+    by DeviceName, InitiatingProcessAccountName, bin(TimeGenerated, 1h);
+
+// Correlate lateral movement with persistence
+LateralMovement
+| join kind=inner (RegistryPersistence) on $left.LateralKey == $right.LateralKey
+| where RegistryPersistence.TimeGenerated >= FirstLateral 
+    and RegistryPersistence.TimeGenerated <= LastLateral + LateralWindow
+| extend TimeSinceLateralHours = datetime_diff('hour', RegistryPersistence.TimeGenerated, LastLateral)
+| extend AlertReason = strcat("Lateral movement to ", UniqueTargets, " targets followed by registry persistence after ", 
+    tostring(TimeSinceLateralHours), " hours")
+| project 
+    AlertTime = RegistryPersistence.TimeGenerated,
+    Severity = "High",
+    DeviceName,
+    InitiatingProcessAccountName,
+    LateralCount,
+    UniqueTargets,
+    PersistenceCount,
+    TimeSinceLateralHours,
+    TargetIPs,
+    TargetPorts,
+    LateralProcesses,
+    PersistenceKeys,
+    PersistenceValues,
+    AlertReason
+| sort by AlertTime desc

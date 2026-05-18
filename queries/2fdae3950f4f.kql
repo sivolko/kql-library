@@ -1,0 +1,67 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-05-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetTable = "FunctionAppLogs";
+let Lookback = 1d;
+let TopN = 15;
+let Base =
+    materialize(
+        table(TargetTable)
+        | where TimeGenerated >= ago(Lookback)
+        | where tolower(tostring(column_ifexists("_IsBillable", "true"))) == "true"
+        | extend BilledSize = toreal(column_ifexists("_BilledSize", 0.0))
+        | where BilledSize > 0
+        | extend AppName = tostring(column_ifexists("AppName", ""))
+        | extend ResourceId = tostring(column_ifexists("_ResourceId", ""))
+        | extend Computer = tostring(column_ifexists("Computer", ""))
+        | extend Category = tostring(column_ifexists("Category", ""))
+        | extend Level = tostring(column_ifexists("Level", ""))
+        | extend OperationName = tostring(column_ifexists("OperationName", ""))
+        | extend EventIDPrimary = tostring(column_ifexists("EventID", ""))
+        | extend EventIDSecondary = tostring(column_ifexists("EventId", ""))
+        | extend EventID = iff(isnotempty(EventIDPrimary), EventIDPrimary, EventIDSecondary)
+    );
+union
+(
+    Base
+    | where isnotempty(AppName)
+    | summarize Rows = count(), GB = sum(BilledSize) / 1e9 by DimensionType = "AppName", DimensionValue = AppName
+),
+(
+    Base
+    | where isnotempty(ResourceId)
+    | summarize Rows = count(), GB = sum(BilledSize) / 1e9 by DimensionType = "_ResourceId", DimensionValue = ResourceId
+),
+(
+    Base
+    | where isnotempty(Computer)
+    | summarize Rows = count(), GB = sum(BilledSize) / 1e9 by DimensionType = "Computer", DimensionValue = Computer
+),
+(
+    Base
+    | where isnotempty(Category)
+    | summarize Rows = count(), GB = sum(BilledSize) / 1e9 by DimensionType = "Category", DimensionValue = Category
+),
+(
+    Base
+    | where isnotempty(Level)
+    | summarize Rows = count(), GB = sum(BilledSize) / 1e9 by DimensionType = "Level", DimensionValue = Level
+),
+(
+    Base
+    | where isnotempty(OperationName)
+    | summarize Rows = count(), GB = sum(BilledSize) / 1e9 by DimensionType = "OperationName", DimensionValue = OperationName
+),
+(
+    Base
+    | where isnotempty(EventID)
+    | summarize Rows = count(), GB = sum(BilledSize) / 1e9 by DimensionType = "EventID", DimensionValue = EventID
+)
+| top TopN by GB desc
+| project
+    TableName = TargetTable,
+    DimensionType,
+    DimensionValue,
+    GB = round(GB, 3),
+    Rows
