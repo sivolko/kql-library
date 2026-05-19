@@ -1,0 +1,20 @@
+// Source: https://github.com/le0li9ht/Microsoft-Sentinel-Queries
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity 
+| where TimeGenerated > ago(180d)   //Look for past 180 days logs from azureactivity table.
+| summarize arg_max(TimeGenerated,*) by _ResourceId  // Take the most recent operation performed on resource.
+| where OperationNameValue has_any ("Microsoft.Compute/virtualMachines/powerOff/action", "Microsoft.Compute/virtualMachines/delete", "Microsoft.Compute/virtualMachines/deallocate/action","Microsoft.Compute/virtualMachineScaleSets/delete/action","Microsoft.Compute/virtualMachineScaleSets/deallocate/action","Microsoft.SqlVirtualMachine/sqlVirtualMachines/delete")
+| extend ResourceName=tolower(tostring(split(_ResourceId,'/')[-1])) //Extract resource name 
+| distinct ResourceName 
+| join kind=rightanti 
+ ( 
+// Common query that looks for heartbeat status for agents
+    Heartbeat 
+    | where TimeGenerated > ago(180d) 
+    | summarize ["Last Heartbeat"]=arg_max(TimeGenerated,*) by Computer
+    | where ["Last Heartbeat"] < ago(1h) 
+    | extend ResourceName=tolower(Resource) 
+    | project ['Last Heartbeat'],ResourceName,ResourceGroup, Category, Computer, OSType
+ ) on ResourceName 

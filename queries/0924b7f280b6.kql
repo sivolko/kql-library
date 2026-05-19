@@ -1,0 +1,24 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DevEvents = 
+DeviceEvents
+| extend DevTime = bin(Timestamp, 1s)
+| where ActionType =~ @"ServiceInstalled"
+| where tolower(FileName) contains @"psexesvc"
+| project DevTime, DeviceId;
+// 
+DeviceEvents
+| extend DevTime2 = bin(Timestamp, 1s)
+| where ActionType == "NamedPipeEvent"
+| join kind=inner ( DevEvents ) on DeviceId
+| where abs(datetime_diff('second', DevTime, DevTime2)) <= 3
+| where tolower(parse_json(AdditionalFields).PipeName) contains @"psexesvc"
+| where isnotempty(RemoteIP)
+| extend InitiatorIP = RemoteIP 
+| summarize DetectionCount = count(), 
+            FirstTimeDetected = min(Timestamp), 
+            LastTimeDetected = max(Timestamp) 
+  by DeviceName, RemoteIP
+| order by FirstTimeDetected desc 

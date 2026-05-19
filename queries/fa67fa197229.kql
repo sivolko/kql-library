@@ -1,0 +1,39 @@
+// Source: https://github.com/MBCloudTeck/NTLM-Must-Die
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (4624, 4776)
+| extend 
+    EventType = case(
+        EventID == 4624, "Account Logon",
+        EventID == 4776, "Credential Validation",
+        "Unknown"
+    )
+| extend PackageName = tostring(parse_json(EventData).PackageName)
+| where PackageName contains "NTLM" or EventID == 4776
+| extend 
+    NTLMVersion = case(
+        PackageName contains "NTLM V1", "NTLMv1",
+        PackageName contains "NTLM V2", "NTLMv2",
+        "Unknown"
+    )
+| project 
+    TimeGenerated,
+    Computer,
+    EventID,
+    EventType,
+    Account,
+    NTLMVersion,
+    IpAddress,
+    WorkstationName = tostring(parse_json(EventData).WorkstationName),
+    TargetUserName = tostring(parse_json(EventData).TargetUserName),
+    LogonType = tostring(parse_json(EventData).LogonType)
+| summarize 
+    AuthenticationCount = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    UniqueSystems = dcount(Computer),
+    UniqueAccounts = dcount(Account)
+    by NTLMVersion, WorkstationName
+| order by AuthenticationCount desc

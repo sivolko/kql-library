@@ -1,0 +1,12 @@
+// Source: https://github.com/aranaescobedo/aks
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue in ('Microsoft.ContainerService/managedClusters/write', 'Microsoft.ContainerService/managedClusters/agentpools/write', 'Microsoft.ContainerService/managedClusters/agentPools/upgradeNodeImageVersion/action')
+| extend properties = parse_json(Properties)
+| project
+  Time = TimeGenerated + 1h, //Sweden, sthlm, UTC+1, Summer Timer UTC+2
+  ActivityStatus = ActivityStatusValue,
+  Message = properties.message
+| order by Time desc

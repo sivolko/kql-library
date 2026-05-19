@@ -1,0 +1,6 @@
+// Source: https://github.com/rod-trent/SentinelKQL
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+ThreatIntelligenceIndicator
+| where SourceSystem in ("Microsoft Defender Threat Intelligence", "Microsoft Emerging Threat Feed")

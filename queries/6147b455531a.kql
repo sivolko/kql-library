@@ -1,0 +1,17 @@
+// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+let UsbDriveMount = DeviceEvents
+| where ActionType == "UsbDriveMounted"
+| extend DriveLetter = tostring(parse_json(AdditionalFields).DriveLetter)
+| project DeviceId, DeviceName, DriveLetter, Timestamp;
+let FileCreation = DeviceFileEvents
+| where ActionType == "FileCreated"
+| project DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessAccountName, Timestamp;
+UsbDriveMount
+| join kind=inner (FileCreation) on DeviceId
+| where FolderPath startswith DriveLetter
+| where Timestamp >= Timestamp1
+| project DeviceName, FileName, FolderPath, InitiatingProcessAccountName, Timestamp
+| order by Timestamp desc

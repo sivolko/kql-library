@@ -1,0 +1,9 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent 
+| where TimeGenerated > ago(90d) 
+| where EventID==4663 
+| where ObjectName contains "\\Microsoft\\Teams\\Cookies" or ObjectName contains "\\Microsoft\\Teams\\Local Storage\\leveldb" 
+| where ProcessName !contains "Teams.exe"

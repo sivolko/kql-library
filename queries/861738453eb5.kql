@@ -1,0 +1,28 @@
+// Source: https://github.com/THESunnyNguyen/kql-hunting-queries
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 1d;
+let failureWindow = 30m;
+let minimumFailures = 10;
+let failures =
+  IdentityLogonEvents
+  | where Timestamp >= ago(lookback)
+  | where ActionType has_any ("Failed", "LogonFailed") or isnotempty(FailureReason)
+  | summarize
+      FailedAttempts = count(),
+      FailureReasons = make_set(FailureReason, 20),
+      FirstFailure = min(Timestamp),
+      LastFailure = max(Timestamp)
+    by AccountUpn, IPAddress, bin(Timestamp, failureWindow)
+  | where FailedAttempts >= minimumFailures;
+let successes =
+  IdentityLogonEvents
+  | where Timestamp >= ago(lookback)
+  | where ActionType has_any ("Success", "LogonSuccess")
+  | project SuccessTime = Timestamp, AccountUpn, IPAddress, DeviceName, LogonType, Protocol;
+failures
+| join kind=inner successes on AccountUpn, IPAddress
+| where SuccessTime between (FirstFailure .. LastFailure + 1h)
+| project FirstFailure, LastFailure, SuccessTime, AccountUpn, IPAddress, FailedAttempts, FailureReasons, DeviceName, LogonType, Protocol
+| order by SuccessTime desc

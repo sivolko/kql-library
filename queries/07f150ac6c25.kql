@@ -1,0 +1,40 @@
+// Source: https://github.com/madhuperera/Microsoft_Sentinel
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ReportPeriod    = 1d;
+let WatchlistName   = "service-accounts";
+// Operations considered noisy / read-only that you may want to suppress while
+// hunting. Leave empty to see everything.
+let SuppressedOperations = dynamic([
+    "UserLoggedIn"
+]);
+//
+let ServiceAccounts =
+    _GetWatchlist(WatchlistName)
+    | project
+        SA_ObjectId    = tostring(ObjectId),
+        SA_Name        = tostring(Name),
+        SA_Description = tostring(Description),
+        SA_UPN         = tolower(tostring(UPN));
+//
+OfficeActivity
+| where TimeGenerated > ago(ReportPeriod)
+| extend UserIdLower = tolower(tostring(UserId))
+| lookup kind=inner ServiceAccounts on $left.UserIdLower == $right.SA_UPN
+| where Operation !in (SuppressedOperations)
+| project
+    TimeGenerated,
+    SA_Name,
+    UserPrincipalName = UserId,
+    OfficeWorkload,
+    Operation,
+    RecordType,
+    ResultStatus,
+    ClientIP,
+    UserAgent,
+    OfficeObjectId,
+    SourceFileName,
+    Site_Url,
+    SA_Description
+| sort by TimeGenerated desc

@@ -1,0 +1,86 @@
+// Source: https://github.com/lenoshz/active-directory-security-lab
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4768
+| where ResultCode == "0x0"  // Successful TGT request
+| where isnotempty(TicketOptions)  // Ensure Kerberos ticket fields are present
+| extend 
+    // Use coalesce to handle potential null values in TicketExpirationTime
+    TicketExpTime = coalesce(TicketExpirationTime, TimeGenerated),
+    TicketLifetimeHours = iff(isnotempty(TicketExpirationTime), 
+        datetime_diff('hour', TicketExpirationTime, TimeGenerated), 
+        toint(0))
+| where TicketLifetimeHours > 10  // Normal TGT lifetime is 10 hours
+| project 
+    TimeGenerated,
+    TargetUserName,
+    TargetDomainName,
+    IpAddress,
+    TicketEncryptionType,
+    TicketLifetimeHours,
+    TicketExpTime
+| extend 
+    AlertDescription = strcat("TGT with abnormal lifetime (", TicketLifetimeHours, " hours) for ", TargetUserName),
+    AlertSeverity = case(
+        TicketLifetimeHours > 720, "Critical",  // > 30 days
+        TicketLifetimeHours > 168, "High",       // > 7 days
+        "Medium"
+    )
+
+// Alternative: Detect TGS without prior TGT
+/*
+let TGTRequests = SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4768
+| where ResultCode == "0x0"
+| project TGTTime = TimeGenerated, TGTUser = TargetUserName, TGTSource = IpAddress;
+
+let TGSRequests = SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4769
+| project TGSTime = TimeGenerated, TGSUser = TargetUserName, TGSService = ServiceName, TGSSource = IpAddress;
+
+TGSRequests
+| join kind=leftanti TGTRequests on $left.TGSUser == $right.TGTUser
+| project TGSTime, TGSUser, TGSService, TGSSource
+| extend AlertDescription = strcat("TGS request for ", TGSUser, " without prior TGT request")
+*/
+
+// Detect tickets with suspicious properties
+/*
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4768
+| where TicketOptions has "renewable" or TicketOptions has "forwardable"
+| extend 
+    IsRenewable = TicketOptions has "renewable",
+    IsForwardable = TicketOptions has "forwardable"
+| project TimeGenerated, TargetUserName, IpAddress, TicketOptions, IsRenewable, IsForwardable
+| where IsRenewable and IsForwardable
+*/
+
+// Correlation with high-value targets
+/*
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4768
+| where TargetUserName in ("administrator", "admin", "krbtgt", "domain admins")
+| extend TicketLifetimeHours = datetime_diff('hour', TicketExpirationTime, TimeGenerated)
+| where TicketLifetimeHours > 10
+| project TimeGenerated, TargetUserName, IpAddress, TicketLifetimeHours
+| extend AlertSeverity = "Critical"
+*/
+
+// Monitor for krbtgt account anomalies
+/*
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID in (4768, 4769)
+| where TargetUserName == "krbtgt" or ServiceName == "krbtgt"
+| project TimeGenerated, EventID, TargetUserName, ServiceName, IpAddress
+| summarize Count = count() by IpAddress, bin(TimeGenerated, 1h)
+| where Count > 0
+*/

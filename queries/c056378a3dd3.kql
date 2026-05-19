@@ -1,0 +1,185 @@
+// Source: https://github.com/EEN421/KQL-Queries
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityIncident
+| where TimeGenerated > ago(90d)
+| where Status == "Closed"
+| summarize MTTR = avg(datetime_diff('minute', ClosedTime, CreatedTime))
+
+//Top 10 Alerts
+SecurityAlert
+| where TimeGenerated > ago(90d)
+| summarize Count = count() by AlertName
+| top 10 by Count desc;
+
+//Incidents by Severity
+SecurityIncident
+| where TimeGenerated > ago(90d)
+| summarize Count = count() by Severity
+| sort by Severity asc
+| render barchart
+
+//Incidents by Product
+SecurityAlert
+| where TimeGenerated > ago(90d)
+| summarize Count = count() by ProductName
+| sort by Count desc
+| top 10 by Count
+| render barchart
+
+// Identifies alerts with significant increases compared to previous period
+let timeRange = 90d;
+SecurityAlert
+| where TimeGenerated > ago(timeRange)
+| summarize CurrentCount = count() by AlertName
+| join kind=fullouter (
+    SecurityAlert
+    | where TimeGenerated > ago(2*timeRange) and TimeGenerated <= ago(timeRange)
+    | summarize PreviousCount = count() by AlertName
+) on AlertName
+| project AlertName, 
+          CurrentCount = coalesce(CurrentCount, 0), 
+          PreviousCount = coalesce(PreviousCount, 0),
+          PercentChange = iff(PreviousCount == 0, 100.0, (CurrentCount - PreviousCount) * 100.0 / PreviousCount)
+| where CurrentCount > 10 // Filter out low-volume alerts
+| where PercentChange > 50 // Show significant increases
+| sort by PercentChange desc
+| top 10 by PercentChange
+| project ["Alert Type"] = AlertName, 
+          ["Current Period"] = CurrentCount, 
+          ["Previous Period"] = PreviousCount, 
+          ["% Change"] = round(PercentChange, 2)
+
+
+// Shows most common MITRE ATT&CK tactics observed
+SecurityAlert
+| where TimeGenerated > ago(90d)
+| where isnotempty(Tactics)
+| mv-expand tactic = split(Tactics, ", ")
+| summarize Count = count() by tostring(tactic)
+| sort by Count desc
+| top 10 by Count
+| render piechart
+
+
+// Shows most common MITRE ATT&CK techniques observed
+SecurityAlert
+| where TimeGenerated > ago(90d)
+| where isnotempty(Techniques)
+| mv-expand technique = split(Techniques, ", ")
+| summarize Count = count() by tostring(technique)
+| sort by Count desc
+| top 10 by Count
+| project ["MITRE Technique"] = technique, Count
+
+
+// Shows incident trend over the selected period
+SecurityIncident
+| where TimeGenerated > ago(90d)
+| summarize IncidentCount = count() by bin(TimeGenerated, 1d)
+| render timechart
+
+
+// Shows percentage breakdown of incidents by severity
+SecurityIncident 
+| where TimeGenerated > ago(90d) 
+| summarize Count = count() by Severity 
+| extend Total = toscalar(
+    SecurityIncident 
+    | where TimeGenerated > ago(90d) 
+    | count
+)
+| extend Percentage = Count * 100.0 / Total 
+| project Severity, Count, ["Percentage (%)"] = round(Percentage, 2) 
+| order by Severity asc
+
+
+// Shows median resolution time for each severity level
+SecurityIncident
+| where TimeGenerated > ago(90d)
+| where Status == "Closed"
+| summarize MedianTTR = percentile(datetime_diff('minute', ClosedTime, CreatedTime), 50) by Severity
+| project Severity, ["Median Time to Resolve (minutes)"] = MedianTTR
+| order by Severity asc
+
+
+//Firewall Stuff (Fortigate)
+CommonSecurityLog 
+| where TimeGenerated > ago(90d)
+| summarize count() by Activity //DeviceEventCategory //TimeGenerated
+| sort by count_
+
+CommonSecurityLog
+| summarize Size = sum(_BilledSize) by DeviceProduct, DeviceVendor
+| extend Cost = strcat('$', round((Size/ 1000 / 1000 / 1000 * {CostPerGB}), 2))
+| sort by Size desc
+| project Vendor=DeviceVendor, Product=DeviceProduct, ['Log Size (bytes)'] = Size, Cost
+| limit 10
+
+CommonSecurityLog
+| summarize count() by DeviceVendor
+| render columnchart
+
+//Top Log Sources with Cost
+Usage
+| where IsBillable == true
+//| where DataType !contains 'device'
+| summarize GB= round(sum(Quantity)/1000, 2) by DataType
+| extend Cost=round(GB*2.45, 2)
+| extend dollar = Cost
+| sort by Cost desc
+| extend Cost=strcat('$', Cost)
+
+//Top Security Events with Cost
+SecurityEvent
+| where _IsBillable == True                //<-- Filter out non-billable data
+| summarize EventCount=count(), Billable_GB=sum(_BilledSize/1000/1000/1000) by EventID
+| extend TotalCost = round(Billable_GB*{CostPerGB},2)
+| extend TotalCost=strcat('$', TotalCost)
+| sort by Billable_GB desc                 //<-- Display results in descending order
+| project-away EventCount                   //<-- comment this out for a total count of number of hits for each EventID
+| limit 10
+
+//MDE Tables (Optional?)
+Usage
+|where TimeGenerated > ago(31d)
+| where IsBillable == true
+| summarize GB = round(sum(Quantity)/1000,2) by DataType
+| extend TotalCost = round(GB*5.16,2)
+| extend TotalCost=strcat('$', TotalCost)
+
+// Find data sources with biggest changes in ingestion volume
+let PriorPeriod = toscalar(
+    Usage
+    | where TimeGenerated > ago(60d) and TimeGenerated <= ago(30d)
+    | where IsBillable == true
+    | summarize min(TimeGenerated));
+let CurrentPeriod = toscalar(
+    Usage
+    | where TimeGenerated > ago(30d)
+    | where IsBillable == true
+    | summarize max(TimeGenerated));
+let PriorData = Usage
+    | where TimeGenerated between (PriorPeriod .. ago(30d))
+    | where IsBillable == true
+    | summarize PriorGB = round(todouble(sum(Quantity))/1024, 2) by DataType;
+let CurrentData = Usage
+    | where TimeGenerated > ago(30d)
+    | where IsBillable == true
+    | summarize CurrentGB = round(todouble(sum(Quantity))/1024, 2) by DataType;
+PriorData
+| join kind=fullouter CurrentData on DataType
+| extend 
+    DataType = coalesce(DataType, DataType1),
+    PriorGB = coalesce(PriorGB, 0.0),
+    CurrentGB = coalesce(CurrentGB, 0.0)
+| project 
+    ['Data Source'] = DataType,
+    ['Previous 30 Days (GB)'] = PriorGB,
+    ['Current 30 Days (GB)'] = CurrentGB,
+    ['Change (GB)'] = round(CurrentGB - PriorGB, 2),
+    ['Change %'] = iif(PriorGB > 0, round(((CurrentGB - PriorGB) / PriorGB) * 100, 1), 100.0)
+| where ['Current 30 Days (GB)'] > 0 or ['Previous 30 Days (GB)'] > 0
+//| where ['Data Source'] contains 'device'
+| top 10 by abs(['Change (GB)']) desc

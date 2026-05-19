@@ -1,0 +1,63 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod = 1h;
+
+// Known legitimate compliance/eDiscovery operations
+// Flag either: export actions (always alert) OR non-export actions by non-standard users
+OfficeActivity
+| where TimeGenerated > ago(LookbackPeriod)
+| where RecordType in (
+    "SecurityComplianceCenter",
+    "ComplianceManager",
+    "OfficeSecurityComplianceCenter")
+| where Operation in (
+    "SearchCreated",
+    "SearchStarted",
+    "SearchExported",
+    "SearchPreviewed",
+    "SearchPurged",
+    "CaseCreated",
+    "CaseMemberAdded",
+    "HoldCreated",
+    "HoldUpdated",
+    "New-ComplianceSearch",
+    "Start-ComplianceSearch",
+    "New-ComplianceSearchAction",
+    "Get-ComplianceSearch",
+    "New-eDiscoveryCase",
+    "New-UnifiedAuditLogRetentionPolicy",
+    "AuditLogSearchStarted",
+    "AuditLogSearchExported",
+    "ContentSearchExportDownloaded")
+| extend Params = tostring(Parameters)
+| extend
+    SearchName     = tostring(extract(@"Name.*?:([^\s,]+)", 1, Params)),
+    ContentSources = tostring(extract(@"(ContentMatchQuery|AllowNotFoundExchangeLocationsEnabled|ExchangeLocation).*?:([^\n]+)", 2, Params)),
+    IsExport       = Operation in (
+        "SearchExported", "New-ComplianceSearchAction",
+        "ContentSearchExportDownloaded", "SearchPurged",
+        "AuditLogSearchExported")
+| summarize
+    ActionCount    = count(),
+    Operations     = make_set(Operation, 10),
+    SearchNames    = make_set(SearchName, 5),
+    ExportCount    = countif(IsExport),
+    ClientIPs      = make_set(ClientIP, 5),
+    FirstSeen      = min(TimeGenerated),
+    LastSeen       = max(TimeGenerated)
+    by UserId
+| extend AlertSeverity = case(
+    ExportCount >= 1,    "High",
+    ActionCount >= 5,    "Medium",
+    "Low")
+| project
+    TimeGenerated  = LastSeen,
+    UserId,
+    ActionCount,
+    ExportCount,
+    Operations,
+    SearchNames,
+    ClientIPs,
+    AlertSeverity

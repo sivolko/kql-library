@@ -1,0 +1,10 @@
+// Source: https://github.com/olatunjiabel/sc200-soc-portfolio
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated >= ago(10m)
+| where EventID == 4625
+| summarize FailedAttempts = count() by IpAddress, Account, LogonType
+| where FailedAttempts >= 3
+| sort by FailedAttempts desc

@@ -1,0 +1,45 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod = 1h;
+// Ordered severity levels — lower index = higher sensitivity
+let LabelOrder = dynamic([
+    "Top Secret", "Highly Confidential", "Confidential",
+    "Internal", "General", "Public"
+]);
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackPeriod)
+| where RecordType in ("SharePoint", "OneDrive")
+| where Operation in (
+    "SensitivityLabelChanged", "SensitivityLabelApplied",
+    "SensitivityLabelRemoved", "FileSensitivityLabelChanged")
+| extend
+    OldLabel = tostring(parse_json(SensitivityLabelEventData).OldSensitivityLabelId),
+    NewLabel = tostring(parse_json(SensitivityLabelEventData).NewSensitivityLabelId),
+    OldLabelName = tostring(parse_json(SensitivityLabelEventData).OldSensitivityLabelName),
+    NewLabelName = tostring(parse_json(SensitivityLabelEventData).NewSensitivityLabelName),
+    LabelJustification = tostring(parse_json(SensitivityLabelEventData).JustificationText)
+| extend
+    OldRank = indexof_regex(strcat_array(LabelOrder, "|"), OldLabelName),
+    NewRank = indexof_regex(strcat_array(LabelOrder, "|"), NewLabelName)
+| extend IsDowngrade = (Operation == "SensitivityLabelRemoved")
+    or (isnotempty(OldLabelName) and isnotempty(NewLabelName) and OldRank < NewRank)
+| where IsDowngrade or Operation == "SensitivityLabelRemoved"
+| project
+    TimeGenerated,
+    UserId,
+    ClientIP,
+    SourceFileName,
+    SiteUrl,
+    ObjectId,
+    Operation,
+    OldLabelName,
+    NewLabelName,
+    LabelJustification,
+    IsDowngrade,
+    AlertSeverity = case(
+        Operation == "SensitivityLabelRemoved", "High",
+        IsDowngrade,                            "High",
+        "Medium")

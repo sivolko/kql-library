@@ -1,0 +1,53 @@
+// Source: https://github.com/jasonachkar/microsoft-sentinel-siem-detection
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+/*
+RuleId: 2602788b-eab7-4bd6-acb6-a9bed75bb3d4
+Name: Unusual RDP/SMB Lateral Movement
+Category: network
+Severity: Medium
+Tactics: LateralMovement
+Techniques: T1021.001, T1021.002
+DataSources: SecurityEvent (Windows Security Events)
+QueryFrequency: PT5M
+QueryPeriod: PT1H
+TriggerOperator: GreaterThan
+TriggerThreshold: 0
+Version: 1.0.0
+Author: Jason Achkar Diab (template)
+Status: Production
+Description: Detects new RDP/SMB source-to-destination host pairs for a user account.
+FalsePositives: New admin workflows; IT troubleshooting; jump host rotations
+*/
+
+let BaselinePeriod = 14d;
+let DetectionWindow = 1h;
+let MinLogons = 3;
+let AllowedSources = dynamic([]); // Optional allowlist for jump hosts
+let LogonTypes = dynamic([3, 10]); // 3=Network (SMB), 10=RemoteInteractive (RDP)
+// Baseline of known account-to-host access patterns.
+let Baseline = SecurityEvent
+| where TimeGenerated between (ago(BaselinePeriod) .. ago(DetectionWindow))
+| where EventID == 4624
+| where LogonType in (LogonTypes)
+| extend SourceIP = tostring(IpAddress)
+| extend DestHost = tostring(Computer)
+| extend Account = strcat(tostring(TargetDomainName), "\\", tostring(TargetUserName))
+| where SourceIP !in (AllowedSources)
+| summarize by Account, SourceIP, DestHost;
+// Recent logons for comparison.
+let Recent = SecurityEvent
+| where TimeGenerated >= ago(DetectionWindow)
+| where EventID == 4624
+| where LogonType in (LogonTypes)
+| extend SourceIP = tostring(IpAddress)
+| extend DestHost = tostring(Computer)
+| extend Account = strcat(tostring(TargetDomainName), "\\", tostring(TargetUserName))
+| where SourceIP !in (AllowedSources)
+| summarize LogonCount=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), LogonTypes=make_set(LogonType, 2)
+  by Account, SourceIP, DestHost;
+Recent
+| join kind=leftanti Baseline on Account, SourceIP, DestHost
+| where LogonCount >= MinLogons
+| project TimeGenerated=LastSeen, Account, SourceIP, DestHost, LogonCount, LogonTypes, FirstSeen, LastSeen

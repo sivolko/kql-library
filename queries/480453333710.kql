@@ -1,0 +1,15 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-19
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ExecutionSettings = dynamic(["Bypass", "Unrestricted"]);
+DeviceEvents
+| where ActionType == "PowerShellCommand"
+| where InitiatingProcessAccountName != "system"
+| extend AdditionalDetails = parse_json(AdditionalFields)
+| where AdditionalDetails.['Command'] == "Set-ExecutionPolicy" and InitiatingProcessCommandLine has_any (ExecutionSettings)
+| extend ChangedBy = strcat(toupper(InitiatingProcessAccountDomain), "\\", InitiatingProcessAccountName)
+| project Timestamp, DeviceName, ChangedBy, InitiatingProcessCommandLine
+| summarize arg_max(Timestamp, InitiatingProcessCommandLine) by DeviceName, ChangedBy
+| project-reorder Timestamp
+| sort by Timestamp desc
