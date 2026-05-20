@@ -1,0 +1,24 @@
+// Source: https://github.com/EternalR00ted/Microsoft-Sentinel-KQLs
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let PasswordChanges = DeviceEvents
+| where ActionType == "UserAccountPasswordChanged"
+   or ActionType == "UserAccountModified"
+| project PwTime = Timestamp, DeviceId, DeviceName,
+          PwReportId = ReportId,
+          PwInitiator = InitiatingProcessFileName,
+          PwInitiatorCmd = InitiatingProcessCommandLine,
+          ChangedAccount = AccountName;
+let Logons = DeviceLogonEvents
+| where ActionType == "LogonSuccess"
+| where LogonType in (2, 9, 10)  // Interactive, NewCredentials, RemoteInteractive
+| project LogonTime = Timestamp, DeviceId,
+          LogonAccount = AccountName, LogonProcess = InitiatingProcessFileName;
+PasswordChanges
+| join kind=inner Logons on DeviceId
+| where LogonAccount =~ ChangedAccount
+| where LogonTime between (PwTime .. (PwTime + 5m))
+| project Timestamp = PwTime, DeviceId, ReportId = PwReportId, DeviceName,
+          ChangedAccount, PwInitiator, PwInitiatorCmd,
+          LogonTime, LogonAccount, LogonProcess

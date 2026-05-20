@@ -1,0 +1,21 @@
+// Source: https://github.com/zerocmd/customer-questions
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let startTime=ago(30d);
+let endTime=ago(0d);
+let targetHost = "HOSTNAME_OR_FQDN";  // <- replace with the device name
+DeviceEvents
+| where Timestamp between (startTime .. endTime)
+| where ActionType == "UsbDriveMounted"
+| where DeviceName =~ targetHost
+| extend af = parse_json(AdditionalFields)
+| extend
+    SerialNumber = tostring(af.SerialNumber),
+    ProductName  = tostring(af.ProductName),
+    Manufacturer = tostring(af.Manufacturer),
+    BusType      = tostring(af.BusType),
+    DriveLetter  = tostring(af.DriveLetter)
+| where isnotempty(SerialNumber)
+| project Timestamp, DeviceName, SerialNumber, ProductName, Manufacturer, BusType, DriveLetter
+| order by Timestamp desc

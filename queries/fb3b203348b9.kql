@@ -1,0 +1,29 @@
+// Source: https://github.com/rorywag/KQL-Detections
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let startupFullPaths = dynamic([ 
+    "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp",
+    "C:\\Documents And Settings\\All Users\\Start Menu\\Programs\\StartUp",
+    "C:\\Windows\\Tasks"
+]);
+// Set an exclusion list for items that are expected (reduce noise by adding known-good startup items here)
+let exclusionList = dynamic([
+    "EXCLUSION_ITEM"
+]);
+// Search for FileCreated events in startup directories, excluding known items and enrich with Shell Link creation activity
+DeviceFileEvents
+| where ActionType == "FileCreated"
+| where not (FileName has_any (exclusionList))
+| where
+    FolderPath has_any(startupFullPaths)
+    or FolderPath matches regex @"C:\\Users\\.*?\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"
+    or FolderPath matches regex @"C:\\Documents and Settings\\.*?\\Start Menu\\Programs\\Startup"
+| join kind=leftouter (
+    DeviceEvents
+    | where ActionType == "ShellLinkCreateFileEvent"
+    | where
+        FolderPath has_any(startupFullPaths)
+        or FolderPath matches regex @"C:\\Users\\.*?\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"
+        or FolderPath matches regex @"C:\\Documents and Settings\\.*?\\Start Menu\\Programs\\Startup"
+) on DeviceId

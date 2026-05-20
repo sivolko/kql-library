@@ -1,0 +1,15 @@
+// Source: https://github.com/RachelBulmerSec/Cloud-Security-Engineering-Portfolio
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType in ("AsrPsexecWmiChildProcessAudited", "AsrPsexecWmiChildProcessBlocked")
+| project Timestamp,
+          DeviceName,
+          InitiatingProcessFileName,
+          InitiatingProcessCommandLine,
+          FileName,
+          ProcessCommandLine,
+          InitiatingAccount = InitiatingProcessAccountName,
+          ActionType
+| sort by Timestamp desc

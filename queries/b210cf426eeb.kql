@@ -1,0 +1,6 @@
+// Source: https://github.com/samtimur/ARMAzLandingZ
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent 
+| where EventID == 4740

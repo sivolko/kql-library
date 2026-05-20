@@ -1,0 +1,10 @@
+// Source: https://github.com/BrianTJackett/log-analytics-samples
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let StartDate = ago(31d);
+OfficeActivity
+| where TimeGenerated > StartDate
+| summarize count() by OfficeWorkload, bin(TimeGenerated, 1d)
+| sort by TimeGenerated asc 
+| render timechart

@@ -1,0 +1,14 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe=7d;
+OfficeActivity
+| where TimeGenerated > ago(timeframe)
+| where Operation in ("FileSyncDownloadedFull", "FileDownloaded")
+| where UserId contains "#EXT#"
+| summarize
+    ['Count of Downloads']=count(),
+    ['List of Files Downloaded']=make_set(OfficeObjectId)
+    by UserId
+| sort by ['Count of Downloads'] desc 

@@ -1,0 +1,17 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TransportRules = dynamic(["Disable-TransportRule", "Enable-TransportRule", "New-TransportRule", "Set-TransportRule"]);
+OfficeActivity
+| where TimeGenerated > ago (1d)
+| where Operation has_any (TransportRules)
+| mv-expand todynamic(Parameters)
+| extend ParameterName = Parameters.Name,
+         ParameterValue = Parameters.Value
+| project TimeGenerated,
+          Operation,
+          ['Transport Rule'] = OfficeObjectId,
+          ['Changed By'] = UserId,
+          ParameterName,
+          ParameterValue

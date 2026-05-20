@@ -1,0 +1,40 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackDays = 90d;
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackDays)
+| where RecordType in ("SharePoint", "OneDrive")
+| where Operation in (
+    "SensitivityLabelChanged", "SensitivityLabelApplied",
+    "SensitivityLabelRemoved", "FileSensitivityLabelChanged")
+| extend
+    OldLabelName        = tostring(OperationProperties.OldSensitivityLabelName),
+    NewLabelName        = tostring(OperationProperties.NewSensitivityLabelName),
+    LabelJustification  = tostring(OperationProperties.JustificationText),
+    AutoLabeled         = tostring(OperationProperties.IsAutoLabel)
+| extend
+    ChangeType = case(
+        Operation == "SensitivityLabelRemoved",          "Removed",
+        isempty(OldLabelName) and isnotempty(NewLabelName), "Applied",
+        OldLabelName != NewLabelName,                    "Changed",
+        "Unknown")
+| summarize
+    ChangeCount        = count(),
+    RemovedCount       = countif(ChangeType == "Removed"),
+    DowngradeCount     = countif(ChangeType == "Changed"),
+    FilesAffected      = make_set(SourceFileName, 20),
+    SiteURLs           = make_set(Site_Url, 10)
+    by UserId, ChangeType, OldLabelName, NewLabelName
+| sort by ChangeCount desc
+| project
+    UserId,
+    ChangeType,
+    OldLabelName,
+    NewLabelName,
+    ChangeCount,
+    RemovedCount,
+    FilesAffected,
+    SiteURLs

@@ -1,0 +1,29 @@
+// Source: https://github.com/PDarvMSFT/PDarvMSFT
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let starttime = 14d;  
+let endtime = 1d;  
+let timeframe = 1h;  
+let threshold=10;  
+let Kerbevent = SecurityEvent  
+| where TimeGenerated between(ago(starttime) .. now())  
+| where EventID == 4769  
+| parse EventData with * 'TicketEncryptionType">' TicketEncryptionType "<" *  
+| parse EventData with * 'ServiceName">' ServiceName "<" *  
+| where ServiceName !contains "$" and ServiceName !contains "krbtgt"  
+| parse EventData with * 'TargetUserName">' TargetUserName "<" *  
+| where TargetUserName !contains "$@" and TargetUserName !contains ServiceName  
+| parse EventData with * 'IpAddress">::ffff:' ClientIPAddress "<" *;  let baseline = Kerbevent  
+| where TimeGenerated >= ago(starttime) and TimeGenerated < ago(endtime)  
+| make-series baselineDay=dcount(ServiceName) default=1 on TimeGenerated in range(ago(starttime), ago(endtime), 1d) by TargetUserName  | mvexpand TimeGenerated , baselineDay  
+| extend baselineDay = toint(baselineDay)  
+| summarize p95CountDay = percentile(baselineDay, 95) by TargetUserName;  let current = Kerbevent  
+| where TimeGenerated between(ago(timeframe) .. now())  
+| extend encryptionType = case(TicketEncryptionType in ("0x1","0x3"), "DES", TicketEncryptionType in ("0x11","0x12"), "AES", TicketEncryptionType in ("0x17","0x18"), "RC4", "Failure")  
+| where encryptionType in ("AES","DES","RC4")  
+| summarize currentCount = dcount(ServiceName), ticketsRequested=make_set(ServiceName), encryptionTypes=make_set(encryptionType), ClientIPAddress=any(ClientIPAddress), Computer=any(Computer) by TargetUserName; current  
+| join kind=leftouter baseline on TargetUserName  
+| where currentCount > p95CountDay*2 and currentCount > threshold  
+| project-away TargetUserName1  
+| extend context_message = strcat("Potential SPN scan performed by user ", TargetUserName, "\nUser generally requests ", p95CountDay, " unique service tickets in a day.", "\nUnique service tickets requested by user in the last hour: ", currentCount)

@@ -1,0 +1,93 @@
+// Source: https://github.com/hassiomqtt/sentinel
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let time_window = 24h;
+
+// RDP Lateral Movement (Event ID 4624 Type 10)
+let rdp_connections = SecurityEvent
+| where TimeGenerated > ago(time_window)
+| where EventID == 4624 and LogonType == 10
+| project
+    TimeGenerated,
+    MovementType = "RDP",
+    SourceComputer = IpAddress,
+    TargetComputer = Computer,
+    Account = TargetUserName,
+    Domain = TargetDomainName,
+    LogonProcessName;
+
+// SMB/Network Logon (Event ID 4624 Type 3)
+let smb_connections = SecurityEvent
+| where TimeGenerated > ago(time_window)
+| where EventID == 4624 and LogonType == 3
+| where IpAddress !in ("127.0.0.1", "-", "::1")
+| project
+    TimeGenerated,
+    MovementType = "SMB/Network",
+    SourceComputer = IpAddress,
+    TargetComputer = Computer,
+    Account = TargetUserName,
+    Domain = TargetDomainName,
+    LogonProcessName;
+
+// WinRM Connections
+let winrm_connections = SecurityEvent
+| where TimeGenerated > ago(time_window)
+| where EventID == 4624
+| where LogonProcessName == "WinRM"
+| project
+    TimeGenerated,
+    MovementType = "WinRM",
+    SourceComputer = IpAddress,
+    TargetComputer = Computer,
+    Account = TargetUserName,
+    Domain = TargetDomainName,
+    LogonProcessName;
+
+// PSExec-style Activity (Service Installation)
+let psexec_activity = SecurityEvent
+| where TimeGenerated > ago(time_window)
+| where EventID == 7045 // Service Installed
+| where ServiceName matches regex @"^[A-Za-z]{8}$" // Random 8-char service name pattern
+    or ServiceName has_any ("psexec", "paexec", "remcom", "csexec")
+| project
+    TimeGenerated,
+    MovementType = "PSExec/Service",
+    SourceComputer = "",
+    TargetComputer = Computer,
+    Account = SubjectUserName,
+    Domain = SubjectDomainName,
+    LogonProcessName = ServiceName;
+
+// Combine all lateral movement indicators
+union rdp_connections, smb_connections, winrm_connections, psexec_activity
+| summarize
+    ConnectionCount = count(),
+    UniqueTargets = dcount(TargetComputer),
+    TargetComputers = make_set(TargetComputer, 10),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by Account, Domain, SourceComputer, MovementType
+| extend
+    Severity = case(
+        UniqueTargets >= 10, "Critical",
+        UniqueTargets >= 5, "High",
+        ConnectionCount >= 20, "High",
+        "Medium"
+    ),
+    IsRapidSpread = UniqueTargets > 5 and datetime_diff('minute', LastSeen, FirstSeen) < 30
+| where UniqueTargets > 2 or ConnectionCount > 10
+| project
+    FirstSeen,
+    LastSeen,
+    Severity,
+    Account,
+    Domain,
+    SourceComputer,
+    MovementType,
+    UniqueTargets,
+    ConnectionCount,
+    IsRapidSpread,
+    TargetComputers
+| order by UniqueTargets desc, ConnectionCount desc

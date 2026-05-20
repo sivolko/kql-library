@@ -1,0 +1,133 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let IoRingCallers =
+    DeviceEvents
+    | where TimeGenerated > ago(1d)
+    | where ActionType == "NtCreateIoRing" or
+            (ActionType == "SyscallInvocation" and AdditionalFields has "NtCreateIoRing")
+    | where InitiatingProcessFileName !in~ (
+        "System", "svchost.exe", "lsass.exe", "services.exe",
+        "smss.exe", "csrss.exe", "wininit.exe",
+        "ntoskrnl.exe"
+    )
+    | project
+        TimeGenerated,
+        DeviceName,
+        ProcessId = InitiatingProcessId,
+        ProcessName = InitiatingProcessFileName,
+        Account = InitiatingProcessAccountName,
+        IntegrityLevel = InitiatingProcessIntegrityLevel;
+
+IoRingCallers
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: Token elevation correlated with I/O Ring usage
+// ============================================================================
+let ElevationWindow = 90s;
+
+let TokenElevations =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4672
+    | where PrivilegeList has_any ("SeDebugPrivilege", "SeTcbPrivilege", "SeLoadDriverPrivilege")
+    | project
+        ElevationTime = TimeGenerated,
+        Computer,
+        ElevatedAccount = Account,
+        PrivilegeList;
+
+IoRingCallers
+| join kind=inner TokenElevations on $left.DeviceName == $right.Computer
+| where ElevationTime between (TimeGenerated .. (TimeGenerated + ElevationWindow))
+| project
+    DeviceName,
+    Account,
+    ProcessName,
+    IntegrityLevel,
+    IoRingTime = TimeGenerated,
+    ElevationTime,
+    ElevatedAccount,
+    PrivilegeList,
+    LagSeconds = datetime_diff('second', ElevationTime, TimeGenerated)
+| order by ElevationTime desc
+
+
+// ============================================================================
+// Query 3: Hyper-V component event anomalies
+//
+// Malformed scheduler messages in the Hyper-V worker event log may indicate
+// the overflow trigger. Correlate with I/O Ring activity on the same host.
+// ============================================================================
+let HypervAnomalies =
+    Event
+    | where TimeGenerated > ago(1d)
+    | where Source in~ ("Microsoft-Windows-Hyper-V-Worker", "Microsoft-Windows-Hyper-V-VMMS")
+    | where EventID in (18590, 18490, 14010, 32022)
+    | project
+        TimeGenerated,
+        Computer,
+        EventID,
+        Source,
+        Description = RenderedDescription;
+
+HypervAnomalies
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 4: Hyper-V anomaly → I/O Ring → token elevation — full chain
+// ============================================================================
+HypervAnomalies
+| join kind=inner IoRingCallers on $left.Computer == $right.DeviceName
+| where TimeGenerated between (TimeGenerated .. (TimeGenerated + 60s))
+| join kind=inner TokenElevations on $left.Computer == $right.Computer
+| where ElevationTime between (TimeGenerated1 .. (TimeGenerated1 + ElevationWindow))
+| project
+    Computer,
+    HypervEventTime = TimeGenerated,
+    HypervEventID = EventID,
+    IoRingProcessName = ProcessName,
+    IoRingAccount = Account,
+    IoRingTime = TimeGenerated1,
+    ElevationTime,
+    ElevatedAccount,
+    PrivilegeList
+| order by ElevationTime desc
+
+
+// ============================================================================
+// Query 5: Hunting for NtSetIoRingCompletionEvent + NtSubmitIoRing pairs
+//          from unexpected processes
+//
+// The I/O Ring primitive requires both setting up completion and submitting
+// operations. This sequence from a standard-user shell is anomalous.
+// ============================================================================
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType in ("NtSetIoRingCompletionEvent", "NtSubmitIoRing")
+| where InitiatingProcessFileName in~ (
+    "cmd.exe", "powershell.exe", "pwsh.exe",
+    "wscript.exe", "cscript.exe", "mshta.exe",
+    "rundll32.exe", "regsvr32.exe"
+)
+| summarize
+    Operations = make_list(ActionType),
+    Count = count(),
+    FirstOp = min(TimeGenerated),
+    LastOp = max(TimeGenerated)
+    by DeviceName, InitiatingProcessId, InitiatingProcessFileName,
+       InitiatingProcessAccountName
+| where Count >= 2  // Both setup and submit present
+| project
+    DeviceName,
+    ProcessName = InitiatingProcessFileName,
+    Account = InitiatingProcessAccountName,
+    Operations,
+    Count,
+    FirstOp,
+    LastOp
+| order by FirstOp desc
