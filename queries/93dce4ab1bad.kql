@@ -1,0 +1,139 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceNetworkEvents
+| where Timestamp > ago(7d)
+| where RemoteUrl contains "graph.microsoft.com"
+| where RemoteUrl contains "/chats/"
+| where RemoteUrl contains "/messages"
+| where InitiatingProcessFileName !in~ (
+    "Teams.exe", "msteams.exe",
+    "OneDrive.exe", "WINWORD.EXE", "EXCEL.EXE",
+    "outlook.exe", "msedge.exe", "chrome.exe"
+)
+| project
+    Timestamp,
+    DeviceName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName,
+    RemoteUrl,
+    RemoteIP,
+    RemotePort,
+    InitiatingProcessParentFileName
+| order by Timestamp desc
+
+// ----------------------------------------------------------------------------
+// Query 2: High-Frequency Polling of Teams Message Endpoint
+//
+// Rationale: PhantomBackdoor polls GET /messages?$orderby=createdDateTime desc
+// at regular intervals. Legitimate Teams clients use WebSocket push; repeated
+// polling is anomalous. This query aggregates polling events and identifies
+// processes with suspiciously high GET rates.
+// ----------------------------------------------------------------------------
+let lookback = 24h;
+let min_polls = 10;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where RemoteUrl contains "graph.microsoft.com"
+| where RemoteUrl contains "messages"
+| where RemoteUrl contains "orderby"
+| where InitiatingProcessFileName !in~ ("Teams.exe", "msteams.exe")
+| summarize
+    PollCount = count(),
+    FirstPoll = min(Timestamp),
+    LastPoll = max(Timestamp),
+    DistinctUrls = dcount(RemoteUrl)
+    by bin(Timestamp, 1h),
+       DeviceName,
+       InitiatingProcessFileName,
+       InitiatingProcessAccountName
+| where PollCount >= min_polls
+| order by PollCount desc
+
+// ----------------------------------------------------------------------------
+// Query 3: Teams Chat Message HTML Comment C2 Pattern
+//
+// Rationale: Requires Sentinel Microsoft Teams data connector or
+// OfficeActivity Teams logs. Scans message content for the PhantomBackdoor
+// HTML comment pattern <!-- cmd:<base64> -->.
+// ----------------------------------------------------------------------------
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where RecordType == "MicrosoftTeams"
+| where Operation == "MessageSent"
+| where isnotnull(MessageContent)
+// HTML comment command pattern: <!-- cmd:<url-safe-base64> -->
+| where MessageContent matches regex @"<!--\s*cmd:[A-Za-z0-9_=+/\-]{20,}\s*-->"
+| project
+    TimeGenerated,
+    UserId,
+    ClientIP,
+    Operation,
+    ChatThreadId,
+    MessageContent,
+    UserAgent
+| order by TimeGenerated desc
+
+// ----------------------------------------------------------------------------
+// Query 4: Suspicious Teams Token Exchange (Device Code or Client Credentials)
+//
+// Rationale: PhantomBackdoor acquires tokens via device code phishing or
+// by reading cached tokens. OAuth token POST to login.microsoftonline.com
+// with grant_type=device_code or client_credentials from non-Office processes
+// is a strong indicator.
+// ----------------------------------------------------------------------------
+DeviceNetworkEvents
+| where Timestamp > ago(7d)
+| where RemoteUrl contains "login.microsoftonline.com"
+| where RemoteUrl contains "oauth2"
+| where RemoteUrl contains "token"
+| where InitiatingProcessFileName !in~ (
+    "Teams.exe", "msteams.exe",
+    "WINWORD.EXE", "EXCEL.EXE", "OUTLOOK.EXE",
+    "OneDrive.exe", "msedge.exe", "chrome.exe",
+    "AzureCLI.exe", "az.cmd", "pwsh.exe"   // legitimate admin tools
+)
+| project
+    Timestamp,
+    DeviceName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName,
+    RemoteUrl,
+    RemoteIP
+| order by Timestamp desc
+
+// ----------------------------------------------------------------------------
+// Query 5: Message Deletion Pattern After C2 Interaction (Evidence Cleanup)
+//
+// Rationale: PhantomBackdoor operators delete command messages after delivery
+// to prevent forensic recovery from Teams logs. A sequence of deleteMessage
+// calls shortly after a sendMessage session is a strong indicator of
+// post-C2 cleanup. Requires OfficeActivity with Teams record type.
+// ----------------------------------------------------------------------------
+let cleanup_window = 10m;
+let deletion_threshold = 3;
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where RecordType == "MicrosoftTeams"
+| where Operation == "MessageDeleted"
+| summarize
+    DeletionCount = count(),
+    DeletedMessageIds = make_set(tostring(parse_json(ModifiedProperties)[0].NewValue), 20),
+    FirstDeletion = min(TimeGenerated),
+    LastDeletion = max(TimeGenerated)
+    by bin(TimeGenerated, cleanup_window),
+       UserId,
+       ChatThreadId
+| where DeletionCount >= deletion_threshold
+| project
+    TimeGenerated,
+    UserId,
+    ChatThreadId,
+    DeletionCount,
+    DeletedMessageIds,
+    FirstDeletion,
+    LastDeletion
+| order by DeletionCount desc

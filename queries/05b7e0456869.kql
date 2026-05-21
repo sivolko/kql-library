@@ -1,0 +1,9 @@
+// Source: https://github.com/crtvrffnrt/KQL
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(3h)
+| where ActionType == "UserAccountAddedToLocalGroup"
+| extend LocalGroupSID = AccountSid
+| where LocalGroupSID == "S-1-5-32-544"

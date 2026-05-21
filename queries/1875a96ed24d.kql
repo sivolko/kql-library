@@ -1,0 +1,10 @@
+// Source: https://github.com/DancinDinoo/KQL
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+  | where InitiatingProcessParentFileName == "services.exe" and InitiatingProcessFileName == "svchost.exe" and InitiatingProcessCommandLine == "svchost.exe -k localService -p -s RemoteRegistry" and FileName matches regex @"\w{8}\.tmp"
+
+// Description: Identifies known indicators of Secretsdump.py after execution.
+//  https://github.com/un33k/impacket/blob/master/examples/secretsdump.py
+//  https://github.com/fortra/impacket/tree/master

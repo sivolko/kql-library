@@ -1,0 +1,43 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod = 1h;
+let SensitiveLabels = dynamic([
+    "Confidential", "Highly Confidential", "Top Secret", "Restricted"
+]);
+let SensitiveSitePatterns = dynamic([
+    "hr", "legal", "finance", "exec", "security", "payroll", "board"
+]);
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackPeriod)
+| where RecordType in ("SharePoint", "OneDrive")
+| where Operation in (
+    "AnonymousLinkCreated", "SharingLinkCreated",
+    "AddedToSecureLink", "SecureLinkUsed")
+| extend
+    SharingType      = tostring(parse_json(EventData).SharingType),
+    LinkScope        = tostring(parse_json(EventData).LinkScope),
+    TargetUserOrGroup = tostring(parse_json(EventData).TargetUserOrGroup),
+    SiteLower        = tolower(SiteUrl)
+| extend
+    IsAnonymous      = (SharingType == "AnonymousAccess" or LinkScope == "Anyone"),
+    IsSensitiveSite  = SiteLower has_any (SensitiveSitePatterns)
+| where IsAnonymous or IsSensitiveSite
+| project
+    TimeGenerated,
+    UserId,
+    ClientIP,
+    SourceFileName,
+    SiteUrl,
+    ObjectId,
+    Operation,
+    SharingType,
+    TargetUserOrGroup,
+    IsAnonymous,
+    IsSensitiveSite,
+    AlertSeverity = case(
+        IsAnonymous and IsSensitiveSite, "Critical",
+        IsAnonymous,                     "High",
+        "Medium")

@@ -1,0 +1,15 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timerange=90d;
+let existingalerts=
+DeviceEvents
+| where TimeGenerated > ago (timerange) and TimeGenerated < ago(7d)
+| where ActionType startswith "Asr"
+| distinct ActionType;
+    DeviceEvents
+    | where TimeGenerated > ago(7d)
+    | where ActionType startswith "Asr"
+    | where ActionType !in (existingalerts)
+| summarize ['Device List']=make_set(DeviceName) by ActionType

@@ -1,0 +1,14 @@
+// Source: https://github.com/CyberAutomationX/SecureAzCloud-Scripts
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 30d;
+AzureActivity
+| where TimeGenerated > ago(Lookback)
+| extend Operation_l = tolower(OperationNameValue),
+         Provider_l = tolower(ResourceProviderValue),
+         Caller_l = tolower(Caller)
+| where Provider_l has "microsoft.cognitiveservices"
+| where Operation_l has "listkeys/action"
+| project TimeGenerated, Caller, CallerIpAddress, OperationNameValue, ActivityStatusValue, SubscriptionId, ResourceGroup, ResourceProviderValue, ResourceId, Properties_d
+| sort by TimeGenerated desc

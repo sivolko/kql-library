@@ -1,0 +1,13 @@
+// Source: https://github.com/EternalR00ted/Microsoft-Sentinel-KQLs
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType in ("AntivirusEmergencyUpdate", "AntivirusError", "AntivirusReport")
+   or AdditionalFields has "80070643"
+| where AdditionalFields has "80070643" or AdditionalFields has "0x80070643"
+| summarize ErrorCount = count(),
+            (Timestamp, ReportId) = arg_max(Timestamp, ReportId)
+    by DeviceId, DeviceName
+| where ErrorCount >= 3
+| project Timestamp, DeviceId, ReportId, DeviceName, ErrorCount

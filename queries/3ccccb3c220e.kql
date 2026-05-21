@@ -1,0 +1,10 @@
+// Source: https://github.com/chadmcox/Sentinel-and-Defender-Queries
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents 
+| where ActionType == "LogonFailed"
+| project AccountName, AccountDisplayName, AccountDomain, DeviceName, TargetDeviceName, ActionType, FailureReason
+| where AccountName !has "$"
+| summarize userfailedattempts = count() by AccountName, AccountDisplayName, AccountDomain, DeviceName, TargetDeviceName, ActionType, FailureReason
+| sort by userfailedattempts desc 

@@ -1,0 +1,7 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation == "FileMalwareDetected"
+| project-reorder TimeGenerated, OfficeWorkload, SourceFileName, OfficeObjectId, UserId

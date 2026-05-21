@@ -1,0 +1,24 @@
+// Source: https://github.com/iesussan/tf-appgw-apim-demos
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(24h)
+| where ResourceProvider == "Microsoft.Network"
+| where _ResourceId contains "applicationGateways"
+| where OperationNameValue has_any ("Scale", "Update", "Resize")
+| where ActivityStatusValue == "Success"
+| extend 
+    ResourceName = tostring(split(_ResourceId, "/")[-1]),
+    ScaleEvent = case(
+        OperationNameValue contains "Scale", "Manual Scale",
+        OperationNameValue contains "Update", "Configuration Update",
+        "Other"
+    )
+| project 
+    TimeGenerated,
+    ResourceName,
+    ScaleEvent,
+    OperationNameValue,
+    Caller
+| order by TimeGenerated desc

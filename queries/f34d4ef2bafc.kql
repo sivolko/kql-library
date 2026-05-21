@@ -1,0 +1,19 @@
+// Source: https://github.com/Lokis-Lab/KQL
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType startswith "Asr"
+| extend Parsed = parse_json(AdditionalFields)
+| where Parsed.IsAudit == "false"   // only enforced (blocked) events
+| summarize
+    Email              = countif(ActionType in ("AsrExecutableEmailContentBlocked", "AsrOfficeCommAppChildProcessBlocked")),
+    Script             = countif(ActionType in ("AsrObfuscatedScriptBlocked", "AsrScriptExecutableDownloadBlocked")),
+    WMI                = countif(ActionType in ("AsrPersistenceThroughWmiBlocked", "AsrPsexecWmiChildProcessBlocked")),
+    OfficeApp          = countif(ActionType in ("AsrOfficeChildProcessBlocked", "AsrOfficeMacroWin32ApiCallsBlocked", "AsrExecutableOfficeContentBlocked", "AsrOfficeProcessInjectionBlocked")),
+    ThirdPartyApp      = countif(ActionType == "AsrAdobeReaderChildProcessBlocked"),
+    WindowsCredentials = countif(ActionType == "AsrLsassCredentialTheftBlocked"),
+    PolymorphicThreats = countif(ActionType in ("AsrUntrustedExecutableBlocked", "AsrUntrustedUsbProcessBlocked", "AsrRansomwareBlocked", "AsrVulnerableSignedDriverBlocked"))
+  by bin(Timestamp, 1d)
+| render columnchart

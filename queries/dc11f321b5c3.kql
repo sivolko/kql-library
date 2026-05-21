@@ -1,0 +1,12 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation in ("FileSyncDownloadedFull", "FileDownloaded")
+| where UserId contains "#EXT#"
+| extend ['Guest UserPrincipalName'] = tostring(split(UserId,"#")[0])
+| extend ['Guest Domain'] = tostring(split(['Guest UserPrincipalName'],"_")[-1])
+| project ['Guest Domain']
+| summarize ['Download Count']=count()by ['Guest Domain']
+| sort by ['Download Count'] desc 

@@ -1,0 +1,17 @@
+// Source: https://github.com/Ram-1999/KQL-Queries
+// Collected: 2026-05-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue contains "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE"
+| where ActivityStatusValue contains "Success"
+| project TimeGenerated, OperationNameValue, ResourceGroup, Caller, CallerIpAddress, ResourceProviderValue, _ResourceId
+
+// Explanation of projected fields:
+// - TimeGenerated: The timestamp of the activity.
+// - OperationNameValue: The operation performed (role assignment changes in this case).
+// - ResourceGroup: The resource group where the operation occurred.
+// - Caller: The user or service principal that initiated the operation.
+// - CallerIpAddress: The IP address from which the operation was initiated.
+// - ResourceProviderValue: The Azure resource provider involved.
+// - _ResourceId: The unique identifier of the affected resource.
