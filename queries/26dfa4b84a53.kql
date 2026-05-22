@@ -1,0 +1,99 @@
+// Source: https://github.com/LaurieRhodes/Powershell-Kusto-Schema-Tools
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+﻿// ============================================================================
+// Azure Data Explorer KQL Script for AuditLogs - UPDATED VERSION
+// ============================================================================
+// Generated: 2025-09-17 07:19:20
+// Table type: Microsoft
+// Schema discovered using hybrid approach (Management API + getschema)
+// Data type corrections applied: TenantId->guid, Double->real (empirical fixes)
+// All columns including underscore columns included
+// Original columns: 30, Final columns: 30
+// ============================================================================
+
+.create-merge table AuditLogsRaw (records:dynamic)
+
+.alter-merge table AuditLogsRaw policy retention softdelete = 1d
+
+.alter table AuditLogsRaw policy caching hot = 1h
+
+// JSON mapping - choose appropriate option based on data structure
+.create-or-alter table AuditLogsRaw ingestion json mapping 'AuditLogsRawMapping' '[{"column":"records","Properties":{"path":"$.records"}}]'
+// Alternative for direct events: '[{"column":"records","Properties":{"path":"$"}}]'
+
+.create-merge table AuditLogs(
+TimeGenerated:datetime,
+TenantId:guid,
+ActivityDisplayName:string,
+AADTenantId:string,
+TargetResources:dynamic,
+ResultReason:string,
+Result:string,
+LoggedByService:string,
+InitiatedBy:dynamic,
+Id:string,
+AdditionalDetails:dynamic,
+Location:string,
+Level:string,
+Identity:string,
+ResourceProvider:string,
+ResourceGroup:string,
+Resource:string,
+CorrelationId:string,
+DurationMs:long,
+ResultDescription:string,
+ResultSignature:string,
+ResultType:string,
+Category:string,
+OperationVersion:string,
+OperationName:string,
+ResourceId:string,
+SourceSystem:string,
+ActivityDateTime:datetime,
+AADOperationType:string,
+Type:string,
+_TimeReceived:datetime)
+
+.alter table AuditLogs policy caching hot = 1d
+
+.create-or-alter function AuditLogsExpand() {
+AuditLogsRaw
+| mv-expand events = records
+// Alternative for non-nested: | extend events = records
+| project
+TimeGenerated=todatetime(events.TimeGenerated),
+TenantId=toguid(events.TenantId),
+ActivityDisplayName=tostring(events.ActivityDisplayName),
+AADTenantId=tostring(events.AADTenantId),
+TargetResources=todynamic(events.TargetResources),
+ResultReason=tostring(events.ResultReason),
+Result=tostring(events.Result),
+LoggedByService=tostring(events.LoggedByService),
+InitiatedBy=todynamic(events.InitiatedBy),
+Id=tostring(events.Id),
+AdditionalDetails=todynamic(events.AdditionalDetails),
+Location=tostring(events.Location),
+Level=tostring(events.Level),
+Identity=tostring(events.Identity),
+ResourceProvider=tostring(events.ResourceProvider),
+ResourceGroup=tostring(events.ResourceGroup),
+Resource=tostring(events.Resource),
+CorrelationId=tostring(events.CorrelationId),
+DurationMs=tolong(events.DurationMs),
+ResultDescription=tostring(events.ResultDescription),
+ResultSignature=tostring(events.ResultSignature),
+ResultType=tostring(events.ResultType),
+Category=tostring(events.Category),
+OperationVersion=tostring(events.OperationVersion),
+OperationName=tostring(events.OperationName),
+ResourceId=tostring(events.ResourceId),
+SourceSystem=tostring(events.SourceSystem),
+ActivityDateTime=todatetime(events.ActivityDateTime),
+AADOperationType=tostring(events.AADOperationType),
+Type=tostring(events.Type),
+_TimeReceived=todatetime(now())
+}
+
+.alter table AuditLogs policy update @'[{"Source": "AuditLogsRaw", "Query": "AuditLogsExpand()", "IsEnabled": "True", "IsTransactional": true}]'

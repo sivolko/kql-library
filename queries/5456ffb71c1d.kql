@@ -1,0 +1,30 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago (30d)
+| where ActionType == "AsrOfficeChildProcessAudited"
+| where AdditionalFields.IsAudit == true
+| project
+    TimeGenerated,
+    DeviceName,
+    InitiatingProcessAccountName,
+    FileName,
+    ProcessCommandLine,
+    InitiatingProcessFileName
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting license
+
+DeviceEvents
+| where Timestamp > ago (30d)
+| where ActionType == "AsrOfficeChildProcessAudited"
+| project
+    Timestamp,
+    DeviceName,
+    InitiatingProcessAccountName,
+    FileName,
+    ProcessCommandLine,
+    InitiatingProcessFileName

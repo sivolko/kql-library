@@ -1,0 +1,9 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "AntivirusReport"
+| extend ParsedAdditionalFields = parse_json(AdditionalFields)
+| evaluate bag_unpack(ParsedAdditionalFields)
+| where Signer startswith "INVALID"

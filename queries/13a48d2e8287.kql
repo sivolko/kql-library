@@ -1,0 +1,28 @@
+// Source: https://github.com/pluralsight-cloud/azure-automated-incident-response
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let starttime = 14d;
+
+let endtime = 1d;
+
+let alertOperationThreshold = 5;
+
+let SensitiveOperationList =  dynamic(["microsoft.compute/snapshots/write", "microsoft.network/networksecuritygroups/write", "microsoft.storage/storageaccounts/listkeys/action"]);
+
+let SensitiveActivity = AzureActivity
+| where OperationNameValue in~ (SensitiveOperationList) or OperationNameValue hassuffix "listkeys/action"
+| where ActivityStatusValue =~ "Success";
+
+SensitiveActivity
+| where TimeGenerated between (ago(starttime) .. ago(endtime))
+| summarize count() by CallerIpAddress, Caller, OperationNameValue, bin(TimeGenerated,1d)
+| where count_ >= alertOperationThreshold
+| join kind = rightanti (
+	SensitiveActivity
+	| where TimeGenerated >= ago(endtime)
+	| summarize StartTimeUtc = min(TimeGenerated), EndTimeUtc = max(TimeGenerated), ActivityTimeStamp = make_list(TimeGenerated), ActivityStatusValue = make_list(ActivityStatusValue), CorrelationIds = make_list(CorrelationId), ResourceGroups = make_list(ResourceGroup), ResourceIds = make_list(_ResourceId), ActivityCountByCallerIPAddress = count()
+	by CallerIpAddress, Caller, OperationNameValue
+	| where ActivityCountByCallerIPAddress >= alertOperationThreshold
+) on CallerIpAddress, Caller, OperationNameValue
+| extend Name = tostring(split(Caller,'@',0)[0]), UPNSuffix = tostring(split(Caller,'@',1)[0])

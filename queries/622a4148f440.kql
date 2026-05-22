@@ -1,0 +1,46 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let asrdevices=
+    DeviceEvents
+    | where TimeGenerated > ago (30d)
+    | where ActionType startswith "Asr"
+    | distinct DeviceName;
+//Find all devices and exclude those that have previously triggered a rule
+DeviceInfo
+| where TimeGenerated > ago (30d)
+| where OSPlatform startswith "Windows"
+| summarize arg_max(TimeGenerated, *) by DeviceName
+| where DeviceName !in (asrdevices)
+| project
+    ['Time Last Seen']=TimeGenerated,
+    DeviceId,
+    DeviceName,
+    OSPlatform,
+    OSVersion,
+    LoggedOnUsers
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting license
+
+//First find devices that have triggered an Attack Surface Reduction rule, either block or in audit mode.
+let asrdevices=
+    DeviceEvents
+    | where Timestamp > ago (30d)
+    | where ActionType startswith "Asr"
+    | distinct DeviceName;
+//Find all devices and exclude those that have previously triggered a rule
+DeviceInfo
+| where Timestamp > ago (30d)
+| where OSPlatform startswith "Windows"
+| summarize arg_max(Timestamp, *) by DeviceName
+| where DeviceName  !in (asrdevices)
+| project
+    ['Time Last Seen']=Timestamp,
+    DeviceId,
+    DeviceName,
+    OSPlatform,
+    OSVersion,
+    LoggedOnUsers

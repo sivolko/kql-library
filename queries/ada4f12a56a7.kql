@@ -1,0 +1,16 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let WhitelistExe = dynamic(["Iamclean.exe"]);
+let MaliciousLPExe =
+DeviceFileEvents
+| where isnotempty(SHA1)
+| where ActionType == @"FileCreated" and FileName endswith ".exe"
+| invoke FileProfile("SHA1",1000)
+| where GlobalPrevalence < 50
+| distinct FileName;
+DeviceEvents
+| where ActionType == @"ScheduledTaskCreated"
+| where AdditionalFields has_any(MaliciousLPExe)
+| where not (AdditionalFields has_any(WhitelistExe))

@@ -1,0 +1,14 @@
+// Source: https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 7d;
+let exclusions = dynamic([@"admin@contoso.com", @"1.2.3.4"]);
+let targeted_apps = dynamic([@"VPN", @"AnyConnect", @"GlobalProtect", @"FortiClient", @"Remote Desktop Gateway"]);
+IdentityLogonEvents
+| where Timestamp > ago(lookback)
+| where ActionType == @"LogonSuccess"
+| where Country != @"US"
+| where Application in~ (targeted_apps) or Protocol in~ (targeted_apps)
+| where AccountUpn !in (exclusions) and RemoteIP !in (exclusions)
+| project Timestamp, AccountUpn, RemoteIP, Country, Application, Protocol, DeviceName

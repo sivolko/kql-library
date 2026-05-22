@@ -1,0 +1,17 @@
+// Source: https://github.com/CyberAutomationX/SecureAzCloud-Scripts
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 7d;
+let AIApps = dynamic(["openai", "chatgpt", "claude", "anthropic", "gemini", "copilot", "copilot studio", "azure ai", "azure openai", "cognitive services", "ai foundry", "perplexity", "mistral"]);
+SigninLogs
+| where TimeGenerated > ago(Lookback)
+| extend AppComposite = tolower(strcat(coalesce(AppDisplayName, ""), " ", coalesce(ResourceDisplayName, ""))),
+         User = tostring(UserPrincipalName),
+         AuthReq = tolower(tostring(AuthenticationRequirement)),
+         Methods = tolower(tostring(AuthenticationMethodsUsed))
+| where AppComposite has_any (AIApps)
+| where ResultType == 0
+| where AuthReq !has "multi" and Methods !has "mfa" and Methods !has "fido" and Methods !has "authenticator"
+| project TimeGenerated, User, AppDisplayName, ResourceDisplayName, IPAddress, UserAgent, AuthenticationRequirement, AuthenticationMethodsUsed, ConditionalAccessStatus, ResultType
+| sort by TimeGenerated desc

@@ -1,0 +1,23 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "FirewallInboundConnectionBlocked"
+| summarize
+    ['Count of Devices']=dcount(DeviceName),
+    ['List of Devices']=make_set(DeviceName)
+    by RemoteIP, bin(TimeGenerated, 30m)
+| where ['Count of Devices'] >= 3
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting license
+
+DeviceEvents
+| where ActionType == "FirewallInboundConnectionBlocked"
+| summarize
+    ['Count of Devices']=dcount(DeviceName),
+    ['List of Devices']=make_set(DeviceName)
+    by RemoteIP, bin(Timestamp, 30m)
+| where ['Count of Devices'] >= 3

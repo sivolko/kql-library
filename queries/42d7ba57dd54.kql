@@ -1,0 +1,11 @@
+// Source: https://github.com/AnthonyByansi/AZ-104_Microsoft-Azure-Administrator-Associate
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let loginAttempts = azureactivity
+    | where Resource == "<resource_id>"  // Replace <resource_id> with your actual resource ID
+    | where OperationName == "Login"  // Filter for login attempts
+    | project TimeGenerated, UserName, Result, IPAddress, Details;
+loginAttempts
+| order by TimeGenerated desc
+| limit 50  // Display the latest 50 login attempts

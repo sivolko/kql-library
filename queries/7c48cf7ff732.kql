@@ -1,0 +1,21 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let AzureRoleIDs = externaldata(Role: string, ID: string)['https://raw.githubusercontent.com/MorganCPatz/KQL-Queries/refs/heads/main/AzureBuiltinRoleIDs.json'] with (format='multijson');
+AzureActivity
+| where TimeGenerated > ago (7d)
+| where ResourceId contains "Microsoft.KeyVault"
+| where OperationName has_any ("Create role assignment", "Delete role assignment")
+| parse Authorization with * '/secrets/' Secret: string '/'*
+| parse Authorization with * '/vaults/' KeyVault: string '/' *
+| extend ['KeyVault or Secret'] = coalesce(tostring(Secret), KeyVault)
+| extend RequestBodyObjectID = parse_json(tostring(parse_json(tostring(parse_json(Properties).requestbody)).Properties)).PrincipalId
+| extend RequestBodyDefinitionID = tostring(parse_json(tostring(parse_json(tostring(parse_json(Properties).requestbody)).Properties)).RoleDefinitionId)
+| extend ResponseBodyObjectID = parse_json(tostring(parse_json(tostring(parse_json(Properties).responseBody)).properties)).principalId
+| extend ResponseBodyDefinitionID = tostring(parse_json(tostring(parse_json(tostring(parse_json(Properties).responseBody)).properties)).roleDefinitionId)
+| extend ObjectId = coalesce(RequestBodyObjectID, ResponseBodyObjectID)
+| extend RoleId = coalesce(extract(@'.*\/(.*)$', 1, RequestBodyDefinitionID), extract(@'.*\/(.*)$', 1, ResponseBodyDefinitionID))
+| lookup AzureRoleIDs on $left.RoleId == $right.ID
+| where isnotempty(ObjectId)
+| project TimeGenerated, OperationName, ResourceGroup, KeyVault, ['KeyVault or Secret'], Caller, ObjectId, Role

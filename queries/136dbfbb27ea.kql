@@ -1,0 +1,12 @@
+// Source: https://github.com/jonahchn/security-engineering
+// Collected: 2026-05-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity 
+| where OperationName == "Create/Update Storage Account"
+| where ActivityStatus == "Succeeded"
+| extend allowBlobPublicAccess = parse_json(tostring(parse_json(tostring(parse_json(Properties).responseBody)).properties)).allowBlobPublicAccess
+| extend allowSharedKeyAccess = parse_json(tostring(parse_json(tostring(parse_json(Properties).responseBody)).properties)).allowSharedKeyAccess
+| project TimeGenerated, OperationName, Caller, CallerIpAddress, allowBlobPublicAccess, allowSharedKeyAccess, Resource, ResourceGroup, SubscriptionId
+| where isnotempty( allowBlobPublicAccess)
+| where allowBlobPublicAccess == "true"
