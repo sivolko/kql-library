@@ -1,0 +1,19 @@
+// Source: https://github.com/alecdhuse/Created-Detection-Rules
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where ResourceDisplayName == "Device Registration Service"
+| where AppDisplayName == "Microsoft Device Registration Client"
+| order by TimeGenerated
+| project
+    TimeGenerated,
+    UserDisplayName,
+    AppDisplayName,
+    AppId,
+   ResourceDisplayName,
+    IPAddress,
+    LocationDetails,
+    UserAgent,
+    Status,
+    DeviceDetail

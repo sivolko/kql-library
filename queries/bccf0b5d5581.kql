@@ -1,0 +1,6 @@
+// Source: https://github.com/Crimson7research/C7SigmaTools
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where (ContextInfo contains "Get-NetFirewallRule" or ContextInfo contains "Show-NetFirewallRule") or (Payload contains "Get-NetFirewallRule" or Payload contains "Show-NetFirewallRule")

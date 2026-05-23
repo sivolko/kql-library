@@ -1,0 +1,54 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookBack = 15m;
+
+// Hosts with unconstrained delegation (from recent computer account flags)
+// TRUSTED_FOR_DELEGATION flag = 0x80000 in userAccountControl
+let UnconstrainedHosts = SecurityEvent
+    | where TimeGenerated > ago(14d)
+    | where EventID == 4742
+    | where AccountExpires != ""                // Computer account change
+    | where EventData has "0x80000"
+        or EventData has "TRUSTED_FOR_DELEGATION"
+    | summarize by UnconstHost = toupper(Computer);
+
+// Known DCs
+let KnownDCNames = SecurityEvent
+    | where TimeGenerated > ago(3d)
+    | where EventID == 4768
+    | summarize by DC = toupper(Computer);
+
+// DC machine account authenticates TO an unconstrained delegation host
+SecurityEvent
+| where TimeGenerated > ago(LookBack)
+| where EventID == 4624
+| where LogonType == 3
+| where AuthenticationPackageName =~ "Kerberos"
+| where SubjectUserName endswith "$"                // Source = machine account
+| extend SourceAccountUpper = toupper(SubjectUserName)
+| where SourceAccountUpper in~ (                    // Source account IS a known DC
+    KnownDCNames | extend v = strcat(DC, "$") | project v
+  )
+| where not(toupper(Computer) in~ (KnownDCNames))   // Target host is NOT a DC
+| where toupper(Computer) in~ (UnconstrainedHosts)  // && IS an unconstrained host
+| extend
+    CoercedDC              = SubjectUserName,
+    UnconstrainedTarget    = Computer,
+    Severity               = "Critical",
+    WhySuspicious          = strcat(
+        "UnconstrainedDelegation_Coercion_DC_TGT_Theft; ",
+        "DC_", SubjectUserName, "_auth_to_unconstrained_host_", Computer, "; ",
+        "DC_TGT_cached_on_target_extract_with_Rubeus; "
+    )
+| project
+    TimeGenerated,
+    Severity,
+    WhySuspicious,
+    CoercedDC,
+    UnconstrainedTarget,
+    IpAddress,
+    SubjectUserName,
+    SubjectDomainName
+| order by TimeGenerated desc

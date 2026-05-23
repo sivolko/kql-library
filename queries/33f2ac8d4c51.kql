@@ -1,0 +1,14 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago (30d)
+| project TimeGenerated, EventID, Account, AccountType, PrivilegeList, Computer
+| where EventID == "4672"
+| where Account != "NT AUTHORITY\\SYSTEM" and Account !has "Window Manager"
+| where AccountType == "User"
+| extend Privs=extract_all(@"Se(.*?)Privilege", PrivilegeList)
+| project TimeGenerated, Account, Computer, Privs
+| summarize Privileges=make_set(Privs) by Computer, Account
+| sort by Computer asc  

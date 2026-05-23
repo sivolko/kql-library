@@ -1,0 +1,26 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+union ( 
+    DeviceProcessEvents
+    | extend processTime = bin(Timestamp, 1s)
+    | where DeviceName !contains "-"
+    | where ProcessVersionInfoInternalFileName contains @"vssadmin"
+    | where ProcessCommandLine matches regex @"(?i)s[^a-zA-Z]*h[^a-zA-Z]*a[^a-zA-Z]*d[^a-zA-Z]*o[^a-zA-Z]*w" or
+    ProcessCommandLine matches regex @"(?i)c[^a-zA-Z]*r[^a-zA-Z]*e[^a-zA-Z]*a[^a-zA-Z]*t[^a-zA-Z]*e"
+    | where InitiatingProcessFileName has_any ("powershell", "cmd", "wscript")
+),
+(
+    DeviceEvents
+    | extend processTime = bin(Timestamp, 1s)
+    | where InitiatingProcessVersionInfoInternalFileName contains @"vssadmin"
+    | where InitiatingProcessCommandLine matches regex @"(?i)s[^a-zA-Z]*h[^a-zA-Z]*a[^a-zA-Z]*d[^a-zA-Z]*o[^a-zA-Z]*w" or
+    InitiatingProcessCommandLine matches regex @"(?i)c[^a-zA-Z]*r[^a-zA-Z]*e[^a-zA-Z]*a[^a-zA-Z]*t[^a-zA-Z]*e"
+)
+| summarize DetectionCount = count(), 
+            FirstTimeDetected = min(Timestamp), 
+            LastTimeDetected = max(Timestamp) 
+  by DeviceName, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, ProcessCommandLine, InitiatingProcessCommandLine
+| project DeviceName, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, ProcessCommandLine, InitiatingProcessCommandLine, DetectionCount, FirstTimeDetected, LastTimeDetected
+| order by FirstTimeDetected desc

@@ -1,0 +1,8 @@
+// Source: https://github.com/Raoof128/ADCSAD
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4769 and ServiceName == "host" and CertificateIssuerName has "EnrollmentAgent"
+| where AccountType != "User" or Account != "PKI_Admins"
+| summarize count() by Account, CertificateSerialNumber, bin(TimeGenerated, 1h)

@@ -1,0 +1,13 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let FixedVersion = dynamic(["11.2.3","11.1.5","10.2.8","10.2.10-h12","10.2.13-h2","10.1.14","10.1.14-h8"]);
+CommonSecurityLog
+| where DeviceVendor == "Palo Alto Networks"
+| where Computer != ""
+| where TimeGenerated > ago(1h)
+| summarize LastLogReceived=max(TimeGenerated) by Computer, DeviceVendor, DeviceVersion
+| project LastLogReceived, Computer, DeviceVendor, DeviceVersion
+| where LastLogReceived < ago(15m)
+| where not (tostring(DeviceVersion) has_any(FixedVersion))

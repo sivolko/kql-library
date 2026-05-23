@@ -1,0 +1,8 @@
+// Source: https://github.com/Matt-C-G/sentinel-labs
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (4624,4625) and LogonType == 10
+| summarize Success=countif(EventID==4624), Fail=countif(EventID==4625) by bin(TimeGenerated,1h), Computer
+| where Success > 5

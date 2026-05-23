@@ -1,0 +1,22 @@
+// Source: https://github.com/hchiphong/KQL
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+CloudAppEvents
+// Filter before search such as | where IPAddress == '8.8.8.8'
+| where ActionType == 'MailItemsAccessed'
+| extend  RawEventData.Folders
+| mv-expand RawEventData_Folders
+| mv-expand RawEventData_Folders.FolderItems
+| extend InternetMessageId= tolower(RawEventData_Folders_FolderItems.InternetMessageId)
+// Can join with EmailEvents on InternetMessageId
+
+
+// With OfficeActivity Table
+OfficeActivity
+| where Operation == "MailItemsAccessed"
+| mv-expand todynamic(Folders)
+| extend FolderItems = Folders.FolderItems
+| mv-expand FolderItems
+| extend InternetMessageId = tolower(tostring(FolderItems.InternetMessageId))
+// Can join with EmailEvents on InternetMessageId

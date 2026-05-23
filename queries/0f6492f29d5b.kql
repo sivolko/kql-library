@@ -1,0 +1,16 @@
+// Source: https://github.com/dferrell30/ShadowTraceOps-CommunityEdition
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetUser = "{TargetUser}";
+IdentityLogonEvents
+| where Timestamp > ago(30d)
+| extend AccountUpnSafe = tostring(column_ifexists("AccountUpn", "")),
+         AccountNameSafe = tostring(column_ifexists("AccountName", "")),
+         DeviceNameSafe = tostring(column_ifexists("DeviceName", "")),
+         IPAddressSafe = tostring(column_ifexists("IPAddress", "")),
+         LogonTypeSafe = tostring(column_ifexists("LogonType", "")),
+         ActionTypeSafe = tostring(column_ifexists("ActionType", ""))
+| where AccountUpnSafe =~ TargetUser or AccountNameSafe =~ split(TargetUser, "@")[0]
+| project Timestamp, AccountUpn=AccountUpnSafe, AccountName=AccountNameSafe, DeviceName=DeviceNameSafe, IPAddress=IPAddressSafe, LogonType=LogonTypeSafe, ActionType=ActionTypeSafe
+| order by Timestamp desc

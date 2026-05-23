@@ -1,0 +1,12 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago (30d)
+| where ActionType == "SmartScreenUrlWarning"
+| parse RemoteUrl with * '://' Domain '/' *
+| where isnotempty(Domain)
+| summarize DomainCount=count()by Domain
+| sort by DomainCount
+| render piechart 

@@ -1,0 +1,13 @@
+// Source: https://github.com/sringler/foundry-landing-zone-demo
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(7d)
+| where OperationNameValue endswith "POLICIES/DEPLOYIFNOTEXISTS/ACTION"
+   or  OperationNameValue endswith "POLICIES/AUDITIFNOTEXISTS/ACTION"
+| where ActivityStatusValue == "Failure"
+| project TimeGenerated, ResourceProviderValue, OperationNameValue,
+          ActivityStatusValue, Caller, ResourceId=_ResourceId,
+          SubStatus=ActivitySubstatusValue, Properties
+| order by TimeGenerated desc

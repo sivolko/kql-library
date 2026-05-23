@@ -1,0 +1,40 @@
+// Source: https://github.com/griffin31-lab/Griffin31-ToolKit
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let newusers=
+AuditLogs
+| where TimeGenerated > ago(365d) and TimeGenerated < ago(1d)
+| where OperationName in ("Add app role assignment to service principal","Add delegated permission grant")
+| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| distinct Actor
+| join kind=rightanti (
+    AuditLogs
+    | where TimeGenerated > ago(1d)
+    | where OperationName in ("Add app role assignment to service principal","Add delegated permission grant")
+    | extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+    | distinct Actor )
+    on Actor;
+let delegatedaccess=
+    AuditLogs
+    | where TimeGenerated > ago(1d)
+    | where OperationName has "Add delegated permission grant"
+    | extend x = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[0].newValue)))
+    | extend PermissionsGranted = split(x, ' ')
+    | extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+    | where Actor in (newusers)
+    | extend ServicePrincipalObjectId = tostring(TargetResources[1].id)
+    | extend Activity = "Delegated access added to application"
+    | project TimeGenerated, Activity, PermissionsGranted, ServicePrincipalObjectId, Actor;
+let appaccess=
+    AuditLogs
+    | where TimeGenerated > ago(1d)
+    | where OperationName has "Add app role assignment to service principal"
+    | extend x = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue)))
+    | extend PermissionsGranted = split(x, ' ')
+    | extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+    | where Actor in (newusers)
+    | extend Activity = "Application access added to application"
+    | extend ServicePrincipalObjectId = tostring(TargetResources[1].id)
+    | project TimeGenerated, Activity, PermissionsGranted, ServicePrincipalObjectId, Actor;
+union delegatedaccess, appaccess

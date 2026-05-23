@@ -1,0 +1,7 @@
+// Source: https://github.com/ge0mant1s/soacframe-community
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where DestinationPort == 22 and SourceIP in ("127.0.0.1")
+| project TimeGenerated, DeviceName, SourceIP, DestinationIP, DestinationPort, Activity

@@ -1,0 +1,10 @@
+// Source: https://github.com/vivekrn11/AzureSentinelKQLqueries
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let portrange = dynamic(["6665","6666","6667","6668","6669","6697","7000"]);
+CommonSecurityLog
+| where (not(ipv4_is_match("10.0.0.0",SourceIP,8) or ipv4_is_match("172.16.0.0",SourceIP,12) or ipv4_is_match("192.168.0.0",SourceIP,16))) 
+and not (ipv4_is_match("10.0.0.0",DestinationIP,8) or ipv4_is_match("172.16.0.0",DestinationIP,12) or ipv4_is_match("192.168.0.0",DestinationIP,16))
+| where DeviceAction contains "allow" or DeviceAction contains "accept"
+| where DestinationPort in (portrange)

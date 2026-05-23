@@ -1,0 +1,34 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackDays = 90d;
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackDays)
+| where RecordType == "MicrosoftTeams"
+| where Operation in ("MemberAdded", "InviteAccepted", "GuestAccessEnabled")
+| extend MemberUPN = tostring(Members[0].UPN)
+| where MemberUPN has "#EXT#"
+| extend
+    GuestDomain    = tostring(extract(@"#EXT#@(.+)", 1, MemberUPN)),
+    InviterDomain  = tostring(split(UserId, "@")[1])
+| summarize
+    InviteCount    = count(),
+    InvitedGuests  = make_set(MemberUPN, 30),
+    Teams          = make_set(TeamName, 20),
+    ClientIPs      = make_set(ClientIP, 10),
+    FirstInvite    = min(TimeGenerated),
+    LastInvite     = max(TimeGenerated)
+    by UserId, GuestDomain, InviterDomain
+| extend IsExternalInviter = InviterDomain != GuestDomain
+| sort by InviteCount desc
+| project
+    UserId,
+    GuestDomain,
+    InviteCount,
+    Teams,
+    InvitedGuests,
+    IsExternalInviter,
+    FirstInvite,
+    LastInvite

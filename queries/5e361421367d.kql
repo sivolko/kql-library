@@ -1,0 +1,299 @@
+// Source: https://github.com/dmaynor/bh-2025
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let SyncAccounts = dynamic(["Sync_", "MSOL_"]);
+let LookbackTime = 24h;
+AuditLogs
+| where TimeGenerated > ago(LookbackTime)
+| where Identity has_any (SyncAccounts)
+| where OperationName in (
+    "Add member to role",
+    "Add user", 
+    "Update user",
+    "Update application",
+    "Add service principal",
+    "Update service principal"
+)
+| extend 
+    TargetResource = tostring(TargetResources[0].displayName),
+    TargetType = tostring(TargetResources[0].type),
+    ModifiedProperties = TargetResources[0].modifiedProperties
+| where TargetType != "Synchronization Rule"  // Filter out normal sync operations
+| project 
+    TimeGenerated,
+    Identity,
+    OperationName,
+    TargetResource,
+    TargetType,
+    Result,
+    ResultDescription,
+    CorrelationId
+| summarize 
+    Operations = make_set(OperationName),
+    Targets = make_set(TargetResource),
+    OperationCount = count() 
+    by Identity, bin(TimeGenerated, 1h)
+| where OperationCount > 5  // Threshold for suspicious activity
+| extend AlertSeverity = case(
+    Operations has "Add member to role", "High",
+    OperationCount > 10, "Medium",
+    "Low"
+)
+
+// Query 2: Detect Privilege Escalation via Sync Account
+AuditLogs
+| where TimeGenerated > ago(24h)
+| where OperationName == "Add member to role"
+| where Identity has_any (dynamic(["Sync_", "MSOL_"]))
+| extend 
+    TargetUser = tostring(TargetResources[0].userPrincipalName),
+    RoleName = tostring(TargetResources[0].displayName)
+| where RoleName in (
+    "Global Administrator",
+    "Privileged Role Administrator", 
+    "Privileged Authentication Administrator",
+    "Security Administrator"
+)
+| project 
+    TimeGenerated,
+    Identity,
+    TargetUser,
+    RoleName,
+    Result,
+    CorrelationId,
+    IPAddress = tostring(InitiatedBy.user.ipAddress)
+| extend 
+    AlertSeverity = "Critical",
+    AlertDescription = strcat("Sync account added user to high-privilege role: ", RoleName)
+
+// Query 3: Detect Suspicious Authentication Patterns for Sync Accounts
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where UserPrincipalName has_any (dynamic(["Sync_", "MSOL_"]))
+| where ResultType == 0  // Successful sign-ins
+| extend 
+    Hour = hourofday(TimeGenerated),
+    DayOfWeek = dayofweek(TimeGenerated)
+| summarize 
+    SignInCount = count(),
+    UniqueIPs = dcount(IPAddress),
+    IPAddresses = make_set(IPAddress),
+    Applications = make_set(AppDisplayName),
+    Locations = make_set(LocationDetails.city)
+    by UserPrincipalName, bin(TimeGenerated, 1d)
+| where UniqueIPs > 3 or SignInCount > 100
+| extend 
+    AlertSeverity = case(
+        UniqueIPs > 5, "High",
+        SignInCount > 200, "High",
+        "Medium"
+    ),
+    AlertDescription = "Unusual authentication pattern for sync account"
+
+// Query 4: Detect Modified Sync Rules or Connectors
+AuditLogs
+| where TimeGenerated > ago(7d)
+| where Category == "SynchronizationRule" or Category == "DirectoryManagement"
+| where OperationName in (
+    "Update synchronization rule",
+    "Add synchronization rule",
+    "Delete synchronization rule",
+    "Update connector",
+    "Add connector"
+)
+| extend 
+    Actor = tostring(InitiatedBy.user.userPrincipalName),
+    ChangedObject = tostring(TargetResources[0].displayName),
+    ChangeType = OperationName
+| where Actor !has "expected-admin@domain.com"  // Replace with legitimate admin
+| project 
+    TimeGenerated,
+    Actor,
+    ChangeType,
+    ChangedObject,
+    Result,
+    ResultDescription
+| extend 
+    AlertSeverity = "High",
+    AlertDescription = "Unauthorized modification to synchronization configuration"
+
+// Query 5: Cross-Premises Lateral Movement Detection
+let OnPremEvents = SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID in (4624, 4648, 4672)  // Logon events
+| where Account has_any (dynamic(["MSOL_", "AAD_"]))
+| project 
+    OnPremTime = TimeGenerated,
+    Account,
+    Computer,
+    LogonType,
+    IpAddress;
+let CloudEvents = AuditLogs
+| where TimeGenerated > ago(24h)
+| where Identity has_any (dynamic(["Sync_", "MSOL_"]))
+| project 
+    CloudTime = TimeGenerated,
+    Identity,
+    OperationName,
+    CloudIP = tostring(InitiatedBy.user.ipAddress);
+OnPremEvents
+| join kind=inner (CloudEvents) on $left.Account == $right.Identity
+| where abs(datetime_diff('minute', OnPremTime, CloudTime)) < 30
+| where IpAddress != CloudIP
+| project 
+    OnPremTime,
+    CloudTime,
+    Account,
+    Computer,
+    OperationName,
+    OnPremIP = IpAddress,
+    CloudIP
+| extend 
+    AlertSeverity = "High",
+    AlertDescription = "Potential cross-premises lateral movement detected"
+
+// Query 6: Detect Abnormal Azure AD Connect Server Activity
+let AADConnectServers = dynamic(["AADC01", "AADC02"]);  // Replace with your servers
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where Computer in (AADConnectServers)
+| where EventID in (
+    4688,  // Process creation
+    4663,  // File access
+    4656,  // Handle to object requested
+    4658   // Handle closed
+)
+| where (
+    Process has_any ("powershell", "cmd", "wmic", "psexec") or
+    ObjectName has_any ("ADSync.mdf", "ADSync.ldf", "mms_management_agent")
+)
+| where Account !in ("NT AUTHORITY\\SYSTEM", "NT SERVICE\\ADSync")
+| summarize 
+    EventCount = count(),
+    UniqueProcesses = dcount(Process),
+    UniqueFiles = dcount(ObjectName),
+    Accounts = make_set(Account)
+    by Computer, bin(TimeGenerated, 1h)
+| where EventCount > 50 or UniqueProcesses > 10
+| extend 
+    AlertSeverity = case(
+        Accounts has_any (dynamic(["admin", "administrator"])), "Critical",
+        EventCount > 100, "High",
+        "Medium"
+    ),
+    AlertDescription = "Suspicious activity on Azure AD Connect server"
+
+// Query 7: Detect Potential Golden SAML Attack
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName in (
+    "Update application",
+    "Update service principal",
+    "Add app role assignment to service principal"
+)
+| extend 
+    ModifiedApp = tostring(TargetResources[0].displayName),
+    Actor = tostring(InitiatedBy.user.userPrincipalName),
+    Changes = TargetResources[0].modifiedProperties
+| where ModifiedApp has_any ("ADFS", "Federation", "WS-Fed")
+| mv-expand Changes
+| where Changes.displayName in (
+    "SigningCertificate",
+    "PreferredTokenSigningKeyThumbprint",
+    "TrustedCertificate"
+)
+| project 
+    TimeGenerated,
+    Actor,
+    ModifiedApp,
+    PropertyChanged = tostring(Changes.displayName),
+    OldValue = tostring(Changes.oldValue),
+    NewValue = tostring(Changes.newValue)
+| extend 
+    AlertSeverity = "Critical",
+    AlertDescription = "Potential Golden SAML attack - Federation certificate modified"
+
+// Query 8: Monitor for Mass Changes via Sync Account
+let MassChangeThreshold = 100;
+AuditLogs
+| where TimeGenerated > ago(24h)
+| where Identity has_any (dynamic(["Sync_", "MSOL_"]))
+| where Category == "UserManagement"
+| summarize 
+    ChangeCount = count(),
+    UniqueUsers = dcount(tostring(TargetResources[0].userPrincipalName)),
+    Operations = make_set(OperationName)
+    by Identity, bin(TimeGenerated, 1h)
+| where ChangeCount > MassChangeThreshold
+| extend 
+    AlertSeverity = case(
+        ChangeCount > 1000, "Critical",
+        ChangeCount > 500, "High",
+        "Medium"
+    ),
+    AlertDescription = strcat("Mass changes detected via sync account: ", ChangeCount, " operations")
+
+// Query 9: Detect Shadow Credential Attacks
+AuditLogs
+| where TimeGenerated > ago(7d)
+| where OperationName == "Update user"
+| extend 
+    ModifiedProperties = TargetResources[0].modifiedProperties,
+    TargetUser = tostring(TargetResources[0].userPrincipalName)
+| mv-expand ModifiedProperties
+| where ModifiedProperties.displayName in (
+    "StrongAuthenticationMethods",
+    "AlternativeSecurityIds",
+    "DeviceKeys"
+)
+| project 
+    TimeGenerated,
+    Actor = tostring(InitiatedBy.user.userPrincipalName),
+    TargetUser,
+    PropertyModified = tostring(ModifiedProperties.displayName),
+    NewValue = tostring(ModifiedProperties.newValue)
+| where Actor != TargetUser  // User didn't modify their own credentials
+| extend 
+    AlertSeverity = "High",
+    AlertDescription = "Potential shadow credential attack detected"
+
+// Query 10: Correlation Rule - Combined Indicators
+let SuspiciousSyncActivity = AuditLogs
+| where TimeGenerated > ago(24h)
+| where Identity has_any (dynamic(["Sync_", "MSOL_"]))
+| summarize Count = count() by Identity, bin(TimeGenerated, 1h);
+let SuspiciousLogons = SigninLogs
+| where TimeGenerated > ago(24h)
+| where UserPrincipalName has_any (dynamic(["Sync_", "MSOL_"]))
+| where ResultType != 0  // Failed logons
+| summarize FailedCount = count() by UserPrincipalName, bin(TimeGenerated, 1h);
+let ConfigChanges = AuditLogs
+| where TimeGenerated > ago(24h)
+| where Category in ("SynchronizationRule", "DirectoryManagement")
+| summarize ConfigChangeCount = count() by bin(TimeGenerated, 1h);
+SuspiciousSyncActivity
+| join kind=fullouter (SuspiciousLogons) on $left.Identity == $right.UserPrincipalName and $left.TimeGenerated == $right.TimeGenerated
+| join kind=fullouter (ConfigChanges) on $left.TimeGenerated == $right.TimeGenerated
+| where Count > 50 or FailedCount > 10 or ConfigChangeCount > 0
+| extend 
+    TotalRiskScore = Count + (FailedCount * 2) + (ConfigChangeCount * 5),
+    AlertSeverity = case(
+        TotalRiskScore > 100, "Critical",
+        TotalRiskScore > 50, "High",
+        TotalRiskScore > 20, "Medium",
+        "Low"
+    ),
+    AlertDescription = strcat(
+        "Correlated suspicious activity - Risk Score: ", TotalRiskScore,
+        " (Activity: ", Count,
+        ", Failed Logons: ", FailedCount,
+        ", Config Changes: ", ConfigChangeCount, ")"
+    )
+| project 
+    TimeGenerated = coalesce(TimeGenerated, TimeGenerated1, TimeGenerated2),
+    Identity = coalesce(Identity, UserPrincipalName),
+    TotalRiskScore,
+    AlertSeverity,
+    AlertDescription
+| order by TotalRiskScore desc

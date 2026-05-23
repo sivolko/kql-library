@@ -1,0 +1,17 @@
+// Source: https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 7d;
+let mount_events = DeviceEvents
+| where Timestamp > ago(lookback)
+| where ActionType in (@"IsoFileMounted", @"VhdFileMounted")
+| project MountTime = Timestamp, DeviceId, DeviceName, FileName, InitiatingProcessCommandLine;
+let execution_events = DeviceProcessEvents
+| where Timestamp > ago(lookback)
+| project ExecTime = Timestamp, DeviceId, DeviceName, FileName, ProcessCommandLine, FolderPath;
+mount_events
+| join kind=inner execution_events on DeviceId
+| where ExecTime between (MountTime .. (MountTime + 2m))
+| where FolderPath matches regex @"^[a-zA-Z]:\\[^\\]+$" // Execution from the root of a drive (common for mounted ISOs)
+| project MountTime, ExecTime, DeviceName, MountedFile = FileName, ExecutedFile = FileName1, ProcessCommandLine

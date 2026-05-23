@@ -1,0 +1,26 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe=1d;
+IdentityInfo
+| where TimeGenerated > ago(21d)
+| where isnotempty(AssignedRoles)
+| where AssignedRoles != "[]"
+| summarize arg_max(TimeGenerated, *) by AccountUPN
+| project AccountUPN, AccountName, AccountSID
+| join kind=inner (
+    SecurityEvent
+    | where TimeGenerated > ago(timeframe)
+    | where EventID == "4724"
+    | project
+        TimeGenerated,
+        Activity,
+        SubjectAccount,
+        TargetAccount,
+        TargetSid,
+        SubjectUserSid
+    )
+    on $left.AccountSID == $right.TargetSid
+| where SubjectUserSid != TargetSid
+| project PasswordResetTime=TimeGenerated, Activity, ActorAccountName=SubjectAccount, TargetAccountUPN=AccountUPN,TargetAccountName=TargetAccount

@@ -1,0 +1,14 @@
+// Source: https://github.com/WhalerMike/uiao
+// Collected: 2026-05-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where OfficeWorkload == "Exchange"
+| where Operation in (
+    "New-ManagementRoleAssignment",
+    "Set-TransportRule",
+    "Set-RemoteDomain",
+    "Add-MailboxPermission"
+  )
+| project TimeGenerated, UserId, Operation, Parameters = tostring(Parameters)
