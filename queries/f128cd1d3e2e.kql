@@ -1,0 +1,8 @@
+// Source: https://github.com/abbeyadegbola/Sentinel-KQL
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue startswith "MICROSOFT.SECURITYINSIGHTS/ALERTRULES/WRITE"
+| where Properties contains "alertRules/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+| project Caller , TimeGenerated , Properties

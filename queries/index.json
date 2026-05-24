@@ -1,5 +1,396 @@
 [
   {
+    "id": "330944701d23",
+    "title": "Azure Arc CVE-2026-26117 \u2014 Agent Interception and Tenant Redirect Hunting",
+    "description": "Microsoft Sentinel / Defender for Endpoint (MDE Advanced Hunting) Covers: - Named pipe interception (CVE-2026-26117 exploitation path) - Arc service restart anomalies - Azure Activity Log: Arc resource deletion/re-registration - Registry changes to Arc TenantId (tenant redirect) - Token use from unexpected IPs post-compromise",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "azure",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/AndrewAltimit/exploits\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet ArcDeletes = AzureActivity\n| where OperationNameValue =~ \"Microsoft.HybridCompute/machines/delete\"\n| where ActivityStatusValue == \"Success\"\n| project DeleteTime = TimeGenerated, MachineName = ResourceId,\n          Subscription = SubscriptionId, Caller = Caller;\nlet ArcCreates = AzureActivity\n| where OperationNameValue =~ \"Microsoft.HybridCompute/machines/write\"\n| where ActivityStatusValue == \"Success\"\n| project CreateTime = TimeGenerated, MachineName = ResourceId,\n          NewSubscription = SubscriptionId, NewCaller = Caller;\nArcDeletes\n| join kind=inner ArcCreates on MachineName\n| where CreateTime > DeleteTime and CreateTime < (DeleteTime + 2h)\n| where Subscription != NewSubscription    // cross-subscription re-registration\n| project DeleteTime, CreateTime, MachineName, OriginalSubscription = Subscription,\n          NewSubscription, OriginalCaller = Caller, NewCaller\n| sort by DeleteTime desc\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Query 2 \u2014 Arc Service Principal Token Use from Unexpected IP\n//\n// Rationale: After CVE-2026-26117 token theft, the attacker uses the managed\n// identity token from their own machine. Entra sign-in logs for the Arc machine\n// service principal (identified by \"Arc\" or \"HybridCompute\" in the app name)\n// show authentication from IPs that differ from the known machine IP.\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSigninLogs\n| where AppDisplayName has_any (\"HybridCompute\", \"Azure Arc\", \"azcmagent\")\n    or AppId has \"arc\"\n| summarize\n    IPAddresses  = make_set(IPAddress),\n    Locations    = make_set(Location),\n    SignInCount  = count(),\n    FirstSeen    = min(TimeGenerated),\n    LastSeen     = max(TimeGenerated)\n  by UserPrincipalName, AppDisplayName, bin(TimeGenerated, 1h)\n| where array_length(IPAddresses) > 1    // multiple source IPs in same hour\n| sort by LastSeen desc\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Query 3 \u2014 himds Named Pipe Access from Non-Arc Process (MDE Telemetry)\n//\n// Rationale: Sysmon Event 17/18 or MDE NamedPipeEvents show process \u2192 pipe\n// connections. Access to \\\\.\\pipe\\himds from any process other than the Arc\n// components is anomalous.\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nDeviceEvents\n| where ActionType == \"NamedPipeEvent\"\n| where AdditionalFields has \"himds\"\n| where InitiatingProcessFileName !in~ (\"himds.exe\", \"GCArcService.exe\",\n                                        \"ExtensionService.exe\", \"azcmagent.exe\")\n| project TimeGenerated, DeviceName, InitiatingProcessFileName,\n          InitiatingProcessAccountName, InitiatingProcessCommandLine,\n          AdditionalFields\n| sort by TimeGenerated desc\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Query 4 \u2014 Arc Agent Registry TenantId Modification\n//\n// Rationale: Registry key HKLM\\SOFTWARE\\Microsoft\\Azure Connected Machine\n// Agent\\TenantId normally never changes after initial Arc registration. Any\n// modification \u2014 especially by a process other than the Arc installer \u2014 is a\n// cross-tenant redirect indicator.\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nDeviceRegistryEvents\n| where RegistryKey has \"Azure Connected Machine Agent\"\n| where RegistryValueName == \"TenantId\"\n| where InitiatingProcessFileName !in~ (\"azcmagent.exe\", \"msiexec.exe\",\n                                        \"AzureConnectedMachineAgent.msi\")\n| project TimeGenerated, DeviceName, RegistryKey, RegistryValueName,\n          PreviousRegistryValueData, RegistryValueData,\n          InitiatingProcessFileName, InitiatingProcessAccountName,\n          InitiatingProcessCommandLine\n| sort by TimeGenerated desc\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Query 5 \u2014 azcmagent disconnect Execution (Forced De-registration)\n//\n// Rationale: The tenant redirect chain requires running `azcmagent disconnect`\n// or forcibly deleting registration files. azcmagent.exe with the \"disconnect\"\n// argument outside of a maintenance window is a high-fidelity indicator.\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nDeviceProcessEvents\n| where FileName =~ \"azcmagent.exe\"\n| where ProcessCommandLine has_any (\"disconnect\", \"connect --tenant-id\",\n                                    \"connect --service-principal\")\n| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine,\n          InitiatingProcessFileName, InitiatingProcessCommandLine\n| sort by TimeGenerated desc\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Query 6 \u2014 Arc Agent Rapid Restart Pattern (Race Condition Exploitation)\n//\n// Rationale: Named pipe race exploitation requires forcing himds.exe to restart.\n// Rapid restarts (more than 2 in 10 minutes) not associated with a Windows\n// Update event indicate forced restarts from an attacker.\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nDeviceProcessEvents\n| where FileName =~ \"himds.exe\"\n| where ActionType == \"ProcessCreated\"\n| summarize\n    RestartCount = count(),\n    CommandLines = make_set(ProcessCommandLine),\n    AccountNames = make_set(AccountName)\n  by DeviceName, bin(TimeGenerated, 10m)\n| where RestartCount >= 3\n| sort by RestartCount desc, TimeGenerated desc",
+    "source_repo": "AndrewAltimit/exploits",
+    "source_url": "https://github.com/AndrewAltimit/exploits/blob/88abd914ae7094499bab58b2b6aa32b01122fb31/tools/lateral-movement/azure-arc/cve-2026-26117/detection/kql_arc_tenant_redirection.kql",
+    "filename": "kql_arc_tenant_redirection.kql",
+    "collected_at": "2026-05-24T03:17:08.530115+00:00"
+  },
+  {
+    "id": "6328f912e1b6",
+    "title": "============================================",
+    "description": "QUERY METADATA ============================================ Name: Orphaned Resources Detector Purpose: Find unattached resources still incurring costs Data Sources: AzureActivity, Resources (AzureResourceGraph) Frequency: Weekly Estimated Savings: 5-15% of Azure spend Author: Mario Hartson Website: https://mhartson.com",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/mhartson310/Azure-Cost-Optimization-Toolkit\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nResources\n| where type == \"microsoft.compute/disks\"\n| where managedBy == \"\" or isnull(managedBy)\n| where properties.diskState == \"Unattached\"\n| extend \n    DiskSize_GB = toint(properties.diskSizeGB),\n    DiskTier = tostring(sku.name),\n    CreatedDate = todatetime(properties.timeCreated)\n| extend \n    // Estimated monthly cost (rough)\n    EstimatedMonthlyCost = case(\n        DiskTier == \"Premium_LRS\", DiskSize_GB * 0.135,\n        DiskTier == \"StandardSSD_LRS\", DiskSize_GB * 0.075,\n        DiskTier == \"Standard_LRS\", DiskSize_GB * 0.04,\n        DiskSize_GB * 0.075\n    ),\n    DaysOrphaned = datetime_diff('day', now(), CreatedDate)\n| project \n    ResourceType = \"Unattached Disk\",\n    Name = name,\n    ResourceGroup = resourceGroup,\n    Subscription = subscriptionId,\n    Size_GB = DiskSize_GB,\n    Tier = DiskTier,\n    Location = location,\n    EstimatedMonthlyCost = round(EstimatedMonthlyCost, 2),\n    DaysOrphaned,\n    CreatedDate,\n    Action = \"Safe to delete if confirmed not needed\"\n| union (\n    // Unused Public IPs\n    Resources\n    | where type == \"microsoft.network/publicipaddresses\"\n    | where isnull(properties.ipConfiguration)\n    | extend \n        Sku = tostring(sku.name),\n        AllocationMethod = tostring(properties.publicIPAllocationMethod),\n        CreatedDate = todatetime(properties.timeCreated)\n    | extend \n        EstimatedMonthlyCost = case(\n            Sku == \"Standard\", 3.65,  // Standard SKU\n            0.0  // Basic SKU is free when unused\n        ),\n        DaysOrphaned = datetime_diff('day', now(), CreatedDate)\n    | project \n        ResourceType = \"Unused Public IP\",\n        Name = name,\n        ResourceGroup = resourceGroup,\n        Subscription = subscriptionId,\n        Size_GB = 0,\n        Tier = Sku,\n        Location = location,\n        EstimatedMonthlyCost,\n        DaysOrphaned,\n        CreatedDate,\n        Action = \"Safe to delete if not reserved for future use\"\n)\n| union (\n    // Orphaned Network Interfaces\n    Resources\n    | where type == \"microsoft.network/networkinterfaces\"\n    | where isnull(properties.virtualMachine)\n    | extend \n        CreatedDate = todatetime(properties.timeCreated),\n        PrivateIP = tostring(properties.ipConfigurations[0].properties.privateIPAddress)\n    | extend DaysOrphaned = datetime_diff('day', now(), CreatedDate)\n    | project \n        ResourceType = \"Orphaned NIC\",\n        Name = name,\n        ResourceGroup = resourceGroup,\n        Subscription = subscriptionId,\n        Size_GB = 0,\n        Tier = PrivateIP,\n        Location = location,\n        EstimatedMonthlyCost = 0.0,  // NICs themselves are free\n        DaysOrphaned,\n        CreatedDate,\n        Action = \"Delete if no plan to reattach\"\n)\n| union (\n    // Unused Load Balancers\n    Resources\n    | where type == \"microsoft.network/loadbalancers\"\n    | extend \n        Sku = tostring(sku.name),\n        BackendPoolCount = array_length(properties.backendAddressPools),\n        CreatedDate = todatetime(properties.timeCreated)\n    | where BackendPoolCount == 0\n    | extend \n        EstimatedMonthlyCost = case(\n            Sku == \"Standard\", 18.25,  // Standard LB: $0.025/hour\n            0.0  // Basic is free\n        ),\n        DaysOrphaned = datetime_diff('day', now(), CreatedDate)\n    | project \n        ResourceType = \"Unused Load Balancer\",\n        Name = name,\n        ResourceGroup = resourceGroup,\n        Subscription = subscriptionId,\n        Size_GB = 0,\n        Tier = Sku,\n        Location = location,\n        EstimatedMonthlyCost,\n        DaysOrphaned,\n        CreatedDate,\n        Action = \"Delete if no active workloads\"\n)\n| order by EstimatedMonthlyCost desc\n| extend MonthlyImpact = case(\n    EstimatedMonthlyCost > 500, \"Critical\",\n    EstimatedMonthlyCost > 100, \"High\",\n    EstimatedMonthlyCost > 20, \"Medium\",\n    \"Low\"\n)\n\n// SUMMARY QUERY (get total waste):\n// Resources\n// | where type in (\n//     \"microsoft.compute/disks\",\n//     \"microsoft.network/publicipaddresses\",\n//     \"microsoft.network/networkinterfaces\"\n// )\n// | where properties.diskState == \"Unattached\" \n//     or isnull(properties.ipConfiguration)\n//     or isnull(properties.virtualMachine)\n// | summarize \n//     TotalOrphaned = count(),\n//     BySubscription = dcount(subscriptionId)\n//     by type\n\n// ACTIONS:\n// 1. Export results to CSV\n// 2. Review with resource owners\n// 3. Tag for 30-day deletion window if no response\n// 4. Delete confirmed orphaned resources\n// 5. Implement tagging policy to prevent future orphans\n// 6. Set up automated monthly cleanup",
+    "source_repo": "mhartson310/Azure-Cost-Optimization-Toolkit",
+    "source_url": "https://github.com/mhartson310/Azure-Cost-Optimization-Toolkit/blob/8f25cf77aaa0e13f320b90b0bb22466434ceaaa5/kql-queries/waste-detection/orphaned-resources.kql",
+    "filename": "orphaned-resources.kql",
+    "collected_at": "2026-05-24T03:17:07.690508+00:00"
+  },
+  {
+    "id": "cfefa99b54bc",
+    "title": "Manual template for adjusting a drill-down to any built-in table after the",
+    "description": "table doc and shape probe have identified the right dimensions. Replace TargetTable with a known active built-in table such as FunctionAppLogs, Event, AzureActivity, AppTraces, or SigninLogs.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "azure",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/loredan1994/GeneralCrap\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet TargetTable = \"FunctionAppLogs\";\nlet Lookback = 1d;\nlet TopN = 50;\ntable(TargetTable)\n| where TimeGenerated >= ago(Lookback)\n| where tolower(tostring(column_ifexists(\"_IsBillable\", \"true\"))) == \"true\"\n| extend BilledSize = toreal(column_ifexists(\"_BilledSize\", 0.0))\n| where BilledSize > 0\n| extend Dimension1 = tostring(column_ifexists(\"Category\", \"\"))\n| extend Dimension2 = tostring(column_ifexists(\"Level\", \"\"))\n| extend Dimension3 = tostring(column_ifexists(\"FunctionName\", \"\"))\n| where isnotempty(Dimension1)\n| summarize\n    Rows = count(),\n    GB = sum(BilledSize) / 1e9,\n    AvgKB = avg(BilledSize) / 1024.0\n  by TableName = TargetTable, Dimension1, Dimension2, Dimension3\n| top TopN by GB desc\n| project\n    TableName,\n    Dimension1,\n    Dimension2,\n    Dimension3,\n    GB = round(GB, 3),\n    Rows,\n    AvgKB = round(AvgKB, 2)",
+    "source_repo": "loredan1994/GeneralCrap",
+    "source_url": "https://github.com/loredan1994/GeneralCrap/blob/3f2e47aa64cdd6877b96eea6d8a2b3967375700c/kql/generic/32_builtin_table_drilldown_template.kql",
+    "filename": "32_builtin_table_drilldown_template.kql",
+    "collected_at": "2026-05-24T03:17:06.952919+00:00"
+  },
+  {
+    "id": "914c99a90018",
+    "title": "All Writedeletesum",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/weixian-zhang/Panorama\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| extend ResourceCategory = parse_json(Properties).resourceProviderValue\n| extend ResourceIDSplit = split(_ResourceId, \"/\")\n| extend ActionNamespace = split(parse_json(Authorization).action, \"/\")\n| extend ActionType = toupper(ActionNamespace[array_length(ActionNamespace) -1])\n| where\n    ActionType in (\"WRITE\", \"DELETE\") and\n    OperationNameValue !in (\n    \"MICROSOFT.AUTHORIZATION/POLICYDEFINITIONS/WRITE\",\n    \"MICROSOFT.AUTHORIZATION/POLICYSETDEFINITIONS/WRITE\",\n    \"MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS/WRITE\") and\n    CategoryValue  == \"Administrative\" and ResourceCategory !in (\"MICROSOFT.RESOURCEHEALTH\", \"MICROSOFT.RESOURCES\") and\n    ActivityStatusValue == \"Success\" and \n    TimeGenerated {TimeRange}\n| summarize dcount(CorrelationId) by ActionType",
+    "source_repo": "weixian-zhang/Panorama",
+    "source_url": "https://github.com/weixian-zhang/Panorama/blob/efdbdc8365df87d00e9fc85992857403dbde94a9/Workbooks/ActivityInsights/All-WriteDeleteSum.kql",
+    "filename": "All-WriteDeleteSum.kql",
+    "collected_at": "2026-05-24T03:17:06.127144+00:00"
+  },
+  {
+    "id": "9cb09036b30e",
+    "title": "az aks get-credentials",
+    "description": "az aks get-credentials",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/le0li9ht/Microsoft-Sentinel-Queries\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity \n| where OperationNameValue contains \"Microsoft.ContainerService/managedClusters/listClusterAdminCredential/action\" \n\n\nAzureDiagnostics \n| where Category == \"kube-audit\" \n| extend logs=parse_json(log_s) \n| where logs.user.username == \"masterclient\"",
+    "source_repo": "le0li9ht/Microsoft-Sentinel-Queries",
+    "source_url": "https://github.com/le0li9ht/Microsoft-Sentinel-Queries/blob/44de43909fee0564e2fb532bf09fe1c2cf4dd5ce/AKS/InitialAccess-KubeconfigfileAccess.kql",
+    "filename": "InitialAccess-KubeconfigfileAccess.kql",
+    "collected_at": "2026-05-24T03:17:05.121336+00:00"
+  },
+  {
+    "id": "f128cd1d3e2e",
+    "title": "To find out the last user(s) to edit a particular analytics rule.",
+    "description": "Replacing xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx with the rule ID of the rule you want to check. https://learn.microsoft.com/en-us/azure/sentinel/audit-sentinel-data",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/abbeyadegbola/Sentinel-KQL\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| where OperationNameValue startswith \"MICROSOFT.SECURITYINSIGHTS/ALERTRULES/WRITE\"\n| where Properties contains \"alertRules/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\"\n| project Caller , TimeGenerated , Properties",
+    "source_repo": "abbeyadegbola/Sentinel-KQL",
+    "source_url": "https://github.com/abbeyadegbola/Sentinel-KQL/blob/e97debab06533411f4786f9b809443c65407fee5/Azure/Sentinel-queries-audit.kql",
+    "filename": "Sentinel-queries-audit.kql",
+    "collected_at": "2026-05-24T03:17:04.396702+00:00"
+  },
+  {
+    "id": "d5c632d43522",
+    "title": "Ingestion Drop Silent Table",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure",
+      "m365"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet _AuxiliaryTables = dynamic([\n    \"OfficeActivity\", \"AzureActivity\", \"Heartbeat\",\n    \"SentinelHealth\", \"SecurityAlert\", \"SecurityIncident\", \"Operation\"\n]);\nlet _MinDailyMB = 1;\nlet _ActiveTables =\n    Usage\n    | where TimeGenerated between (ago(7d) .. ago(1d))\n    | where IsBillable == true\n    | where DataType !in (_AuxiliaryTables)\n    | summarize DailyMB = sum(Quantity) by Day = bin(TimeGenerated, 1d), DataType\n    | summarize AvgDailyMB = avg(DailyMB), ActiveDays = count() by DataType\n    | where AvgDailyMB > _MinDailyMB and ActiveDays >= 4;\nlet _TodayTables =\n    Usage\n    | where TimeGenerated > ago(1d)\n    | where IsBillable == true\n    | summarize TodayMB = sum(Quantity) by DataType\n    | where TodayMB > 0\n    | project DataType;\n_ActiveTables\n| where DataType !in (_TodayTables)\n| extend \n    AlertSeverity = iff(AvgDailyMB > 100, \"High\", iff(AvgDailyMB > 10, \"Medium\", \"Low\")),\n    EstDailyCostLostUSD = round((AvgDailyMB / 1024.0) * 2.76, 2)\n| project \n    TimeGenerated = now(),\n    DataType,\n    Status = \"SILENT - No ingestion in 24h\",\n    AvgDailyMB = round(AvgDailyMB, 1),\n    PreviousActiveDays = ActiveDays,\n    AlertSeverity, EstDailyCostLostUSD\n| order by AvgDailyMB desc",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/dfdbefa859a283498bfeb573fe1513430090e473/Sentinel%20Cost%20Optimization/analytic-rules/ingestion-drop-silent-table.kql",
+    "filename": "ingestion-drop-silent-table.kql",
+    "collected_at": "2026-05-24T03:17:03.562945+00:00"
+  },
+  {
+    "id": "a2da4698299c",
+    "title": "==========================================",
+    "description": "REQU\u00caTES KQL POUR CLUSTER K8WORKSHOPAKS-RESTORED ==========================================",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/BasicOneCruisider/aks-cluster-mongodb-monitoring\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nKubeNodeInventory\n| where ClusterName == \"K8workshopaks-restored\"\n| where TimeGenerated > ago(24h)\n| summarize \n    NodesTotal = dcount(Computer),\n    NodesReady = dcountif(Computer, Status == \"Ready\"),\n    DerniereActivite = max(TimeGenerated),\n    Nodes = make_set(Computer)\n| extend \n    ClusterStatus = iff(NodesTotal > 0, \"CLUSTER EXISTE\", \"CLUSTER INTROUVABLE\"),\n    NodesStatus = iff(NodesReady == NodesTotal, \"TOUS NODES READY\", strcat(NodesReady, \"/\", NodesTotal, \" READY\")),\n    ActiviteStatus = iff(DerniereActivite > ago(1h), \"ACTIF\", \"DONNEES ANCIENNES\")\n\n// DIAGNOSTIC - V\u00e9rifier si les donn\u00e9es arrivent\n// =============================================\n\n// DIAG 1. V\u00e9rifier toutes les donn\u00e9es du cluster (toutes tables)\nsearch \"K8workshopaks-restored\"\n| summarize count() by $table\n| order by count_ desc\n\n// DIAG 2. V\u00e9rifier les donn\u00e9es r\u00e9centes (derni\u00e8res 24h)\nunion withsource=TableName *\n| where TimeGenerated > ago(24h)\n| where * contains \"K8workshopaks-restored\" or * contains \"mongodb\" or * contains \"ratingapp\"\n| summarize count() by TableName\n| order by count_ desc\n\n// DIAG 3. V\u00e9rifier la connectivit\u00e9 des agents\nHeartbeat\n| where TimeGenerated > ago(1h)\n| summarize max(TimeGenerated) by Computer\n| order by max_TimeGenerated desc\n\n// DIAG 4. V\u00e9rifier les \u00e9v\u00e9nements des agents de monitoring\nKubeMonAgentEvents\n| where TimeGenerated > ago(1h)\n| order by TimeGenerated desc\n| take 20\n\n// ==========================================\n// REQU\u00caTES PRINCIPALES (si donn\u00e9es disponibles)\n// ==========================================\n\n// 1. \u00c9tat g\u00e9n\u00e9ral des pods\nKubePodInventory\n| where ClusterName == \"K8workshopaks-restored\"\n| summarize count() by PodStatus, Namespace\n| order by count_ desc\n\n// 2. Pods MongoDB sp\u00e9cifiquement\nKubePodInventory\n| where ClusterName == \"K8workshopaks-restored\"\n| where Name contains \"mongodb\"\n| project TimeGenerated, Name, Namespace, PodStatus, ContainerStatusReason, RestartCount\n| order by TimeGenerated desc\n\n// 3. Logs MongoDB en temps r\u00e9el\nContainerLogV2\n| where ContainerName contains \"mongodb\"\n| order by TimeGenerated desc\n| take 50\n\n// 4. M\u00e9triques CPU des nodes\nInsightsMetrics\n| where Name == \"cpuUsageNanoCores\"\n| where Tags contains \"K8workshopaks-restored\"\n| summarize avg(Val) by bin(TimeGenerated, 5m), Computer\n| render timechart\n\n// 5. M\u00e9triques m\u00e9moire des nodes\nInsightsMetrics\n| where Name == \"memoryWorkingSetBytes\"\n| where Tags contains \"K8workshopaks-restored\"\n| summarize avg(Val) by bin(TimeGenerated, 5m), Computer\n| render timechart\n\n// 6. \u00c9v\u00e9nements Kubernetes importants\nKubeEvents\n| where ClusterName == \"K8workshopaks-restored\"\n| where Type == \"Warning\" or Reason == \"FailedScheduling\"\n| project TimeGenerated, Reason, Message, ObjectKind, ObjectName\n| order by TimeGenerated desc\n\n// 7. \u00c9tat de sant\u00e9 du cluster\nKubeHealth\n| where ClusterName == \"K8workshopaks-restored\"\n| summarize count() by ServiceName, HealthState\n| order by count_ desc\n\n// 8. Utilisation des ressources par namespace\nKubePodInventory\n| where ClusterName == \"K8workshopaks-restored\"\n| summarize PodCount = count() by Namespace\n| order by PodCount desc\n\n// 9. Inventaire des nodes et leur statut\nKubeNodeInventory\n| where ClusterName == \"K8workshopaks-restored\"\n| project TimeGenerated, Computer, Status, KubeletVersion, DockerVersion\n| order by TimeGenerated desc\n\n// 10. Logs d'erreur dans tous les containers\nContainerLogV2\n| where LogLevel == \"Error\" or LogEntry contains \"error\"\n| where TimeGenerated > ago(1h)\n| order by TimeGenerated desc\n| take 100\n\n// ==========================================\n// REQU\u00caTES ALTERNATIVES (monitoring en temps r\u00e9el via kubectl)\n// ==========================================\n\n// Alternative 1: Utiliser kubectl directement\n// kubectl get pods --all-namespaces -o wide\n// kubectl top nodes\n// kubectl top pods --all-namespaces\n\n// Alternative 2: Logs en temps r\u00e9el\n// kubectl logs -f <pod-name> --namespace ratingapp\n\n// Alternative 3: \u00c9v\u00e9nements Kubernetes\n// kubectl get events --all-namespaces --sort-by='.lastTimestamp'\n\n// ==========================================\n// REQU\u00caTES DE FALLBACK (donn\u00e9es plus anciennes)\n// ==========================================\n\n// FB 1. Chercher dans toutes les tables sans filtre cluster\nKubePodInventory\n| where TimeGenerated > ago(7d)\n| where Namespace == \"ratingapp\"\n| order by TimeGenerated desc\n| take 10\n\n// FB 2. Logs MongoDB sans filtre cluster\nContainerLogV2\n| where TimeGenerated > ago(7d)\n| where ContainerName contains \"mongodb\"\n| order by TimeGenerated desc\n| take 10\n\n// FB 3. Activit\u00e9 Azure g\u00e9n\u00e9rale\nAzureActivity\n| where TimeGenerated > ago(1h)\n| where ResourceGroup == \"aks-restored-rg\"\n| order by TimeGenerated desc\n| take 20",
+    "source_repo": "BasicOneCruisider/aks-cluster-mongodb-monitoring",
+    "source_url": "https://github.com/BasicOneCruisider/aks-cluster-mongodb-monitoring/blob/a89d17f0e9f2d9db133782a6cf4eff39a222ef19/queries/requetes-kql-monitoring.kql",
+    "filename": "requetes-kql-monitoring.kql",
+    "collected_at": "2026-05-24T03:17:02.475504+00:00"
+  },
+  {
+    "id": "0d06a7614bf8",
+    "title": "Source: https://github.com/tidalmigrations/poc-azure-rbac-scoping",
+    "description": "Collected: 2026-05-17 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| where Caller contains \"{service-principal-id}\"\n| where ActivityStatusValue == \"Success\"\n| summarize count() by OperationName, ResourceProvider, ResourceType\n| order by count_ desc\n\n// Query 2: Detailed permission analysis with resource information\nAzureActivity\n| where Caller contains \"{service-principal-id}\"\n| where ActivityStatusValue == \"Success\"\n| extend ResourceProviderParsed = split(OperationName, \"/\")[0]\n| extend ActionParsed = strcat(split(OperationName, \"/\")[0], \"/\", split(OperationName, \"/\")[1])\n| summarize \n    Count = count(),\n    Resources = make_set(Resource),\n    ResourceGroups = make_set(ResourceGroup),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated)\n    by OperationName, ResourceProviderParsed, ActionParsed\n| order by Count desc\n\n// Query 3: Time-based analysis for deployment windows\nAzureActivity\n| where Caller contains \"{service-principal-id}\"\n| where ActivityStatusValue == \"Success\"\n| where TimeGenerated >= datetime({start-time}) and TimeGenerated <= datetime({end-time})\n| summarize count() by OperationName, bin(TimeGenerated, 5m)\n| order by TimeGenerated asc\n\n// Query 4: Failed operations analysis\nAzureActivity\n| where Caller contains \"{service-principal-id}\"\n| where ActivityStatusValue == \"Failed\"\n| summarize \n    Count = count(),\n    ErrorMessages = make_set(ActivitySubstatusValue),\n    Resources = make_set(Resource)\n    by OperationName\n| order by Count desc\n\n// Query 5: Resource provider breakdown\nAzureActivity\n| where Caller contains \"{service-principal-id}\"\n| where ActivityStatusValue == \"Success\"\n| extend ResourceProvider = split(OperationName, \"/\")[0]\n| summarize \n    OperationCount = count(),\n    UniqueOperations = dcount(OperationName),\n    Operations = make_set(OperationName)\n    by ResourceProvider\n| order by OperationCount desc\n\n// Query 6: Minimal permissions generator (for custom role creation)\nAzureActivity\n| where Caller contains \"{service-principal-id}\"\n| where ActivityStatusValue == \"Success\"\n| extend ResourceProvider = split(OperationName, \"/\")[0]\n| extend Action = strcat(split(OperationName, \"/\")[0], \"/\", split(OperationName, \"/\")[1])\n| where Action !contains \"read\" or Action contains \"Microsoft.Resources\"  // Include reads for Resources provider\n| summarize count() by Action\n| where count_ > 0\n| project Permission = Action\n| order by Permission asc ",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/540594b721ef7d170e93cc10f4fe67978031d64f/queries/df99fa2a1ae1.kql",
+    "filename": "df99fa2a1ae1.kql",
+    "collected_at": "2026-05-24T03:17:01.743326+00:00"
+  },
+  {
+    "id": "813cda82747f",
+    "title": "Source: https://github.com/McBeer89/TL-McBeer-Repo",
+    "description": "Collected: 2026-05-12 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 24h;\nlet tgt_issuances =\n    SecurityEvent\n    | where TimeGenerated > ago(lookback)\n    | where EventID == 4768\n    | where Status == \"0x0\"\n    | distinct TargetUserName;\nSecurityEvent\n| where TimeGenerated > ago(lookback)\n| where EventID == 4769\n| where Status == \"0x0\"\n| join kind=leftanti tgt_issuances on TargetUserName\n| extend IsMachineAccount = TargetUserName endswith \"$\"\n| project\n    TimeGenerated,\n    Computer,\n    TargetUserName,\n    TargetDomainName,\n    ServiceName,\n    TicketOptions,\n    TicketEncryptionType,\n    IpAddress,\n    IpPort,\n    IsMachineAccount\n| sort by TimeGenerated desc\n;\n\n\n// TRR0013.AD.A \u2014 Query 2: Defender for Identity IdentityLogonEvents\n// DDM Operation: n1 \"Receive Network Request\" (TGS-REQ)\n// Baseline Kerberos TGS events \u2014 correlation for absent AS-REQ requires parsing AdditionalFields.\n\nIdentityLogonEvents\n| where Timestamp > ago(24h)\n| where Protocol == \"Kerberos\"\n| project\n    Timestamp,\n    ActionType,\n    AccountName,\n    AccountDomain,\n    DeviceName,\n    DestinationDeviceName,\n    Protocol,\n    AdditionalFields\n| sort by Timestamp desc\n;",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/540594b721ef7d170e93cc10f4fe67978031d64f/queries/5f68f56da9f1.kql",
+    "filename": "5f68f56da9f1.kql",
+    "collected_at": "2026-05-24T03:16:46.525000+00:00"
+  },
+  {
+    "id": "05be5a000fec",
+    "title": "----- Part 0: Analyst-Driven Targeting (Optional) -----",
+    "description": "To see all activity, leave the list empty: dynamic([]) To target specific users, add their SIDs inside the brackets.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Cyberlorians/KQL\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff// Objective: Detects legacy authentication attempts (Event ID 5168) indicating failed SPN checks for SMB/SMB2, often tied to NTLMv1 usage.\n//\n// ----- Part 0: Analyst-Driven Targeting (Optional) -----\n// To see all activity, leave the list empty: dynamic([])\n// To target specific users, add their SIDs inside the brackets.\nlet Targeted_User_SIDs = dynamic([]); // Example: dynamic([\"S-1-5-...\"])\n// \n// ----- Part 1: Filter for Relevant 5168 Events -----\n// GPO Path: To capture 5168 events, it's recommended to enable NTLM auditing policies, e.g.:\n// - Computer Configuration > Policies > Windows Settings > Security Settings > Local Policies > Security Options > Network security: Restrict NTLM: Audit NTLM authentication in this domain\n// Note: This event is a strong indicator that a client is attempting to use weak, legacy authentication like NTLMv1.\nSecurityEvent\n| where TimeGenerated > ago(14d)\n| where EventID == 5168\n| where Activity == \"5168 - SPN check for SMB/SMB2 failed.\"\n//\n// ----- Part 2: Data Parsing -----\n// Extract key details from the XML payload.\n| extend EventData_xml = parse_xml(EventData)\n| extend\n    SubjectUserSid = tostring(EventData_xml.EventData.Data[0]['#text']),\n    SubjectUserName = tostring(EventData_xml.EventData.Data[1]['#text']),\n    IpAddress = tostring(EventData_xml.EventData.Data[4]['#text']),\n    TargetAccountName = tostring(EventData_xml.EventData.Data[7]['#text']),\n    Status = tostring(EventData_xml.EventData.Data[8]['#text'])\n//\n// ----- Part 3: Custom & Targeted Filtering -----\n// Exclude noise and apply analyst-driven targeting if needed.\n| where not(SubjectUserName has_any ('MSOL', '$'))\n| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)\n//\n// ----- Part 4: Analysis & Enrichment -----\n// Human-readable reason, legacy auth flag, and targeting flag.\n| extend\n    FailureReason = case(\n        Status == \"0xc00000df\", \"No Such Domain or Computer Name\",\n        \"Other\"\n    ),\n    IsLegacyAuthIndicated = true,\n    IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs)\n//\n// ----- Part 5: Final Output -----\n// Unique legacy auth attempts for review.\n| distinct TimeGenerated, IsTargetedUser, SubjectUserName, SubjectUserSid, Computer, TargetAccountName, IpAddress, FailureReason, IsLegacyAuthIndicated, Status, Activity\n| sort by TimeGenerated desc\n| take 50",
+    "source_repo": "Cyberlorians/KQL",
+    "source_url": "https://github.com/Cyberlorians/KQL/blob/cd68909313472ee9539ac16f468a3d1113572991/Windows/SecurityEvent/5168%20-%20SPN%20check%20for%20SMB%20&%20SMB2%20failed%20-%20SMB%20Access.kql",
+    "filename": "5168 - SPN check for SMB & SMB2 failed - SMB Access.kql",
+    "collected_at": "2026-05-24T03:16:45.329527+00:00"
+  },
+  {
+    "id": "305e770bdb9c",
+    "title": "T1078 - Valid Accounts",
+    "description": "Detect suspicious or rare logins by users, especially logins outside normal hours or from unusual locations or devices",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Ascendstarcel/Hunting-with-KQL\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4624  // Windows logon success event\n| extend AccountName = tostring(Account)\n| where AccountName !in (\"SYSTEM\", \"LOCAL SERVICE\", \"NETWORK SERVICE\")\n| summarize LogonCount = count(), StartTime = min(TimeGenerated), EndTime = max(TimeGenerated) by AccountName, Computer, LogonType\n| join kind=inner (\n    SecurityEvent\n    | where EventID == 4625  // Failed login attempts\n    | summarize FailedCount = count() by AccountName\n) on AccountName\n| extend Suspicious = case(FailedCount > 5 and LogonCount > 10, \"Possible brute force or misuse\", \"Normal\")\n| where Suspicious == \"Possible brute force or misuse\"",
+    "source_repo": "Ascendstarcel/Hunting-with-KQL",
+    "source_url": "https://github.com/Ascendstarcel/Hunting-with-KQL/blob/cbb5bde6d1102f4d69dd9816e0d8ba5fc58a7b48/APT_Groups/Scattered_Spider_/T1078_-_Valid_Accounts.kql",
+    "filename": "T1078_-_Valid_Accounts.kql",
+    "collected_at": "2026-05-24T03:16:44.628871+00:00"
+  },
+  {
+    "id": "54747df1de94",
+    "title": "Source: https://github.com/petitess/kusto",
+    "description": "Collected: 2026-05-17 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timerange = 7d;\nSecurityEvent\n| where TimeGenerated > ago (timerange)\n| where AccountType == \"User\"\n| project TimeGenerated, MemberName, GroupName=TargetUserName, EventID\n| where EventID in (4728, 4732, 4756, 4761, 4746, 4751)\n| parse MemberName with * 'CN=' UserAdded ',' *\n| summarize UsersAdded=make_set(UserAdded) by GroupName, startofday(TimeGenerated)\n| sort by GroupName asc, TimeGenerated desc ",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/540594b721ef7d170e93cc10f4fe67978031d64f/queries/21fd7cf1294a.kql",
+    "filename": "21fd7cf1294a.kql",
+    "collected_at": "2026-05-24T03:16:43.791937+00:00"
+  },
+  {
+    "id": "f6e565c6b4ae",
+    "title": "Source: https://github.com/McBeer89/tired-smithy",
+    "description": "Collected: 2026-05-21 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago(24h)\n| where EventID == 4769\n| where Status == \"0x0\"\n| extend TicketOptionsHex = iff(TicketOptions startswith \"0x\", TicketOptions, strcat(\"0x\", TicketOptions))\n| extend TicketOptionsInt = tolong(TicketOptionsHex)\n| where binary_and(TicketOptionsInt, 8) != 0\n| where TargetUserName == ServiceName\n| project\n    TimeGenerated,\n    Computer,\n    TargetUserName,\n    TargetDomainName,\n    ServiceName,\n    TicketOptions,\n    TicketEncryptionType,\n    IpAddress,\n    IpPort\n| sort by TimeGenerated desc\n;\n\n\n// TRR0013.AD.B \u2014 Query 2: Sentinel SecurityEvent (Event 4769 without preceding Event 4768)\n// DDM Operation: n22 \"Receive Network Request\" (TGS-REQ with forged TGT)\n// Same correlation as Procedure A \u2014 forged TGT was never issued, so no Event 4768 exists.\n\nlet lookback = 24h;\nlet tgt_issuances =\n    SecurityEvent\n    | where TimeGenerated > ago(lookback)\n    | where EventID == 4768\n    | where Status == \"0x0\"\n    | distinct TargetUserName;\nSecurityEvent\n| where TimeGenerated > ago(lookback)\n| where EventID == 4769\n| where Status == \"0x0\"\n| join kind=leftanti tgt_issuances on TargetUserName\n| extend IsMachineAccount = TargetUserName endswith \"$\"\n| project\n    TimeGenerated,\n    Computer,\n    TargetUserName,\n    TargetDomainName,\n    ServiceName,\n    TicketOptions,\n    TicketEncryptionType,\n    IpAddress,\n    IpPort,\n    IsMachineAccount\n| sort by TimeGenerated desc\n;\n\n\n// TRR0013.AD.B \u2014 Query 3: Defender for Identity IdentityLogonEvents\n// DDM Operation: n1 \"Receive Network Request\" (U2U+S4U2Self TGS-REQ)\n// Baseline Kerberos events \u2014 field-level filtering for ENC-TKT-IN-SKEY requires parsing AdditionalFields.\n\nIdentityLogonEvents\n| where Timestamp > ago(24h)\n| where Protocol == \"Kerberos\"\n| project\n    Timestamp,\n    ActionType,\n    AccountName,\n    AccountDomain,\n    DeviceName,\n    DestinationDeviceName,\n    Protocol,\n    AdditionalFields\n| sort by Timestamp desc\n;",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/540594b721ef7d170e93cc10f4fe67978031d64f/queries/ceece9145262.kql",
+    "filename": "ceece9145262.kql",
+    "collected_at": "2026-05-24T03:16:42.634732+00:00"
+  },
+  {
+    "id": "5160147e6169",
+    "title": "Password Spray Attack Detection",
+    "description": "Detects attempts to authenticate against multiple accounts with the same password pattern MITRE ATT&CK: T1110.003 - Brute Force: Password Spraying Severity: High Frequency: Run every 10 minutes",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/lenoshz/azure-sentinel-soc-lab\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago(10m)\n| where EventID == 4625  // Failed logon\n| summarize \n    UniqueAccounts = dcount(TargetUserName),\n    TotalAttempts = count(),\n    Accounts = make_set(TargetUserName, 20),\n    FailureReasons = make_set(FailureReason),\n    FirstAttempt = min(TimeGenerated),\n    LastAttempt = max(TimeGenerated)\n    by IpAddress, Computer\n| where UniqueAccounts >= 5  // 5+ different accounts targeted\n| where TotalAttempts >= 10  // At least 10 total attempts\n| extend \n    AttackDuration = LastAttempt - FirstAttempt,\n    AttemptsPerAccount = TotalAttempts / UniqueAccounts\n| extend Severity = case(\n    UniqueAccounts >= 20, \"Critical\",\n    UniqueAccounts >= 10, \"High\",\n    \"Medium\"\n)\n| project \n    TimeGenerated = LastAttempt,\n    IpAddress,\n    Computer,\n    UniqueAccounts,\n    TotalAttempts,\n    AttemptsPerAccount,\n    Accounts,\n    AttackDuration,\n    Severity\n| order by UniqueAccounts desc",
+    "source_repo": "lenoshz/azure-sentinel-soc-lab",
+    "source_url": "https://github.com/lenoshz/azure-sentinel-soc-lab/blob/956cb2d024a0bfbc866eac87b2c73e78bc75401d/kql-queries/detection-rules/password-spray.kql",
+    "filename": "password-spray.kql",
+    "collected_at": "2026-05-24T03:16:41.793600+00:00"
+  },
+  {
+    "id": "01fc507632b7",
+    "title": "Credential Dumping   Suspicious Process  Comsvcs",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/xpinux/Project-SABER\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID ==\"1\" or EventID ==\"4688\" or EventID ==\"4104\"\n| where CommandLine matches regex @\"(?i)rundll32(\\\\.exe)?(\\\\.exe)?(\\\\*)?.*comsvcs(\\\\.dll)?.*\"",
+    "source_repo": "xpinux/Project-SABER",
+    "source_url": "https://github.com/xpinux/Project-SABER/blob/70ae5d4b104ae1351bdbde62ee8abe135c4d3ea2/02.Detection/Credential%20Dumping%20-%20Suspicious%20Process%20-%20comsvcs/Credential%20Dumping%20-%20Suspicious%20Process%20-comsvcs.kql",
+    "filename": "Credential Dumping - Suspicious Process -comsvcs.kql",
+    "collected_at": "2026-05-24T03:16:41.071585+00:00"
+  },
+  {
+    "id": "aeb0eb6dc5f7",
+    "title": "============================================================",
+    "description": "Hunting Query: Persistence \u2014 Scheduled Tasks & Run Keys Tables: SecurityEvent, Event (for Sysmon) Lookback: 7 days MITRE: T1053.005 (Scheduled Task), T1547.001 (Registry Run Keys) ============================================================",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/83avenger/azure-sentinel-defender-lab\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet ScheduledTaskPersistence = SecurityEvent\n| where TimeGenerated > ago(7d)\n| where EventID in (4698, 4702)                  // Created, Modified\n| parse EventData with * \"<TaskName>\" TaskName \"</TaskName>\" *\n| parse EventData with * \"<Command>\" TaskCommand \"</Command>\" *\n| parse EventData with * \"<Arguments>\" TaskArgs \"</Arguments>\" *\n| parse EventData with * \"<UserId>\" TaskUser \"</UserId>\" *\n| where TaskCommand has_any (\n    \"powershell\", \"pwsh\", \"cmd.exe\",\n    \"wscript\", \"cscript\", \"mshta\",\n    \"regsvr32\", \"rundll32\", \"certutil\",\n    \"bitsadmin\", \"curl\", \"wget\")\n| extend\n    EventType      = \"ScheduledTask\",\n    PersistDetail  = strcat(TaskName, \" \u2192 \", TaskCommand, \" \", TaskArgs),\n    MitreTech      = \"T1053.005\"\n| project\n    TimeGenerated, Computer, Account, EventID,\n    EventType, TaskName, TaskCommand, TaskArgs,\n    TaskUser, PersistDetail, MitreTech;\n\n// Part 2: Registry Run Key Modifications (EventID 4657 \u2014 requires SACL)\n// Note: Requires \"Audit Registry\" policy enabled\nlet RegistryRunKey = SecurityEvent\n| where TimeGenerated > ago(7d)\n| where EventID == 4657                          // Registry value modified\n| where ObjectName has_any (\n    \"\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run\",\n    \"\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\RunOnce\",\n    \"\\\\SOFTWARE\\\\Wow6432Node\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run\",\n    \"\\\\SYSTEM\\\\CurrentControlSet\\\\Services\")\n| extend\n    EventType     = \"RegistryPersistence\",\n    PersistDetail = strcat(ObjectName, \" \u2192 \", tostring(NewValue)),\n    MitreTech     = \"T1547.001\"\n| project\n    TimeGenerated, Computer, Account, EventID,\n    EventType, ObjectName, PersistDetail, MitreTech;\n\n// Combine both persistence vectors\nunion ScheduledTaskPersistence, RegistryRunKey\n| extend\n    RiskLevel   = \"HIGH\",\n    MitreTactic = \"TA0003\"\n| sort by TimeGenerated desc",
+    "source_repo": "83avenger/azure-sentinel-defender-lab",
+    "source_url": "https://github.com/83avenger/azure-sentinel-defender-lab/blob/9874f76a87a321f56e5c6534bf2fd9bc660f3e29/kql/hunting/persistence-scheduled-task.kql",
+    "filename": "persistence-scheduled-task.kql",
+    "collected_at": "2026-05-24T03:16:40.325425+00:00"
+  },
+  {
+    "id": "a4eb60a46b78",
+    "title": "Procdump Activity",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "defender"
+    ],
+    "content": "// Source: https://github.com/DancinDinoo/KQL\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nunion isfuzzy = true (\n  DeviceProcessEvents\n  | where FileName in~ (\"procdump.exe\", \"procdump64.exe\") or ProcessVersionInfoOriginalFileName == \"procdump\"\n  | sort by TimeGenerated\n  ),\n  (\n  SecurityEvent\n  | where Process in~ (\"procdump.exe\", \"procdump64.exe\")\n  | project TimeGenerated, Activity, ParentProcessName, Process, ProcessId, TokenElevationType, DeviceName = Computer, SubjectAccount, AccountName = SubjectUserName, SubjectUserSid, ProcessCommandLine = CommandLine\n  )\n\n// Description: ProcDump is an open source CI tool part of the sysinternals toolkit used to monitor CPU spikes and generate crashdumps. It can be used to dump lssass memory containing credentials.",
+    "source_repo": "DancinDinoo/KQL",
+    "source_url": "https://github.com/DancinDinoo/KQL/blob/a4180812a84694c253e26434d03ed607a9f9eac7/Defender%20XDR/Defender%20for%20Endpoint/ProcDump%20Activity.kql",
+    "filename": "ProcDump Activity.kql",
+    "collected_at": "2026-05-24T03:16:39.423940+00:00"
+  },
+  {
+    "id": "90f2971885f1",
+    "title": "Cheap confirmation query for Windows event collection paths in this workspace.",
+    "description": "Use this when WindowsEvent returns no rows and you need to know whether the workspace is using Event, WindowsEvent, or SecurityEvent.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/loredan1994/GeneralCrap\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet Lookback = 31d;\nUsage\n| where IsBillable == true\n| where StartTime >= startofday(ago(Lookback)) and EndTime < startofday(now())\n| where DataType in (\"Event\", \"WindowsEvent\", \"SecurityEvent\")\n| summarize\n    GB = sum(Quantity) / 1000.0,\n    ActiveDays = dcount(StartTime),\n    FirstSeen = min(StartTime),\n    LastSeen = max(StartTime)\n  by TableName = DataType\n| order by GB desc, TableName asc",
+    "source_repo": "loredan1994/GeneralCrap",
+    "source_url": "https://github.com/loredan1994/GeneralCrap/blob/3f2e47aa64cdd6877b96eea6d8a2b3967375700c/kql/guest-os/43_windows_event_path_check.kql",
+    "filename": "43_windows_event_path_check.kql",
+    "collected_at": "2026-05-24T03:16:38.686031+00:00"
+  },
+  {
+    "id": "66e0335000c4",
+    "title": "Windows Securityeventhealth",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| summarize TimeGenerated = max(TimeGenerated) by Computer\n| extend State = iff(TimeGenerated < ago(10m), 'Unhealthy', 'Healthy')\n| extend LastLogRecieved = now() - TimeGenerated\n| project Computer, State, LastLogRecieved",
+    "source_repo": "gennaromigliaccio/Microsoft-Sentinel",
+    "source_url": "https://github.com/gennaromigliaccio/Microsoft-Sentinel/blob/c862f37a1c97aa62c84f8f807b75a67e7c6a58d1/KQL/Windows-SecurityEventHealth.kql",
+    "filename": "Windows-SecurityEventHealth.kql",
+    "collected_at": "2026-05-24T03:16:37.839965+00:00"
+  },
+  {
+    "id": "f67e1859d418",
+    "title": "Name: Encoded PowerShell Command Execution",
+    "description": "MITRE: T1027 - Defense Evasion / Obfuscated Files or Information Severity: High Description: Detects execution of PowerShell commands using encoding flags (-EncodedCommand, -enc, -e) or containing Base64-encoded payloads, commonly used to evade detection and obfuscate malicious scripts. Query Frequency: 1h Query Period: 1h Trigger: gt 0",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/n1ops/sentinel-detection-lab\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe = 1h;\n// Match common Base64 patterns (minimum 40 chars of Base64 to reduce false positives)\nlet base64_pattern = \"[A-Za-z0-9+/]{40,}[=]{0,2}\";\n// Caret insertion / char-stuffing bypass: matches p^o^w^e^r^s^h^e^l^l and similar\nlet powershell_obfuscated_pattern = @\"(?i)p.?o.?w.?e.?r.?s.?h.?e.?l.?l\";\nSecurityEvent\n| where TimeGenerated >= ago(timeframe)\n| where EventID == 4688  // Process creation\n| where Process has_any (\"powershell.exe\", \"pwsh.exe\", \"powershell_ise.exe\")\n    or NewProcessName has_any (\"powershell.exe\", \"pwsh.exe\", \"powershell_ise.exe\")\n    // Catch parent processes spawning PowerShell (common evasion chain)\n    or (ParentProcessName has_any (\"cmd.exe\", \"wscript.exe\", \"mshta.exe\", \"cscript.exe\")\n        and (NewProcessName has_any (\"powershell.exe\", \"pwsh.exe\") or CommandLine matches regex powershell_obfuscated_pattern))\n| extend CommandLine = iff(isnotempty(CommandLine), CommandLine, \"\")\n| where\n    // Detect encoded command flags (case-insensitive matching via has)\n    CommandLine matches regex @\"(?i)\\s+\\-[eE][nN]?[cC]?\\s+\"\n    or CommandLine matches regex @\"(?i)\\-[Ee]ncoded[Cc]ommand\\b\"\n    // Detect common bypass techniques\n    or CommandLine matches regex @\"(?i)\\-[Ee]nc\\b\"\n    or CommandLine matches regex @\"(?i)\\-[Ee][Cc]\\s+\"\n    // Detect raw Base64 blobs in command line\n    or CommandLine matches regex base64_pattern\n    // Detect FromBase64String usage\n    or CommandLine has \"FromBase64String\"\n    or CommandLine has \"[Convert]::FromBase64\"\n    // Detect common download cradles with encoding\n    or (CommandLine has \"Invoke-Expression\" and CommandLine has \"DownloadString\")\n    // Detect caret insertion / obfuscated PowerShell invocation\n    or CommandLine matches regex powershell_obfuscated_pattern\n    // Detect -windowstyle hidden (commonly paired with encoded commands)\n    or CommandLine matches regex @\"(?i)\\-[wW](indowstyle)?\\s+[hH]idden\"\n    // Detect Invoke-Expression / IEX with various obfuscation patterns\n    or CommandLine matches regex @\"(?i)(I\\s*E\\s*X|Invoke[\\-\\s]*Expression)\"\n    or CommandLine matches regex @\"(?i)(\\\"|')I(EX|nvoke-Expression)(\\\"|')\"\n| extend\n    // Try to extract the encoded payload\n    EncodedPayload = extract(@\"(?i)(?:\\-[eE](?:[nN][cC]?|ncoded[cC]ommand))\\s+([A-Za-z0-9+/=]+)\", 1, CommandLine),\n    ParentProcess = ParentProcessName,\n    Entity_Account = Account,\n    Entity_Host = Computer\n| extend\n    // Decode Base64 if we captured it (best-effort)\n    DecodedCommand = iff(isnotempty(EncodedPayload), base64_decode_tostring(EncodedPayload), \"\"),\n    CommandLineLength = strlen(CommandLine),\n    HasDownloadCradle = CommandLine has_any (\"DownloadString\", \"DownloadFile\", \"Invoke-WebRequest\", \"wget\", \"curl\", \"Net.WebClient\"),\n    HasInvokeExpression = CommandLine has_any (\"Invoke-Expression\", \"IEX\", \".Invoke(\"),\n    HasHiddenWindow = CommandLine matches regex @\"(?i)\\-[wW](indowstyle)?\\s+[hH]idden\",\n    SuspiciousParentProcess = ParentProcessName has_any (\"cmd.exe\", \"wscript.exe\", \"mshta.exe\", \"cscript.exe\")\n| extend\n    RiskIndicators = bag_pack(\n        \"HasDownloadCradle\", HasDownloadCradle,\n        \"HasInvokeExpression\", HasInvokeExpression,\n        \"HasHiddenWindow\", HasHiddenWindow,\n        \"SuspiciousParentProcess\", SuspiciousParentProcess,\n        \"CommandLineLength\", CommandLineLength,\n        \"HasDecodablePayload\", isnotempty(DecodedCommand)\n    )\n| project\n    TimeGenerated,\n    Computer,\n    Account,\n    NewProcessName,\n    ParentProcess,\n    CommandLine,\n    EncodedPayload,\n    DecodedCommand,\n    CommandLineLength,\n    RiskIndicators,\n    HasDownloadCradle,\n    HasInvokeExpression,\n    Entity_Account,\n    Entity_Host\n| order by TimeGenerated desc",
+    "source_repo": "n1ops/sentinel-detection-lab",
+    "source_url": "https://github.com/n1ops/sentinel-detection-lab/blob/3355cf54b305aef46a1a61f1cb0563722a9fd276/detections/defense-evasion/encoded-powershell.kql",
+    "filename": "encoded-powershell.kql",
+    "collected_at": "2026-05-24T03:16:37.099511+00:00"
+  },
+  {
+    "id": "00353fc62bdc",
+    "title": "============================================================================",
+    "description": "KQL: Shadow Credentials 2026 Hunt Target: Microsoft Sentinel \u2014 SecurityEvent + AuditLogs tables Coverage: msDS-KeyCredentialLink abuse, post-Sep 2025 Impacket fix, post-Jan 2026 DC MFA flag enforcement Shadow Credentials exploits msDS-KeyCredentialLink writes to add attacker- controlled NGC keys to target user or computer objects. A successful attack produces a PKINIT TGT and NTLM hash for the target \u2014 no password change required.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/AndrewAltimit/exploits\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet LegitimateWriters = dynamic([\n    \"MSOL_*\",           // Azure AD Connect sync accounts\n    \"AADConnect*\",\n    \"NT AUTHORITY\\\\SYSTEM\",\n    \"azureadssoacc$\"    // Seamless SSO computer account\n]);\nSecurityEvent\n| where TimeGenerated > ago(1d)\n| where EventID == 5136   // Directory Service Object Modified\n| where EventData contains \"msDS-KeyCredentialLink\"\n| extend\n    WriterAccount = SubjectUserName,\n    WriterDomain  = SubjectDomainName,\n    TargetObject  = ObjectDN,\n    OperationType = OperationType\n| where OperationType == \"Value Added\"\n| where not (WriterAccount has_any (LegitimateWriters))\n| where not (WriterDomain == \"NT AUTHORITY\")\n| project\n    TimeGenerated,\n    WriterAccount,\n    WriterDomain,\n    TargetObject,\n    Computer,\n    OperationType\n| order by TimeGenerated desc\n\n\n// ============================================================================\n// Query 2: PKINIT authentication within 5 minutes of a shadow key write\n//\n// Rationale: The attack sequence is: write NGC key \u2192 authenticate via PKINIT.\n// In practice, automated tools do this within seconds. Correlating a successful\n// msDS-KeyCredentialLink write (Event 5136) with a PKINIT TGT request (Event 4768,\n// PreAuthType 16 or 17) on the same target account within 5 minutes is a\n// high-confidence composite indicator.\n//\n// Post-Sep 2025: This timing correlation replaces the blob-structural IoCs\n// (epoch skew, DeviceId anomaly) that Impacket's September 2025 fix removed.\n// ============================================================================\nlet ShadowCredWindow = 5m;\nlet ShadowKeyWrites =\n    SecurityEvent\n    | where TimeGenerated > ago(1d)\n    | where EventID == 5136\n    | where EventData contains \"msDS-KeyCredentialLink\"\n    | extend OperationType = OperationType\n    | where OperationType == \"Value Added\"\n    | extend\n        TargetAccount = extract(@\"Object DN:\\s+CN=([^,]+)\", 1, ObjectDN),\n        WriteTime     = TimeGenerated,\n        WriterAccount = SubjectUserName\n    | project WriteTime, TargetAccount, WriterAccount, TargetDN = ObjectDN;\nSecurityEvent\n| where TimeGenerated > ago(1d)\n| where EventID == 4768   // Kerberos TGT request\n| where PreAuthType in (\"16\", \"17\")  // PKINIT (PA-PK-AS-REQ)\n| where ResultCode == \"0x0\"   // Successful authentication\n| extend\n    AuthAccount = TargetUserName,\n    AuthTime    = TimeGenerated,\n    AuthIP      = IpAddress\n| join kind=inner (ShadowKeyWrites) on $left.AuthAccount == $right.TargetAccount\n| where AuthTime between (WriteTime .. (WriteTime + ShadowCredWindow))\n| extend\n    DeltaSeconds  = datetime_diff(\"second\", AuthTime, WriteTime),\n    IsHighValue   = AuthAccount in~ (\"administrator\", \"krbtgt\") or AuthAccount endswith \"$\"\n| project\n    WriteTime,\n    AuthTime,\n    DeltaSeconds,\n    TargetAccount,\n    WriterAccount,\n    AuthIP,\n    IsHighValue,\n    TargetDN,\n    Computer\n| extend Severity = iff(DeltaSeconds < 60, \"Critical\", iff(DeltaSeconds < 300, \"High\", \"Medium\"))\n| order by DeltaSeconds asc\n\n\n// ============================================================================\n// Query 3: Failed NGC key write \u2014 outdated tooling on patched DC (post-Jan 2026)\n//\n// Rationale: The January 2026 DC update enforces CUSTOMKEYINFO_FLAGS_MFA_NOT_USED\n// on msDS-KeyCredentialLink writes. Tools that have not been updated (some versions\n// of Impacket ntlmrelayx.py, older Whisker builds) receive LDAP error 0x20EF\n// (ERROR_DS_CONSTRAINT_VIOLATION). This is a high-fidelity signal with no expected\n// false positives \u2014 legitimate provisioning tools are already updated.\n//\n// The failed write means no key was written and no credential was exposed, but the\n// attempt itself warrants investigation: an attacker was attempting Shadow Credentials\n// with outdated tooling.\n// ============================================================================\nSecurityEvent\n| where TimeGenerated > ago(7d)   // Wider window \u2014 failed attempts may be sporadic\n| where EventID in (2889, 4956)    // LDAP constraint violation events\n| extend\n    EventDataStr = tostring(EventData)\n| where EventDataStr contains \"0x20EF\"\n       or EventDataStr contains \"ERROR_DS_CONSTRAINT_VIOLATION\"\n       or EventDataStr contains \"msDS-KeyCredentialLink\"\n| extend\n    SourceAccount = SubjectUserName,\n    SourceIP      = IpAddress\n| project\n    TimeGenerated,\n    SourceAccount,\n    SourceIP,\n    Computer,\n    EventDataStr\n| extend\n    Annotation = \"Failed NGC key write \u2014 attacker likely using pre-Jan-2026 tooling on patched DC\"\n| order by TimeGenerated desc\n\n\n// ============================================================================\n// Query 4: Shadow Credentials write by non-owner, non-WHFB-provisioner account\n//\n// Rationale: msDS-KeyCredentialLink writes should come from:\n//   (a) The account itself (self-service WHFB enrollment)\n//   (b) A WHFB provisioning service account (known identity)\n//   (c) Azure AD Connect sync (MSOL_* or AADConnect* accounts)\n// Any other writer \u2014 especially one operating on a different target account \u2014\n// is anomalous and should be investigated immediately.\n// ============================================================================\nSecurityEvent\n| where TimeGenerated > ago(1d)\n| where EventID == 5136\n| where EventData contains \"msDS-KeyCredentialLink\"\n| extend\n    WriterSAM    = SubjectUserName,\n    WriterDomain = SubjectDomainName,\n    TargetDN     = ObjectDN,\n    TargetSAM    = extract(@\"CN=([^,]+),\", 1, ObjectDN)\n| extend IsSelfWrite = (WriterSAM =~ TargetSAM)\n| where not IsSelfWrite\n| where not (WriterSAM startswith \"MSOL_\")\n| where not (WriterSAM startswith \"AADConnect\")\n| where WriterDomain != \"NT AUTHORITY\"\n| summarize\n    WriteCount  = count(),\n    Targets     = make_set(TargetSAM),\n    FirstWrite  = min(TimeGenerated),\n    LastWrite   = max(TimeGenerated)\n    by WriterSAM, WriterDomain, Computer\n| extend\n    UniqueTargets = array_length(Targets),\n    SpanMinutes   = datetime_diff(\"minute\", LastWrite, FirstWrite)\n| extend\n    Severity = iff(UniqueTargets > 3, \"Critical\",\n               iff(UniqueTargets > 1, \"High\", \"Medium\"))\n| project\n    FirstWrite,\n    LastWrite,\n    SpanMinutes,\n    WriterSAM,\n    WriterDomain,\n    WriteCount,\n    UniqueTargets,\n    Targets,\n    Computer,\n    Severity\n| order by UniqueTargets desc, WriteCount desc",
+    "source_repo": "AndrewAltimit/exploits",
+    "source_url": "https://github.com/AndrewAltimit/exploits/blob/88abd914ae7094499bab58b2b6aa32b01122fb31/tools/ad-cs/shadow-credentials-2026/detection/kql_shadow_cred_hunt_2026.kql",
+    "filename": "kql_shadow_cred_hunt_2026.kql",
+    "collected_at": "2026-05-24T03:16:36.219046+00:00"
+  },
+  {
+    "id": "eb9e47d212d8",
+    "title": "Find computers that have not sent any security events for over an hour",
+    "description": "Find computers that have not sent any security events for over an hour",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/EmreOzanMemis/AzureSentinel\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (1d)\n| summarize ['Last Record Received']  = datetime_diff(\"minute\", now(), max(TimeGenerated)) by Computer\n| project Computer, ['Last Record Received']\n| where ['Last Record Received'] >= 60\n| order by ['Last Record Received'] desc ",
+    "source_repo": "EmreOzanMemis/AzureSentinel",
+    "source_url": "https://github.com/EmreOzanMemis/AzureSentinel/blob/c04f3c94811e44003267420c1789965797e2c2ea/Sentinel-KQL-Sorgular%C4%B1/Windows%20Security%20Events/SecEvents-FindDevicesNoLongerSendingLogs.kql",
+    "filename": "SecEvents-FindDevicesNoLongerSendingLogs.kql",
+    "collected_at": "2026-05-24T03:16:35.187877+00:00"
+  },
+  {
+    "id": "06123a60c6f8",
+    "title": "SecurityEvent - Logon Noise Analysis (EventID 4624/4625)",
+    "description": "Successful and failed logon events are typically the #2 cost driver. Identifies noisy logon types, accounts, and machines that can be filtered via DCR transform or reduced via GPO audit policy. =====================================================================",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet _Window = 7d;\n// --- Part 1: Logon Type Breakdown ---\nlet _LogonTypeBreakdown =\n    SecurityEvent\n    | where TimeGenerated > ago(_Window)\n    | where EventID in (4624, 4625)\n    | extend LogonTypeName = case(\n        LogonType == 2, \"Interactive\",\n        LogonType == 3, \"Network\",\n        LogonType == 4, \"Batch\",\n        LogonType == 5, \"Service\",\n        LogonType == 7, \"Unlock\",\n        LogonType == 8, \"NetworkCleartext\",\n        LogonType == 9, \"NewCredentials\",\n        LogonType == 10, \"RemoteInteractive\",\n        LogonType == 11, \"CachedInteractive\",\n        strcat(\"Type \", tostring(LogonType))\n    )\n    | summarize \n        EventCount = count(),\n        DistinctAccounts = dcount(TargetAccount),\n        DistinctComputers = dcount(Computer),\n        FailedCount = countif(EventID == 4625),\n        SuccessCount = countif(EventID == 4624)\n        by LogonType, LogonTypeName\n    | extend PctOfTotal = round(toreal(EventCount) * 100.0 / toscalar(\n        SecurityEvent | where TimeGenerated > ago(_Window) | where EventID in (4624, 4625) | count\n    ), 1)\n    | extend FilterAction = case(\n        LogonType == 3 and PctOfTotal > 40, \"FILTER: Network logons dominate - Filter machine-to-machine via DCR\",\n        LogonType == 5 and PctOfTotal > 20, \"FILTER: Service logons noisy - Filter known service accounts\",\n        LogonType == 7 and PctOfTotal > 10, \"FILTER: Unlock events low-value - Strong DCR exclude candidate\",\n        LogonType == 4 and PctOfTotal > 10, \"FILTER: Batch logons - Review if needed, often low-value\",\n        \"KEEP\"\n    );\n// --- Part 2: Noisiest Accounts ---\nlet _NoisyAccounts =\n    SecurityEvent\n    | where TimeGenerated > ago(_Window)\n    | where EventID in (4624, 4625)\n    | summarize EventCount = count() by TargetAccount\n    | top 20 by EventCount desc\n    | extend \n        AccountType = case(\n            TargetAccount has \"$\", \"Machine Account\",\n            TargetAccount has_any (\"svc\", \"service\", \"scan\", \"monitor\", \"backup\", \"ndes\"), \"Likely Service Account\",\n            \"User Account\"\n        ),\n        FilterAction = case(\n            TargetAccount has \"$\", \"FILTER: Machine account - Typically redundant, filter in DCR\",\n            TargetAccount has_any (\"svc\", \"service\", \"scan\", \"monitor\"), \"REVIEW: Service account - Often noisy, low detection value\",\n            \"KEEP: User account - Review individually\"\n        );\n// Output both parts\n_LogonTypeBreakdown\n| project Section = \"LOGON_TYPE\", Name = LogonTypeName, EventCount, PctOfTotal, Detail = strcat(\"Success: \", SuccessCount, \" | Failed: \", FailedCount), FilterAction\n| union (\n    _NoisyAccounts\n    | project Section = \"NOISY_ACCOUNT\", Name = TargetAccount, EventCount, PctOfTotal = 0.0, Detail = AccountType, FilterAction\n)\n| order by Section asc, EventCount desc",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/dfdbefa859a283498bfeb573fe1513430090e473/Sentinel%20Cost%20Optimization/hunting-queries/noise-logon-events.kql",
+    "filename": "noise-logon-events.kql",
+    "collected_at": "2026-05-24T03:16:34.334122+00:00"
+  },
+  {
+    "id": "0441944df23d",
+    "title": "MITRE ATT&CK: T1652",
+    "description": "MITRE ATT&CK: T1652",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "defender"
+    ],
+    "content": "// Source: https://github.com/reversinglabs/reversinglabs-siem-rules\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4688 \n| where (\n    (NewProcessName endswith \"driverquery.exe\" or NewProcessName =~ \"drvqry.exe\") \n    and ((ParentProcessName endswith \"\\\\cmd.exe\" or ParentProcessName endswith \"\\\\powershell.exe\" or ParentProcessName endswith \"\\\\pwsh.exe\" or ParentProcessName endswith \"\\\\wscript.exe\" or ParentProcessName endswith \"\\\\cscript.exe\" or ParentProcessName endswith \"\\\\mshta.exe\") \n    or (ParentProcessName contains \"\\\\AppData\\\\Local\\\\\" or ParentProcessName contains \"\\\\Users\\\\Public\\\\\" or ParentProcessName contains \"\\\\Windows\\\\Temp\\\\\"))\n)\n| union \n(DeviceProcessEvents\n| where ActionType == \"ProcessCreated\"\n| where (\n    (FileName endswith \"driverquery.exe\" or FileName =~ \"drvqry.exe\") \n    and ((InitiatingProcessFileName endswith \"\\\\cmd.exe\" or InitiatingProcessFileName endswith \"\\\\powershell.exe\" or InitiatingProcessFileName endswith \"\\\\pwsh.exe\" or InitiatingProcessFileName endswith \"\\\\wscript.exe\" or InitiatingProcessFileName endswith \"\\\\cscript.exe\" or InitiatingProcessFileName endswith \"\\\\mshta.exe\") \n    or (InitiatingProcessFileName contains \"\\\\AppData\\\\Local\\\\\" or InitiatingProcessFileName contains \"\\\\Users\\\\Public\\\\\" or InitiatingProcessFileName contains \"\\\\Windows\\\\Temp\\\\\"))\n)),\n(SysmonParser\n| where EventID == 1)\n| where (NewProcessName endswith \"driverquery.exe\" or NewProcessName =~ \"drvqry.exe\") and ((ParentProcessName endswith \"\\\\cmd.exe\" or ParentProcessName endswith \"\\\\powershell.exe\" or ParentProcessName endswith \"\\\\pwsh.exe\" or ParentProcessName endswith \"\\\\wscript.exe\" or ParentProcessName endswith \"\\\\cscript.exe\" or ParentProcessName endswith \"\\\\mshta.exe\") or (ParentProcessName contains \"\\\\AppData\\\\Local\\\\\" or ParentProcessName contains \"\\\\Users\\\\Public\\\\\" or ParentProcessName contains \"\\\\Windows\\\\Temp\\\\\"))",
+    "source_repo": "reversinglabs/reversinglabs-siem-rules",
+    "source_url": "https://github.com/reversinglabs/reversinglabs-siem-rules/blob/23fc452b527f2f8e08c26c6dffc0f734e750a2be/Malware/Gozi/20230710/NewProcess-DriversQueried.kql",
+    "filename": "NewProcess-DriversQueried.kql",
+    "collected_at": "2026-05-24T03:16:33.618720+00:00"
+  },
+  {
+    "id": "2211e438058d",
+    "title": "Security Event Lsass Cred Dump",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Cyberlorians/KQL\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent //finds credential dumping with mimikatz via taskmgr\n| where EventID == \"4663\"\n| where EventData contains \"lsass.exe\"\n| where ProcessName contains 'Taskmgr.exe'",
+    "source_repo": "Cyberlorians/KQL",
+    "source_url": "https://github.com/Cyberlorians/KQL/blob/cd68909313472ee9539ac16f468a3d1113572991/Active%20Directory/Security-Event-lsass-cred-dump.kql",
+    "filename": "Security-Event-lsass-cred-dump.kql",
+    "collected_at": "2026-05-24T03:16:32.899448+00:00"
+  },
+  {
+    "id": "0c7c1e4fe8bc",
+    "title": "Source: https://github.com/iDea82/siem-detection-rules",
+    "description": "Collected: 2026-05-16 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-05-24\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet LookbackPeriod = 1d;\nlet SuspiciousPaths = dynamic([\n    \"\\\\temp\\\\\", \"\\\\tmp\\\\\", \"\\\\appdata\\\\local\\\\temp\\\\\"\n]);\nlet SuspiciousEngines = dynamic([\n    \"powershell\", \"pwsh\", \"cmd.exe\",\n    \"wscript\", \"cscript\", \"mshta\",\n    \"rundll32\", \"regsvr32\"\n]);\nlet DownloadCradles = dynamic([\n    \"downloadstring\", \"downloadfile\",\n    \"webclient\", \"invoke-webrequest\",\n    \"curl\", \"wget\"\n]);\nlet EncodedFlags = dynamic([\n    \"-enc\", \"-encoded\", \"-encodedcommand\"\n]);\nlet PersistenceTriggers = dynamic([\n    \"onlogon\", \"onidle\", \"onboot\", \"onevent\"\n]);\n\nlet ScheduledTaskEvents =\nSecurityEvent\n| where TimeGenerated >= ago(LookbackPeriod)\n| where EventID == 4698\n| extend TaskDetails = tolower(EventData)\n| extend Source = \"SecurityEvent-4698\";\n\nlet SysmonTaskEvents =\nSysmon\n| where TimeGenerated >= ago(LookbackPeriod)\n| where EventID == 1\n| where tolower(Image) endswith \"schtasks.exe\"\n    or tolower(Image) endswith \"taskschd.msc\"\n| extend TaskDetails = tolower(CommandLine)\n| extend Source = \"Sysmon-ProcessCreate\";\n\nunion ScheduledTaskEvents, SysmonTaskEvents\n| extend SuspiciousIndicator = case(\n\n    SuspiciousPaths has_any (TaskDetails),\n        \"Suspicious Path \u2014 task runs from temp directory\",\n\n    EncodedFlags has_any (TaskDetails),\n        \"Encoded Command \u2014 task contains encoded payload\",\n\n    SuspiciousEngines has_any (TaskDetails),\n        \"Script Interpreter \u2014 task uses scripting engine\",\n\n    DownloadCradles has_any (TaskDetails),\n        \"Download Cradle \u2014 task pulls content from internet\",\n\n    PersistenceTriggers has_any (TaskDetails),\n        \"Persistence Trigger \u2014 task runs on system events\",\n\n    dynamic(null)\n)\n| where isnotempty(SuspiciousIndicator)\n| extend Severity = case(\n    (TaskDetails contains \"\\\\temp\\\\\" or TaskDetails contains \"\\\\tmp\\\\\")\n    and (TaskDetails contains \"-enc\" or TaskDetails contains \"-encoded\"),\n        \"CRITICAL\",\n    DownloadCradles has_any (TaskDetails),\n        \"HIGH\",\n    \"MEDIUM\"\n)\n| extend MitreTechnique = \"T1053.005 - Scheduled Task\"\n| extend Tactic = \"Persistence / Privilege Escalation\"\n| project\n    TimeGenerated,\n    Computer,\n    Account,\n    TaskDetails,\n    SuspiciousIndicator,\n    ParentImage,\n    ParentCommandLine,\n    Source,\n    Severity,\n    MitreTechnique,\n    Tactic\n| sort by TimeGenerated desc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/540594b721ef7d170e93cc10f4fe67978031d64f/queries/7d0e1d45f71c.kql",
+    "filename": "7d0e1d45f71c.kql",
+    "collected_at": "2026-05-24T03:16:32.186747+00:00"
+  },
+  {
     "id": "78957442571b",
     "title": "Rule    : M365 - SharePoint / OneDrive File Access by Guest During Off-Hours",
     "description": "Severity: Medium Tactics : Collection, InitialAccess MITRE   : T1530 (Data from Cloud Storage), T1078.004 Freq    : PT1H   Period: PT1H Description: Detects guest users (#EXT#) accessing SharePoint or OneDrive files outside of typical business hours (22:00\u201306:00 UTC), which may indicate a compromised guest account or unauthorised after-hours access. ==========================================================================================",

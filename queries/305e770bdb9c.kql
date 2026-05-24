@@ -1,0 +1,16 @@
+// Source: https://github.com/Ascendstarcel/Hunting-with-KQL
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4624  // Windows logon success event
+| extend AccountName = tostring(Account)
+| where AccountName !in ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE")
+| summarize LogonCount = count(), StartTime = min(TimeGenerated), EndTime = max(TimeGenerated) by AccountName, Computer, LogonType
+| join kind=inner (
+    SecurityEvent
+    | where EventID == 4625  // Failed login attempts
+    | summarize FailedCount = count() by AccountName
+) on AccountName
+| extend Suspicious = case(FailedCount > 5 and LogonCount > 10, "Possible brute force or misuse", "Normal")
+| where Suspicious == "Possible brute force or misuse"

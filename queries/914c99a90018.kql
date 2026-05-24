@@ -1,0 +1,19 @@
+// Source: https://github.com/weixian-zhang/Panorama
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| extend ResourceCategory = parse_json(Properties).resourceProviderValue
+| extend ResourceIDSplit = split(_ResourceId, "/")
+| extend ActionNamespace = split(parse_json(Authorization).action, "/")
+| extend ActionType = toupper(ActionNamespace[array_length(ActionNamespace) -1])
+| where
+    ActionType in ("WRITE", "DELETE") and
+    OperationNameValue !in (
+    "MICROSOFT.AUTHORIZATION/POLICYDEFINITIONS/WRITE",
+    "MICROSOFT.AUTHORIZATION/POLICYSETDEFINITIONS/WRITE",
+    "MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS/WRITE") and
+    CategoryValue  == "Administrative" and ResourceCategory !in ("MICROSOFT.RESOURCEHEALTH", "MICROSOFT.RESOURCES") and
+    ActivityStatusValue == "Success" and 
+    TimeGenerated {TimeRange}
+| summarize dcount(CorrelationId) by ActionType

@@ -1,0 +1,111 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ArcDeletes = AzureActivity
+| where OperationNameValue =~ "Microsoft.HybridCompute/machines/delete"
+| where ActivityStatusValue == "Success"
+| project DeleteTime = TimeGenerated, MachineName = ResourceId,
+          Subscription = SubscriptionId, Caller = Caller;
+let ArcCreates = AzureActivity
+| where OperationNameValue =~ "Microsoft.HybridCompute/machines/write"
+| where ActivityStatusValue == "Success"
+| project CreateTime = TimeGenerated, MachineName = ResourceId,
+          NewSubscription = SubscriptionId, NewCaller = Caller;
+ArcDeletes
+| join kind=inner ArcCreates on MachineName
+| where CreateTime > DeleteTime and CreateTime < (DeleteTime + 2h)
+| where Subscription != NewSubscription    // cross-subscription re-registration
+| project DeleteTime, CreateTime, MachineName, OriginalSubscription = Subscription,
+          NewSubscription, OriginalCaller = Caller, NewCaller
+| sort by DeleteTime desc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 2 — Arc Service Principal Token Use from Unexpected IP
+//
+// Rationale: After CVE-2026-26117 token theft, the attacker uses the managed
+// identity token from their own machine. Entra sign-in logs for the Arc machine
+// service principal (identified by "Arc" or "HybridCompute" in the app name)
+// show authentication from IPs that differ from the known machine IP.
+// ──────────────────────────────────────────────────────────────────────────────
+SigninLogs
+| where AppDisplayName has_any ("HybridCompute", "Azure Arc", "azcmagent")
+    or AppId has "arc"
+| summarize
+    IPAddresses  = make_set(IPAddress),
+    Locations    = make_set(Location),
+    SignInCount  = count(),
+    FirstSeen    = min(TimeGenerated),
+    LastSeen     = max(TimeGenerated)
+  by UserPrincipalName, AppDisplayName, bin(TimeGenerated, 1h)
+| where array_length(IPAddresses) > 1    // multiple source IPs in same hour
+| sort by LastSeen desc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 3 — himds Named Pipe Access from Non-Arc Process (MDE Telemetry)
+//
+// Rationale: Sysmon Event 17/18 or MDE NamedPipeEvents show process → pipe
+// connections. Access to \\.\pipe\himds from any process other than the Arc
+// components is anomalous.
+// ──────────────────────────────────────────────────────────────────────────────
+DeviceEvents
+| where ActionType == "NamedPipeEvent"
+| where AdditionalFields has "himds"
+| where InitiatingProcessFileName !in~ ("himds.exe", "GCArcService.exe",
+                                        "ExtensionService.exe", "azcmagent.exe")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName,
+          InitiatingProcessAccountName, InitiatingProcessCommandLine,
+          AdditionalFields
+| sort by TimeGenerated desc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 4 — Arc Agent Registry TenantId Modification
+//
+// Rationale: Registry key HKLM\SOFTWARE\Microsoft\Azure Connected Machine
+// Agent\TenantId normally never changes after initial Arc registration. Any
+// modification — especially by a process other than the Arc installer — is a
+// cross-tenant redirect indicator.
+// ──────────────────────────────────────────────────────────────────────────────
+DeviceRegistryEvents
+| where RegistryKey has "Azure Connected Machine Agent"
+| where RegistryValueName == "TenantId"
+| where InitiatingProcessFileName !in~ ("azcmagent.exe", "msiexec.exe",
+                                        "AzureConnectedMachineAgent.msi")
+| project TimeGenerated, DeviceName, RegistryKey, RegistryValueName,
+          PreviousRegistryValueData, RegistryValueData,
+          InitiatingProcessFileName, InitiatingProcessAccountName,
+          InitiatingProcessCommandLine
+| sort by TimeGenerated desc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 5 — azcmagent disconnect Execution (Forced De-registration)
+//
+// Rationale: The tenant redirect chain requires running `azcmagent disconnect`
+// or forcibly deleting registration files. azcmagent.exe with the "disconnect"
+// argument outside of a maintenance window is a high-fidelity indicator.
+// ──────────────────────────────────────────────────────────────────────────────
+DeviceProcessEvents
+| where FileName =~ "azcmagent.exe"
+| where ProcessCommandLine has_any ("disconnect", "connect --tenant-id",
+                                    "connect --service-principal")
+| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 6 — Arc Agent Rapid Restart Pattern (Race Condition Exploitation)
+//
+// Rationale: Named pipe race exploitation requires forcing himds.exe to restart.
+// Rapid restarts (more than 2 in 10 minutes) not associated with a Windows
+// Update event indicate forced restarts from an attacker.
+// ──────────────────────────────────────────────────────────────────────────────
+DeviceProcessEvents
+| where FileName =~ "himds.exe"
+| where ActionType == "ProcessCreated"
+| summarize
+    RestartCount = count(),
+    CommandLines = make_set(ProcessCommandLine),
+    AccountNames = make_set(AccountName)
+  by DeviceName, bin(TimeGenerated, 10m)
+| where RestartCount >= 3
+| sort by RestartCount desc, TimeGenerated desc

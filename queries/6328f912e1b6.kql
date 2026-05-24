@@ -1,0 +1,141 @@
+// Source: https://github.com/mhartson310/Azure-Cost-Optimization-Toolkit
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+Resources
+| where type == "microsoft.compute/disks"
+| where managedBy == "" or isnull(managedBy)
+| where properties.diskState == "Unattached"
+| extend 
+    DiskSize_GB = toint(properties.diskSizeGB),
+    DiskTier = tostring(sku.name),
+    CreatedDate = todatetime(properties.timeCreated)
+| extend 
+    // Estimated monthly cost (rough)
+    EstimatedMonthlyCost = case(
+        DiskTier == "Premium_LRS", DiskSize_GB * 0.135,
+        DiskTier == "StandardSSD_LRS", DiskSize_GB * 0.075,
+        DiskTier == "Standard_LRS", DiskSize_GB * 0.04,
+        DiskSize_GB * 0.075
+    ),
+    DaysOrphaned = datetime_diff('day', now(), CreatedDate)
+| project 
+    ResourceType = "Unattached Disk",
+    Name = name,
+    ResourceGroup = resourceGroup,
+    Subscription = subscriptionId,
+    Size_GB = DiskSize_GB,
+    Tier = DiskTier,
+    Location = location,
+    EstimatedMonthlyCost = round(EstimatedMonthlyCost, 2),
+    DaysOrphaned,
+    CreatedDate,
+    Action = "Safe to delete if confirmed not needed"
+| union (
+    // Unused Public IPs
+    Resources
+    | where type == "microsoft.network/publicipaddresses"
+    | where isnull(properties.ipConfiguration)
+    | extend 
+        Sku = tostring(sku.name),
+        AllocationMethod = tostring(properties.publicIPAllocationMethod),
+        CreatedDate = todatetime(properties.timeCreated)
+    | extend 
+        EstimatedMonthlyCost = case(
+            Sku == "Standard", 3.65,  // Standard SKU
+            0.0  // Basic SKU is free when unused
+        ),
+        DaysOrphaned = datetime_diff('day', now(), CreatedDate)
+    | project 
+        ResourceType = "Unused Public IP",
+        Name = name,
+        ResourceGroup = resourceGroup,
+        Subscription = subscriptionId,
+        Size_GB = 0,
+        Tier = Sku,
+        Location = location,
+        EstimatedMonthlyCost,
+        DaysOrphaned,
+        CreatedDate,
+        Action = "Safe to delete if not reserved for future use"
+)
+| union (
+    // Orphaned Network Interfaces
+    Resources
+    | where type == "microsoft.network/networkinterfaces"
+    | where isnull(properties.virtualMachine)
+    | extend 
+        CreatedDate = todatetime(properties.timeCreated),
+        PrivateIP = tostring(properties.ipConfigurations[0].properties.privateIPAddress)
+    | extend DaysOrphaned = datetime_diff('day', now(), CreatedDate)
+    | project 
+        ResourceType = "Orphaned NIC",
+        Name = name,
+        ResourceGroup = resourceGroup,
+        Subscription = subscriptionId,
+        Size_GB = 0,
+        Tier = PrivateIP,
+        Location = location,
+        EstimatedMonthlyCost = 0.0,  // NICs themselves are free
+        DaysOrphaned,
+        CreatedDate,
+        Action = "Delete if no plan to reattach"
+)
+| union (
+    // Unused Load Balancers
+    Resources
+    | where type == "microsoft.network/loadbalancers"
+    | extend 
+        Sku = tostring(sku.name),
+        BackendPoolCount = array_length(properties.backendAddressPools),
+        CreatedDate = todatetime(properties.timeCreated)
+    | where BackendPoolCount == 0
+    | extend 
+        EstimatedMonthlyCost = case(
+            Sku == "Standard", 18.25,  // Standard LB: $0.025/hour
+            0.0  // Basic is free
+        ),
+        DaysOrphaned = datetime_diff('day', now(), CreatedDate)
+    | project 
+        ResourceType = "Unused Load Balancer",
+        Name = name,
+        ResourceGroup = resourceGroup,
+        Subscription = subscriptionId,
+        Size_GB = 0,
+        Tier = Sku,
+        Location = location,
+        EstimatedMonthlyCost,
+        DaysOrphaned,
+        CreatedDate,
+        Action = "Delete if no active workloads"
+)
+| order by EstimatedMonthlyCost desc
+| extend MonthlyImpact = case(
+    EstimatedMonthlyCost > 500, "Critical",
+    EstimatedMonthlyCost > 100, "High",
+    EstimatedMonthlyCost > 20, "Medium",
+    "Low"
+)
+
+// SUMMARY QUERY (get total waste):
+// Resources
+// | where type in (
+//     "microsoft.compute/disks",
+//     "microsoft.network/publicipaddresses",
+//     "microsoft.network/networkinterfaces"
+// )
+// | where properties.diskState == "Unattached" 
+//     or isnull(properties.ipConfiguration)
+//     or isnull(properties.virtualMachine)
+// | summarize 
+//     TotalOrphaned = count(),
+//     BySubscription = dcount(subscriptionId)
+//     by type
+
+// ACTIONS:
+// 1. Export results to CSV
+// 2. Review with resource owners
+// 3. Tag for 30-day deletion window if no response
+// 4. Delete confirmed orphaned resources
+// 5. Implement tagging policy to prevent future orphans
+// 6. Set up automated monthly cleanup

@@ -1,0 +1,9 @@
+// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| summarize TimeGenerated = max(TimeGenerated) by Computer
+| extend State = iff(TimeGenerated < ago(10m), 'Unhealthy', 'Healthy')
+| extend LastLogRecieved = now() - TimeGenerated
+| project Computer, State, LastLogRecieved

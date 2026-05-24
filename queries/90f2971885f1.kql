@@ -1,0 +1,16 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 31d;
+Usage
+| where IsBillable == true
+| where StartTime >= startofday(ago(Lookback)) and EndTime < startofday(now())
+| where DataType in ("Event", "WindowsEvent", "SecurityEvent")
+| summarize
+    GB = sum(Quantity) / 1000.0,
+    ActiveDays = dcount(StartTime),
+    FirstSeen = min(StartTime),
+    LastSeen = max(StartTime)
+  by TableName = DataType
+| order by GB desc, TableName asc

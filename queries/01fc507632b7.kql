@@ -1,0 +1,7 @@
+// Source: https://github.com/xpinux/Project-SABER
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID =="1" or EventID =="4688" or EventID =="4104"
+| where CommandLine matches regex @"(?i)rundll32(\\.exe)?(\\.exe)?(\\*)?.*comsvcs(\\.dll)?.*"

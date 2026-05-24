@@ -1,0 +1,168 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LegitimateWriters = dynamic([
+    "MSOL_*",           // Azure AD Connect sync accounts
+    "AADConnect*",
+    "NT AUTHORITY\\SYSTEM",
+    "azureadssoacc$"    // Seamless SSO computer account
+]);
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID == 5136   // Directory Service Object Modified
+| where EventData contains "msDS-KeyCredentialLink"
+| extend
+    WriterAccount = SubjectUserName,
+    WriterDomain  = SubjectDomainName,
+    TargetObject  = ObjectDN,
+    OperationType = OperationType
+| where OperationType == "Value Added"
+| where not (WriterAccount has_any (LegitimateWriters))
+| where not (WriterDomain == "NT AUTHORITY")
+| project
+    TimeGenerated,
+    WriterAccount,
+    WriterDomain,
+    TargetObject,
+    Computer,
+    OperationType
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: PKINIT authentication within 5 minutes of a shadow key write
+//
+// Rationale: The attack sequence is: write NGC key → authenticate via PKINIT.
+// In practice, automated tools do this within seconds. Correlating a successful
+// msDS-KeyCredentialLink write (Event 5136) with a PKINIT TGT request (Event 4768,
+// PreAuthType 16 or 17) on the same target account within 5 minutes is a
+// high-confidence composite indicator.
+//
+// Post-Sep 2025: This timing correlation replaces the blob-structural IoCs
+// (epoch skew, DeviceId anomaly) that Impacket's September 2025 fix removed.
+// ============================================================================
+let ShadowCredWindow = 5m;
+let ShadowKeyWrites =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 5136
+    | where EventData contains "msDS-KeyCredentialLink"
+    | extend OperationType = OperationType
+    | where OperationType == "Value Added"
+    | extend
+        TargetAccount = extract(@"Object DN:\s+CN=([^,]+)", 1, ObjectDN),
+        WriteTime     = TimeGenerated,
+        WriterAccount = SubjectUserName
+    | project WriteTime, TargetAccount, WriterAccount, TargetDN = ObjectDN;
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID == 4768   // Kerberos TGT request
+| where PreAuthType in ("16", "17")  // PKINIT (PA-PK-AS-REQ)
+| where ResultCode == "0x0"   // Successful authentication
+| extend
+    AuthAccount = TargetUserName,
+    AuthTime    = TimeGenerated,
+    AuthIP      = IpAddress
+| join kind=inner (ShadowKeyWrites) on $left.AuthAccount == $right.TargetAccount
+| where AuthTime between (WriteTime .. (WriteTime + ShadowCredWindow))
+| extend
+    DeltaSeconds  = datetime_diff("second", AuthTime, WriteTime),
+    IsHighValue   = AuthAccount in~ ("administrator", "krbtgt") or AuthAccount endswith "$"
+| project
+    WriteTime,
+    AuthTime,
+    DeltaSeconds,
+    TargetAccount,
+    WriterAccount,
+    AuthIP,
+    IsHighValue,
+    TargetDN,
+    Computer
+| extend Severity = iff(DeltaSeconds < 60, "Critical", iff(DeltaSeconds < 300, "High", "Medium"))
+| order by DeltaSeconds asc
+
+
+// ============================================================================
+// Query 3: Failed NGC key write — outdated tooling on patched DC (post-Jan 2026)
+//
+// Rationale: The January 2026 DC update enforces CUSTOMKEYINFO_FLAGS_MFA_NOT_USED
+// on msDS-KeyCredentialLink writes. Tools that have not been updated (some versions
+// of Impacket ntlmrelayx.py, older Whisker builds) receive LDAP error 0x20EF
+// (ERROR_DS_CONSTRAINT_VIOLATION). This is a high-fidelity signal with no expected
+// false positives — legitimate provisioning tools are already updated.
+//
+// The failed write means no key was written and no credential was exposed, but the
+// attempt itself warrants investigation: an attacker was attempting Shadow Credentials
+// with outdated tooling.
+// ============================================================================
+SecurityEvent
+| where TimeGenerated > ago(7d)   // Wider window — failed attempts may be sporadic
+| where EventID in (2889, 4956)    // LDAP constraint violation events
+| extend
+    EventDataStr = tostring(EventData)
+| where EventDataStr contains "0x20EF"
+       or EventDataStr contains "ERROR_DS_CONSTRAINT_VIOLATION"
+       or EventDataStr contains "msDS-KeyCredentialLink"
+| extend
+    SourceAccount = SubjectUserName,
+    SourceIP      = IpAddress
+| project
+    TimeGenerated,
+    SourceAccount,
+    SourceIP,
+    Computer,
+    EventDataStr
+| extend
+    Annotation = "Failed NGC key write — attacker likely using pre-Jan-2026 tooling on patched DC"
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 4: Shadow Credentials write by non-owner, non-WHFB-provisioner account
+//
+// Rationale: msDS-KeyCredentialLink writes should come from:
+//   (a) The account itself (self-service WHFB enrollment)
+//   (b) A WHFB provisioning service account (known identity)
+//   (c) Azure AD Connect sync (MSOL_* or AADConnect* accounts)
+// Any other writer — especially one operating on a different target account —
+// is anomalous and should be investigated immediately.
+// ============================================================================
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID == 5136
+| where EventData contains "msDS-KeyCredentialLink"
+| extend
+    WriterSAM    = SubjectUserName,
+    WriterDomain = SubjectDomainName,
+    TargetDN     = ObjectDN,
+    TargetSAM    = extract(@"CN=([^,]+),", 1, ObjectDN)
+| extend IsSelfWrite = (WriterSAM =~ TargetSAM)
+| where not IsSelfWrite
+| where not (WriterSAM startswith "MSOL_")
+| where not (WriterSAM startswith "AADConnect")
+| where WriterDomain != "NT AUTHORITY"
+| summarize
+    WriteCount  = count(),
+    Targets     = make_set(TargetSAM),
+    FirstWrite  = min(TimeGenerated),
+    LastWrite   = max(TimeGenerated)
+    by WriterSAM, WriterDomain, Computer
+| extend
+    UniqueTargets = array_length(Targets),
+    SpanMinutes   = datetime_diff("minute", LastWrite, FirstWrite)
+| extend
+    Severity = iff(UniqueTargets > 3, "Critical",
+               iff(UniqueTargets > 1, "High", "Medium"))
+| project
+    FirstWrite,
+    LastWrite,
+    SpanMinutes,
+    WriterSAM,
+    WriterDomain,
+    WriteCount,
+    UniqueTargets,
+    Targets,
+    Computer,
+    Severity
+| order by UniqueTargets desc, WriteCount desc

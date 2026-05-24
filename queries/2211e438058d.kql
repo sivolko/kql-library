@@ -1,0 +1,8 @@
+// Source: https://github.com/Cyberlorians/KQL
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent //finds credential dumping with mimikatz via taskmgr
+| where EventID == "4663"
+| where EventData contains "lsass.exe"
+| where ProcessName contains 'Taskmgr.exe'

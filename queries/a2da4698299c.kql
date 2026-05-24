@@ -1,0 +1,152 @@
+// Source: https://github.com/BasicOneCruisider/aks-cluster-mongodb-monitoring
+// Collected: 2026-05-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+KubeNodeInventory
+| where ClusterName == "K8workshopaks-restored"
+| where TimeGenerated > ago(24h)
+| summarize 
+    NodesTotal = dcount(Computer),
+    NodesReady = dcountif(Computer, Status == "Ready"),
+    DerniereActivite = max(TimeGenerated),
+    Nodes = make_set(Computer)
+| extend 
+    ClusterStatus = iff(NodesTotal > 0, "CLUSTER EXISTE", "CLUSTER INTROUVABLE"),
+    NodesStatus = iff(NodesReady == NodesTotal, "TOUS NODES READY", strcat(NodesReady, "/", NodesTotal, " READY")),
+    ActiviteStatus = iff(DerniereActivite > ago(1h), "ACTIF", "DONNEES ANCIENNES")
+
+// DIAGNOSTIC - Vérifier si les données arrivent
+// =============================================
+
+// DIAG 1. Vérifier toutes les données du cluster (toutes tables)
+search "K8workshopaks-restored"
+| summarize count() by $table
+| order by count_ desc
+
+// DIAG 2. Vérifier les données récentes (dernières 24h)
+union withsource=TableName *
+| where TimeGenerated > ago(24h)
+| where * contains "K8workshopaks-restored" or * contains "mongodb" or * contains "ratingapp"
+| summarize count() by TableName
+| order by count_ desc
+
+// DIAG 3. Vérifier la connectivité des agents
+Heartbeat
+| where TimeGenerated > ago(1h)
+| summarize max(TimeGenerated) by Computer
+| order by max_TimeGenerated desc
+
+// DIAG 4. Vérifier les événements des agents de monitoring
+KubeMonAgentEvents
+| where TimeGenerated > ago(1h)
+| order by TimeGenerated desc
+| take 20
+
+// ==========================================
+// REQUÊTES PRINCIPALES (si données disponibles)
+// ==========================================
+
+// 1. État général des pods
+KubePodInventory
+| where ClusterName == "K8workshopaks-restored"
+| summarize count() by PodStatus, Namespace
+| order by count_ desc
+
+// 2. Pods MongoDB spécifiquement
+KubePodInventory
+| where ClusterName == "K8workshopaks-restored"
+| where Name contains "mongodb"
+| project TimeGenerated, Name, Namespace, PodStatus, ContainerStatusReason, RestartCount
+| order by TimeGenerated desc
+
+// 3. Logs MongoDB en temps réel
+ContainerLogV2
+| where ContainerName contains "mongodb"
+| order by TimeGenerated desc
+| take 50
+
+// 4. Métriques CPU des nodes
+InsightsMetrics
+| where Name == "cpuUsageNanoCores"
+| where Tags contains "K8workshopaks-restored"
+| summarize avg(Val) by bin(TimeGenerated, 5m), Computer
+| render timechart
+
+// 5. Métriques mémoire des nodes
+InsightsMetrics
+| where Name == "memoryWorkingSetBytes"
+| where Tags contains "K8workshopaks-restored"
+| summarize avg(Val) by bin(TimeGenerated, 5m), Computer
+| render timechart
+
+// 6. Événements Kubernetes importants
+KubeEvents
+| where ClusterName == "K8workshopaks-restored"
+| where Type == "Warning" or Reason == "FailedScheduling"
+| project TimeGenerated, Reason, Message, ObjectKind, ObjectName
+| order by TimeGenerated desc
+
+// 7. État de santé du cluster
+KubeHealth
+| where ClusterName == "K8workshopaks-restored"
+| summarize count() by ServiceName, HealthState
+| order by count_ desc
+
+// 8. Utilisation des ressources par namespace
+KubePodInventory
+| where ClusterName == "K8workshopaks-restored"
+| summarize PodCount = count() by Namespace
+| order by PodCount desc
+
+// 9. Inventaire des nodes et leur statut
+KubeNodeInventory
+| where ClusterName == "K8workshopaks-restored"
+| project TimeGenerated, Computer, Status, KubeletVersion, DockerVersion
+| order by TimeGenerated desc
+
+// 10. Logs d'erreur dans tous les containers
+ContainerLogV2
+| where LogLevel == "Error" or LogEntry contains "error"
+| where TimeGenerated > ago(1h)
+| order by TimeGenerated desc
+| take 100
+
+// ==========================================
+// REQUÊTES ALTERNATIVES (monitoring en temps réel via kubectl)
+// ==========================================
+
+// Alternative 1: Utiliser kubectl directement
+// kubectl get pods --all-namespaces -o wide
+// kubectl top nodes
+// kubectl top pods --all-namespaces
+
+// Alternative 2: Logs en temps réel
+// kubectl logs -f <pod-name> --namespace ratingapp
+
+// Alternative 3: Événements Kubernetes
+// kubectl get events --all-namespaces --sort-by='.lastTimestamp'
+
+// ==========================================
+// REQUÊTES DE FALLBACK (données plus anciennes)
+// ==========================================
+
+// FB 1. Chercher dans toutes les tables sans filtre cluster
+KubePodInventory
+| where TimeGenerated > ago(7d)
+| where Namespace == "ratingapp"
+| order by TimeGenerated desc
+| take 10
+
+// FB 2. Logs MongoDB sans filtre cluster
+ContainerLogV2
+| where TimeGenerated > ago(7d)
+| where ContainerName contains "mongodb"
+| order by TimeGenerated desc
+| take 10
+
+// FB 3. Activité Azure générale
+AzureActivity
+| where TimeGenerated > ago(1h)
+| where ResourceGroup == "aks-restored-rg"
+| order by TimeGenerated desc
+| take 20
