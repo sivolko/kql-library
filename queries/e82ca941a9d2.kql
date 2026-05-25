@@ -1,0 +1,37 @@
+// Source: https://github.com/MBCloudTeck/NTLM-Must-Die
+// Collected: 2026-05-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(30d)
+| where EventID in (4624, 4776)
+| extend PackageName = tostring(parse_json(EventData).PackageName)
+| where PackageName contains "NTLM" or EventID == 4776
+| extend 
+    NTLMVersion = case(
+        PackageName contains "NTLM V1", "NTLMv1",
+        PackageName contains "NTLM V2", "NTLMv2",
+        "Unknown"
+    )
+| summarize 
+    TotalAuthentications = count(),
+    NTLMv1Count = countif(NTLMVersion == "NTLMv1"),
+    NTLMv2Count = countif(NTLMVersion == "NTLMv2"),
+    UniqueSources = dcount(tostring(parse_json(EventData).WorkstationName)),
+    UniqueAccounts = dcount(Account),
+    UniqueSystems = dcount(Computer)
+    by bin(TimeGenerated, 1d), NTLMVersion
+| order by TimeGenerated asc
+| project 
+    Date = TimeGenerated,
+    NTLMVersion,
+    TotalAuthentications,
+    UniqueSources,
+    UniqueAccounts,
+    UniqueSystems
+| render timechart 
+    with (
+        title="NTLM Authentication Trends (30 Days)",
+        xtitle="Date",
+        ytitle="Authentication Count"
+    )

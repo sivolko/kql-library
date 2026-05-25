@@ -1,0 +1,348 @@
+// Source: https://github.com/ilyafedotov-ops/Templates
+// Collected: 2026-05-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let CustomSyslogParser = (T:(TimeGenerated:datetime, Computer:string, SyslogMessage:string, Facility:string, SeverityLevel:string, ProcessName:string, ProcessID:int, HostIP:string)) {
+    T 
+    | extend 
+        // Enhanced timestamp parsing
+        ParsedTimestamp = case(
+            SyslogMessage matches regex @"^\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}", 
+            todatetime(extract(@"^(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})", 1, SyslogMessage)),
+            SyslogMessage matches regex @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", 
+            todatetime(extract(@"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", 1, SyslogMessage)),
+            TimeGenerated
+        ),
+        
+        // Process and service identification
+        ServiceName = case(
+            ProcessName in ("sshd", "ssh"), "SSH",
+            ProcessName in ("httpd", "apache2", "nginx"), "WebServer",
+            ProcessName in ("mysqld", "postgres", "sqlservr"), "Database",
+            ProcessName in ("named", "bind"), "DNS",
+            ProcessName in ("dhcpd", "dhcp"), "DHCP",
+            ProcessName == "kernel", "Kernel",
+            ProcessName in ("systemd", "init"), "SystemInit",
+            ProcessName in ("cron", "crond"), "Scheduler",
+            ProcessName in ("postfix", "sendmail"), "MailServer",
+            ProcessName
+        ),
+        
+        // Facility normalization
+        NormalizedFacility = case(
+            Facility == "16" or Facility == "local0", "Local0",
+            Facility == "17" or Facility == "local1", "Local1", 
+            Facility == "18" or Facility == "local2", "Local2",
+            Facility == "19" or Facility == "local3", "Local3",
+            Facility == "20" or Facility == "local4", "Local4",
+            Facility == "21" or Facility == "local5", "Local5",
+            Facility == "22" or Facility == "local6", "Local6",
+            Facility == "23" or Facility == "local7", "Local7",
+            Facility == "0" or Facility == "kern", "Kernel",
+            Facility == "1" or Facility == "user", "User",
+            Facility == "2" or Facility == "mail", "Mail",
+            Facility == "3" or Facility == "daemon", "Daemon",
+            Facility == "4" or Facility == "auth", "Auth",
+            Facility == "5" or Facility == "syslog", "Syslog",
+            Facility == "6" or Facility == "lpr", "LineprinterSystem",
+            Facility == "7" or Facility == "news", "NetworkNews",
+            Facility == "8" or Facility == "uucp", "UUCP",
+            Facility == "9" or Facility == "cron", "ClockDaemon",
+            Facility == "10" or Facility == "authpriv", "SecurityAuth",
+            Facility == "11" or Facility == "ftp", "FTP",
+            Facility
+        ),
+        
+        // Severity level normalization
+        NormalizedSeverity = case(
+            SeverityLevel == "0" or SeverityLevel == "emerg", "Emergency",
+            SeverityLevel == "1" or SeverityLevel == "alert", "Alert",
+            SeverityLevel == "2" or SeverityLevel == "crit", "Critical", 
+            SeverityLevel == "3" or SeverityLevel == "err", "Error",
+            SeverityLevel == "4" or SeverityLevel == "warning", "Warning",
+            SeverityLevel == "5" or SeverityLevel == "notice", "Notice",
+            SeverityLevel == "6" or SeverityLevel == "info", "Information",
+            SeverityLevel == "7" or SeverityLevel == "debug", "Debug",
+            SeverityLevel
+        ),
+        
+        // Extract IP addresses from message
+        SourceIP = extract(@"(?:from|src=|source=|client=)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})", 1, SyslogMessage),
+        DestinationIP = extract(@"(?:to|dst=|dest=|server=)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})", 1, SyslogMessage),
+        
+        // Extract port numbers
+        SourcePort = toint(extract(@"(?:sport=|src_port=|from.*:)(\d{1,5})", 1, SyslogMessage)),
+        DestinationPort = toint(extract(@"(?:dport=|dst_port=|to.*:|port\s)(\d{1,5})", 1, SyslogMessage)),
+        
+        // Extract user information
+        UserName = coalesce(
+            extract(@"user=([^\s,;]+)", 1, SyslogMessage),
+            extract(@"for\s+([^\s,;]+)", 1, SyslogMessage),
+            extract(@"USER=([^\s,;]+)", 1, SyslogMessage)
+        ),
+        
+        // Extract session and connection IDs
+        SessionID = coalesce(
+            extract(@"session=([^\s,;]+)", 1, SyslogMessage),
+            extract(@"sid=([^\s,;]+)", 1, SyslogMessage)
+        ),
+        ConnectionID = extract(@"connection=([^\s,;]+)", 1, SyslogMessage),
+        
+        // Security event classification
+        SecurityEventType = case(
+            // Authentication events
+            SyslogMessage contains "authentication failure" or 
+            SyslogMessage contains "failed login" or 
+            SyslogMessage contains "invalid user", "AuthenticationFailure",
+            
+            SyslogMessage contains "authentication success" or
+            SyslogMessage contains "successful login" or
+            SyslogMessage contains "session opened", "AuthenticationSuccess",
+            
+            // Authorization events  
+            SyslogMessage contains "permission denied" or
+            SyslogMessage contains "access denied" or
+            SyslogMessage contains "unauthorized", "AuthorizationFailure",
+            
+            // Network events
+            SyslogMessage contains "connection established" or
+            SyslogMessage contains "connected", "NetworkConnection",
+            
+            SyslogMessage contains "connection closed" or
+            SyslogMessage contains "disconnected", "NetworkDisconnection",
+            
+            // System events
+            SyslogMessage contains "system startup" or
+            SyslogMessage contains "boot", "SystemStartup",
+            
+            SyslogMessage contains "system shutdown", "SystemShutdown",
+            
+            // Security events
+            SyslogMessage contains "firewall" and SyslogMessage contains "block", "FirewallBlock",
+            SyslogMessage contains "firewall" and SyslogMessage contains "allow", "FirewallAllow",
+            
+            SyslogMessage contains "intrusion" or
+            SyslogMessage contains "attack", "SecurityAlert",
+            
+            // Process events
+            SyslogMessage contains "process started" or
+            SyslogMessage contains "exec", "ProcessStart",
+            
+            SyslogMessage contains "process terminated" or
+            SyslogMessage contains "killed", "ProcessTermination",
+            
+            // File events
+            SyslogMessage contains "file created" or
+            SyslogMessage contains "file modified", "FileOperation",
+            
+            // Default
+            "Unknown"
+        ),
+        
+        // Risk scoring based on content
+        RiskScore = case(
+            // High risk indicators
+            SyslogMessage contains "root" and SecurityEventType == "AuthenticationFailure", 20,
+            SyslogMessage contains "brute force" or SyslogMessage contains "multiple failed", 18,
+            SyslogMessage contains "privilege escalation" or SyslogMessage contains "sudo", 15,
+            SourceIP matches regex @"^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)", 5, // Internal IP
+            SourceIP matches regex @"^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$", 10, // External IP
+            
+            // Medium risk
+            SecurityEventType in ("AuthenticationFailure", "AuthorizationFailure"), 12,
+            SecurityEventType == "FirewallBlock", 8,
+            NormalizedSeverity in ("Critical", "Error", "Alert"), 10,
+            
+            // Low risk
+            SecurityEventType in ("AuthenticationSuccess", "NetworkConnection"), 3,
+            SecurityEventType in ("SystemStartup", "SystemShutdown"), 2,
+            
+            // Default
+            1
+        ),
+        
+        // Geographic information (placeholder - would integrate with GeoIP service)
+        SourceCountry = case(
+            SourceIP startswith "192.168." or SourceIP startswith "10." or SourceIP startswith "172.", "Internal",
+            "Unknown"
+        ),
+        
+        // Protocol extraction
+        Protocol = coalesce(
+            extract(@"proto=([^\s,;]+)", 1, SyslogMessage),
+            extract(@"protocol=([^\s,;]+)", 1, SyslogMessage),
+            case(
+                DestinationPort == 22, "SSH",
+                DestinationPort == 80, "HTTP", 
+                DestinationPort == 443, "HTTPS",
+                DestinationPort == 53, "DNS",
+                DestinationPort == 21, "FTP",
+                DestinationPort == 25, "SMTP",
+                DestinationPort == 3389, "RDP",
+                DestinationPort == 445, "SMB",
+                "Unknown"
+            )
+        ),
+        
+        // Action extraction
+        Action = case(
+            SyslogMessage contains "ACCEPT" or SyslogMessage contains "ALLOW", "Allow",
+            SyslogMessage contains "DENY" or SyslogMessage contains "DROP" or SyslogMessage contains "BLOCK", "Deny",
+            SyslogMessage contains "REJECT", "Reject",
+            "Unknown"
+        ),
+        
+        // Malware and threat indicators
+        ThreatIndicators = case(
+            SyslogMessage contains "malware" or SyslogMessage contains "virus", "Malware",
+            SyslogMessage contains "phishing" or SyslogMessage contains "suspicious", "Phishing",
+            SyslogMessage contains "botnet" or SyslogMessage contains "c2" or SyslogMessage contains "command and control", "Botnet",
+            SyslogMessage contains "ddos" or SyslogMessage contains "flood", "DDoS",
+            SyslogMessage contains "ransomware" or SyslogMessage contains "crypto", "Ransomware",
+            ""
+        ),
+        
+        // Data size extraction (for transfer monitoring)
+        BytesTransferred = toint(coalesce(
+            extract(@"bytes=(\d+)", 1, SyslogMessage),
+            extract(@"size=(\d+)", 1, SyslogMessage),
+            extract(@"length=(\d+)", 1, SyslogMessage)
+        )),
+        
+        // HTTP specific parsing for web server logs
+        HTTPMethod = extract(@"\"(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH|CONNECT|TRACE)", 1, SyslogMessage),
+        HTTPStatusCode = toint(extract(@"\"\s(\d{3})\s", 1, SyslogMessage)),
+        HTTPUserAgent = extract(@"\"([^\"]*User-Agent[^\"]*?)\"", 1, SyslogMessage),
+        HTTPReferer = extract(@"\"([^\"]*Referer[^\"]*?)\"", 1, SyslogMessage),
+        
+        // URL and domain extraction
+        RequestedURL = extract(@"\"[A-Z]+\s([^\s\"]+)", 1, SyslogMessage),
+        Domain = extract(@"Host:\s*([^\s,;\"]+)", 1, SyslogMessage),
+        
+        // Command and argument extraction (for process events)
+        Command = extract(@"cmd=([^,;]+)", 1, SyslogMessage),
+        Arguments = extract(@"args=([^,;]+)", 1, SyslogMessage),
+        
+        // File path extraction
+        FilePath = coalesce(
+            extract(@"file=([^\s,;\"]+)", 1, SyslogMessage),
+            extract(@"path=([^\s,;\"]+)", 1, SyslogMessage)
+        )
+    | extend
+        // Calculated fields based on extracted data
+        IsPrivilegedUser = UserName in ("root", "admin", "administrator", "sa", "postgres"),
+        IsInternalIP = SourceIP matches regex @"^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)",
+        IsHighRiskPort = DestinationPort in (22, 23, 3389, 5900, 1433, 3306, 5432, 6379),
+        
+        // Time-based analysis
+        HourOfDay = hourofday(ParsedTimestamp),
+        DayOfWeek = dayofweek(ParsedTimestamp),
+        IsAfterHours = hourofday(ParsedTimestamp) < 6 or hourofday(ParsedTimestamp) > 20,
+        IsWeekend = dayofweek(ParsedTimestamp) == 0 or dayofweek(ParsedTimestamp) == 6,
+        
+        // Enhanced risk scoring with additional context
+        EnhancedRiskScore = RiskScore + 
+            case(IsPrivilegedUser and SecurityEventType == "AuthenticationFailure", 10, 0) +
+            case(IsAfterHours and SecurityEventType in ("AuthenticationSuccess", "NetworkConnection"), 5, 0) +
+            case(IsWeekend and SecurityEventType == "ProcessStart" and IsPrivilegedUser, 8, 0) +
+            case(isnotempty(ThreatIndicators), 15, 0) +
+            case(HTTPStatusCode >= 400 and HTTPStatusCode < 500, 3, 0) +
+            case(HTTPStatusCode >= 500, 5, 0),
+        
+        // Message normalization and cleanup
+        NormalizedMessage = replace_regex(SyslogMessage, @"\s+", " "),
+        MessageLength = strlen(SyslogMessage),
+        
+        // Create a unique event hash for deduplication
+        EventHash = hash_sha256(strcat(Computer, ProcessName, tostring(ProcessID), SyslogMessage, tostring(ParsedTimestamp)))
+    | project 
+        // Core fields
+        TimeGenerated,
+        ParsedTimestamp,
+        Computer,
+        HostIP,
+        
+        // Service and process information
+        ServiceName,
+        ProcessName, 
+        ProcessID,
+        
+        // Normalized categorization
+        NormalizedFacility,
+        NormalizedSeverity,
+        SecurityEventType,
+        
+        // Network information
+        SourceIP,
+        DestinationIP,
+        SourcePort,
+        DestinationPort,
+        Protocol,
+        Action,
+        SourceCountry,
+        
+        // User and session information
+        UserName,
+        SessionID,
+        ConnectionID,
+        IsPrivilegedUser,
+        
+        // HTTP specific (when applicable)
+        HTTPMethod,
+        HTTPStatusCode,
+        HTTPUserAgent,
+        HTTPReferer,
+        RequestedURL,
+        Domain,
+        
+        // System information
+        Command,
+        Arguments,
+        FilePath,
+        
+        // Risk assessment
+        RiskScore,
+        EnhancedRiskScore,
+        ThreatIndicators,
+        
+        // Contextual flags
+        IsInternalIP,
+        IsHighRiskPort,
+        IsAfterHours,
+        IsWeekend,
+        HourOfDay,
+        DayOfWeek,
+        
+        // Data transfer
+        BytesTransferred,
+        
+        // Message information
+        SyslogMessage,
+        NormalizedMessage,
+        MessageLength,
+        EventHash
+};
+
+// Usage examples:
+// 1. Parse all syslog data:
+// Syslog | invoke CustomSyslogParser()
+
+// 2. Parse and filter high-risk events:
+// Syslog 
+// | invoke CustomSyslogParser()
+// | where EnhancedRiskScore >= 15
+
+// 3. Parse and analyze authentication events:
+// Syslog
+// | invoke CustomSyslogParser() 
+// | where SecurityEventType in ("AuthenticationFailure", "AuthenticationSuccess")
+// | summarize SuccessCount = countif(SecurityEventType == "AuthenticationSuccess"),
+//             FailureCount = countif(SecurityEventType == "AuthenticationFailure")
+//             by UserName, SourceIP
+
+// 4. Parse and create network connection baseline:
+// Syslog
+// | invoke CustomSyslogParser()
+// | where SecurityEventType == "NetworkConnection"
+// | summarize count() by SourceIP, DestinationIP, DestinationPort, Protocol
+// | where count_ > 100  // Frequent connections only

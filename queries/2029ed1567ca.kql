@@ -1,0 +1,15 @@
+// Source: https://github.com/eshlomo1/Microsoft-Sentinel-SecOps
+// Collected: 2026-05-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let GetFailedAuth = (startTime: datetime, endTime:datetime, v_Vm:string, v_SourceIp:string){
+SecurityEvent
+| where TimeGenerated between (startTime .. endTime)
+| where EventID == "4625"
+| where AccountType == "User"
+| extend _Account = trim(@'[^\w]+', Account)
+| where Computer contains v_Vm
+| where v_SourceIp contains IpAddress
+| count
+};
+GetFailedAuth(datetime('2021-01-13T17:04:22')
