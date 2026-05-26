@@ -1,0 +1,33 @@
+// Source: https://github.com/BlueMockingJay/KQL
+// Collected: 2026-05-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe = ago(7d);
+//Identifies malicious Kerberos TGT requests, based on EID4768, properties PreAuthType and TicketOptions
+let maliciousTGT = SecurityEvent
+| where TimeGenerated >= timeframe
+| where EventID == 4768
+| parse EventData with * 'TargetUserName">' TargetUserName "<" *
+'TargetDomainName">' TargetDomainName "<" *
+'TargetSid">' TargetSid "<" *
+'ServiceName">' ServiceName "<" *
+'ServiceSid">' ServiceSid "<" *
+'TicketOptions">' TicketOptions "<" *
+'Status">' Status "<" *
+'TicketEncryptionType">' TicketEncryptionType "<" *
+'PreAuthType">' PreAuthType "<" *
+| parse EventData with * 'IpAddress">::ffff:'SourceIpAddress"<" *
+| parse EventData with * 'CertIssuerName">' Certissuer "<" *
+| where PreAuthType == 16 and TicketOptions startswith "0x4080"
+| summarize by TicketRequestTime = bin(TimeGenerated,1m), TargetUserName =strcat_delim("@",TargetUserName,TargetDomainName), SourceIpAddress, Certissuer, TicketOptions, PreAuthType;
+//Get kerberos connections, based on destination port 88
+//Goal: Identify host computer & initiating process
+let KerberosConnections = VMConnection
+| where TimeGenerated > timeframe
+| where DestinationPort == 88 and Direction == "outbound"
+| summarize InitiatingProcessList = make_set(ProcessName) by ConnectionTime = bin(TimeGenerated,1m), SourceIp, Computer
+| project ConnectionTime, InitiatingProcessList, SourceIp, Computer;
+//join TGT requests and network connections, do left outer to make sure not to miss events if there are no network connections within the timeframe
+maliciousTGT
+| join kind=leftouter KerberosConnections on $left.SourceIpAddress == $right.SourceIp, $left.TicketRequestTime == $right.ConnectionTime
+| project TicketRequestTime, SourceHost=Computer, InitiatingProcessList, TargetUserName, TicketOptions, PreAuthType

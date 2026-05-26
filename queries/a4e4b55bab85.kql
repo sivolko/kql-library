@@ -1,0 +1,22 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-05-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago (1d)
+| join kind=inner DeviceInfo on DeviceName
+| where ActionType == "UserAccountCreated"
+| where AccountName !contains "defaultuser1"
+| extend TrimmedDeviceName = split(DeviceName, ".")[0]
+| extend TrimmedAccountCreatedBy = split(InitiatingProcessAccountName, "$")[0]
+| extend AccountCreatedByCustom = iif(TrimmedAccountCreatedBy contains TrimmedDeviceName,
+                                    strcat("(Local System) - ", InitiatingProcessAccountName),
+                                    InitiatingProcessAccountName)
+| summarize arg_max(Timestamp, *) by AccountName
+| project Timestamp,
+    ['Device Name'] = TrimmedDeviceName,
+    ['Account Domain'] = AccountDomain,
+    ['Action Performed'] = ActionType,
+    ['Account Created'] = AccountName,
+    ['Account Created By'] = AccountCreatedByCustom
+| sort by Timestamp desc

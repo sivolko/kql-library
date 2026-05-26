@@ -1,0 +1,12 @@
+// Source: https://github.com/0xAnalyst/DefenderATPQueries
+// Collected: 2026-05-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+Tags:
+
+Query:
+  DeviceEvents
+    | where ActionType contains "pipe"
+    | extend parsed = parse_json(AdditionalFields)
+    | where parsed.PipeName contains "psexesvc"
+References:

@@ -1,0 +1,12 @@
+// Source: https://github.com/tgs3c/Incident-Response-Hunting
+// Collected: 2026-05-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ComprimsedUsers = dynamic(['user1', 'user2']);
+let SearchWindow = 48h; //Customizable h = hours, d = days
+IdentityLogonEvents
+| where Timestamp > (now() - SearchWindow)
+| where AccountName has_any (ComprimsedUsers)
+| where isnotempty(TargetDeviceName)
+| where ActionType == "LogonSuccess"
+| project Timestamp, AccountName, Protocol, TargetDeviceName

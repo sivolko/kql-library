@@ -1,0 +1,12 @@
+// Source: https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries
+// Collected: 2026-05-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 7d;
+let TrustedProcs = dynamic([@"lsass.exe", @"services.exe", @"svchost.exe", @"winlogon.exe", @"wininit.exe", @"csrss.exe"]);
+DeviceEvents
+| where Timestamp > ago(lookback)
+| where ActionType == @"TokenImpersonation"
+| where InitiatingProcessFileName !in~ (TrustedProcs)
+| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, AdditionalFields
+| order by Timestamp desc

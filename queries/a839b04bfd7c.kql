@@ -1,0 +1,9 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| where TimeGenerated >= ago(24h)
+| where AdditionalFields.["ARG.CLOUD_SERVICE"] == "Medeina Portal"
+| extend User = AdditionalFields.["ACTOR.ALIAS"]
+| project AccountDomain, User, ActionType, AccountUpn, IPAddress, Location, ISP, OSPlatform, DeviceType

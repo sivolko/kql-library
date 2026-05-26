@@ -1,0 +1,46 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookBack = 15m;
+
+// Known DCs (lightweight — 3-day TGT window)
+let KnownDCNames = SecurityEvent
+    | where TimeGenerated > ago(3d)
+    | where EventID == 4768
+    | summarize by DC = toupper(Computer);
+
+SecurityEvent
+| where TimeGenerated > ago(LookBack)
+| where EventID == 4657                    // Registry Value Modified
+| where ObjectName has @"WDigest"
+    and ObjectValueName =~ "UseLogonCredential"
+// New value = 1 means WDigest enabled
+| where NewValue == "1" or NewValue == "0x00000001"
+| extend
+    ActorAccount  = strcat(SubjectDomainName, "\\", SubjectUserName),
+    RegPath       = ObjectName,
+    PreviousValue = OldValue,
+    NewRegValue   = NewValue,
+    IsOnDC        = (toupper(Computer) in~ (KnownDCNames))
+| extend
+    Severity = case(IsOnDC, "Critical", "High"),
+    WhySuspicious = strcat(
+        "WDigest_Enabled_UseLogonCredential=1; ",
+        iff(IsOnDC, "On_DC_Critical_Impact; ", "Workstation_or_Server; "),
+        "Actor: ", SubjectUserName, "; ",
+        "RegPath: ", RegPath
+    )
+| project
+    TimeGenerated,
+    Severity,
+    WhySuspicious,
+    ActorAccount,
+    Computer,
+    RegPath,
+    PreviousValue,
+    NewRegValue,
+    IsOnDC,
+    SubjectUserName,
+    SubjectDomainName
+| order by TimeGenerated desc

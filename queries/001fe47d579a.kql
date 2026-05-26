@@ -1,0 +1,139 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-05-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+Event
+| where TimeGenerated > ago(7d)
+| where Source == "Service Control Manager"
+| where EventID == 7045
+| parse EventData with * '<Data Name="ServiceName">' ServiceName '</Data>' *
+| parse EventData with * '<Data Name="ImagePath">' ImagePath '</Data>' *
+| parse EventData with * '<Data Name="ServiceType">' ServiceType '</Data>' *
+| where ServiceType has "kernel mode driver"
+| where ImagePath has_any (
+    "RTCore64",
+    "gdrv",
+    "DBUtil_2_3",
+    "WinRing0x64",
+    "HpPortIox64",
+    "MsIo64",
+    "AsIO64",
+    "InpoutX64",
+    "Speedfan",
+    "LenovoHECI",
+    "dbutil_2_5",
+    "ntiolib",
+    "phymem64",
+    "cpuz",
+    "amifldrv64",
+    "aswArPot",
+    "TmComm"
+)
+| project TimeGenerated, Computer, ServiceName, ImagePath, ServiceType
+| sort by TimeGenerated desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 2: MDE driver load events for LOLDriver filenames
+// ─────────────────────────────────────────────────────────────────────────────
+DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType == "DriverLoad"
+| extend DriverPath = tostring(AdditionalFields.DriverPath)
+| where DriverPath has_any (
+    "RTCore64.sys",
+    "gdrv.sys",
+    "DBUtil_2_3.sys",
+    "WinRing0x64.sys",
+    "HpPortIox64.sys",
+    "MsIo64.sys",
+    "AsIO64.sys",
+    "InpoutX64.sys",
+    "Speedfan.sys",
+    "LenovoHECI.sys",
+    "ntiolib.sys",
+    "phymem64.sys"
+)
+| project Timestamp, DeviceName, DriverPath, InitiatingProcessAccountName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by Timestamp desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 3: HVCI-bypass capable driver loads (elevated priority)
+// These drivers bypass Hypervisor-Protected Code Integrity — highest risk tier.
+// ─────────────────────────────────────────────────────────────────────────────
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType == "DriverLoad"
+| extend DriverPath = tostring(AdditionalFields.DriverPath)
+| where DriverPath has_any (
+    "MsIo64.sys",
+    "AsIO64.sys",
+    "InpoutX64.sys",
+    "LenovoHECI.sys",
+    "Speedfan.sys",
+    "ntiolib.sys",
+    "phymem64.sys",
+    "amifldrv64.sys"
+)
+| extend RiskLevel = "CRITICAL — HVCI-bypass capable driver"
+| project Timestamp, DeviceName, RiskLevel, DriverPath,
+          InitiatingProcessAccountName, InitiatingProcessCommandLine
+| sort by Timestamp desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 4: Driver load followed by EDR process termination within 5 minutes
+// Hunting for the "load driver → kill EDR" kill-chain sequence
+// ─────────────────────────────────────────────────────────────────────────────
+let DriverLoads = DeviceEvents
+    | where Timestamp > ago(7d)
+    | where ActionType == "DriverLoad"
+    | extend DriverPath = tostring(AdditionalFields.DriverPath)
+    | where DriverPath has_any (
+        "RTCore64", "gdrv", "DBUtil_2_3", "WinRing0x64",
+        "MsIo64", "AsIO64", "InpoutX64", "LenovoHECI"
+    )
+    | project DriverLoadTime=Timestamp, DeviceName, DriverPath;
+let ProcessTerminations = DeviceProcessEvents
+    | where Timestamp > ago(7d)
+    | where ActionType == "ProcessTerminated"
+    | where FileName has_any (
+        "MsMpEng.exe",    // Windows Defender
+        "csagent.exe",    // CrowdStrike Falcon
+        "SentinelAgent.exe",
+        "SentinelOne.exe",
+        "cb.exe",         // Carbon Black
+        "CylanceSvc.exe",
+        "mfefire.exe",    // McAfee
+        "bdagent.exe",    // Bitdefender
+        "avgnt.exe",
+        "ekrn.exe"        // ESET
+    )
+    | project TermTime=Timestamp, DeviceName, TerminatedProcess=FileName,
+              TerminatingProcess=InitiatingProcessFileName;
+DriverLoads
+| join kind=inner ProcessTerminations on DeviceName
+| where TermTime between (DriverLoadTime .. (DriverLoadTime + 5m))
+| project DriverLoadTime, TermTime, DeviceName, DriverPath,
+          TerminatedProcess, TerminatingProcess
+| extend KillChainSequence = "LOLDriver load → EDR process kill"
+| sort by DriverLoadTime desc
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Query 5: Drivers loaded from suspicious paths (temp, user-writable dirs)
+// Legitimate drivers load from System32\drivers; this flags anomalous locations
+// ─────────────────────────────────────────────────────────────────────────────
+DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType == "DriverLoad"
+| extend DriverPath = tostring(AdditionalFields.DriverPath)
+| where DriverPath !startswith @"C:\Windows\System32\drivers\"
+      and DriverPath !startswith @"C:\Windows\SysWOW64\drivers\"
+      and DriverPath !startswith @"C:\Program Files\"
+      and DriverPath !startswith @"C:\Program Files (x86)\"
+| project Timestamp, DeviceName, DriverPath,
+          InitiatingProcessAccountName, InitiatingProcessCommandLine
+| sort by Timestamp desc
