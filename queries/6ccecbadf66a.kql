@@ -1,0 +1,11 @@
+// Source: https://github.com/hugheylewis/Sentinel-Health-Checks
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+union withsource=CommonSecurityLog *
+| where DeviceVendor == 'Palo Alto Networks'
+| where TimeGenerated > ago(0.12h)
+| project TimeGenerated, DeviceVendor
+// Below, change timezone regions if applicable
+| summarize last_log = datetime_diff("second", datetime_utc_to_local(now(), 'US/Eastern'), max(datetime_utc_to_local(TimeGenerated, 'US/Eastern'))), last_event_received = max(datetime_utc_to_local(TimeGenerated, 'US/Eastern')) by DeviceVendor
+| project ['Latest Record Created'] = last_log, ['Time'] = last_event_received, DeviceVendor

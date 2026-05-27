@@ -1,0 +1,30 @@
+// Source: https://github.com/Lokis-Lab/KQL
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType startswith "Asr"
+| extend Parsed = parse_json(AdditionalFields)
+| where Parsed.IsAudit == "false"
+| extend Category = case(
+        ActionType in ("AsrExecutableEmailContentBlocked", "AsrOfficeCommAppChildProcessBlocked"), "Email",
+        ActionType in ("AsrObfuscatedScriptBlocked", "AsrScriptExecutableDownloadBlocked"), "Script",
+        ActionType in ("AsrPersistenceThroughWmiBlocked", "AsrPsexecWmiChildProcessBlocked"), "WMI",
+        ActionType in ("AsrOfficeChildProcessBlocked", "AsrOfficeMacroWin32ApiCallsBlocked",
+                       "AsrExecutableOfficeContentBlocked", "AsrOfficeProcessInjectionBlocked"), "OfficeApp",
+        ActionType == "AsrAdobeReaderChildProcessBlocked", "ThirdPartyApp",
+        ActionType == "AsrLsassCredentialTheftBlocked", "WindowsCredentials",
+        ActionType in ("AsrUntrustedExecutableBlocked", "AsrUntrustedUsbProcessBlocked",
+                       "AsrRansomwareBlocked", "AsrVulnerableSignedDriverBlocked"), "PolymorphicThreats",
+        "Other"
+    ),
+    RuleId      = tostring(Parsed.RuleId),
+    RuleName    = tostring(Parsed.RuleName),
+    BlockReason = tostring(Parsed.BlockReason),
+    PolicyId    = tostring(Parsed.PolicyId),
+    IsAudit     = tostring(Parsed.IsAudit)
+| project Timestamp, Category, ActionType, DeviceName, ReportId,
+          InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine,
+          FileName, FolderPath, SHA1, RuleId, RuleName, BlockReason, PolicyId, IsAudit
+| order by Timestamp desc

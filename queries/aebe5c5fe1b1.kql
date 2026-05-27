@@ -1,0 +1,8 @@
+// Source: https://github.com/hchiphong/KQL
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DiagnosticSettingOperation=dynamic([@"MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/WRITE",@"MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/DELETE"]);
+AzureActivity
+| where OperationNameValue in (DiagnosticSettingOperation)
+| project EventSubmissionTimestamp, Caller, CallerIpAddress, OperationNameValue,CorrelationId, RequestBody=parse_json(Properties).requestbody, RespondBody=parse_json(Properties).responseBody,  Level,ActivityStatusValue,ResourceProviderValue, Authorization,Claims,Properties, _ResourceId

@@ -1,0 +1,9 @@
+// Source: https://github.com/chadmcox/Sentinel-and-Defender-Queries
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp >= ago(7d)
+| where ActionType == "ScheduledTaskCreated"
+| project Timestamp, DeviceName, InitiatingProcessFileName, AdditionalFields
+| order by Timestamp desc

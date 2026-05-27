@@ -1,0 +1,14 @@
+// Source: https://github.com/kevinflint-cs2/sentinel-threat-hunting
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+[YourTableName]
+| where Timestamp between (datetime({{ start_time }}) .. datetime({{ end_time }}))
+| where DeviceName has "{{ devicename }}" or AccountName has "{{ username }}"
+// Add your detection logic here
+| project 
+    Timestamp,
+    DeviceName,
+    AccountName,
+    // Add relevant fields
+| order by Timestamp desc

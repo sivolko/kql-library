@@ -1,0 +1,8 @@
+// Source: https://github.com/cloudcwfranck/AzureSentinel
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated >= ago(24h)
+| where EventID == 4625
+| project TimeGenerated, AccountName, IPAddress, Status, FailureReason

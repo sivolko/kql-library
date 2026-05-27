@@ -1,0 +1,11 @@
+// Source: https://github.com/AnthonyByansi/AZ-104_Microsoft-Azure-Administrator-Associate
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+let roleChanges = azureactivity
+    | where Resource == "<resource_id>"  // Replace <resource_id> with your actual resource ID
+    | where OperationName == "Modify Role"  // Filter by role change operations
+    | project TimeGenerated, UserName, RoleName, PreviousRole, Details;
+roleChanges
+| order by TimeGenerated desc
+| limit 50  // Display the latest 50 role change logs

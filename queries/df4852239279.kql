@@ -1,0 +1,14 @@
+// Source: https://github.com/hVie1314/azure-sentinel-honeypot-soc-lab
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Win = SecurityEvent
+| where EventID == 4625
+| summarize Count=count() | extend Service="RDP";
+
+let Lin = Syslog
+| where SyslogMessage contains "Failed password"
+| summarize Count=count() | extend Service="SSH";
+
+union Win, Lin
+| render piechart

@@ -1,0 +1,20 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+let PsEvents = 
+    DeviceEvents
+    | extend DevTime = bin(Timestamp, 1s)
+    | where ActionType == "PowerShellCommand"
+    | where InitiatingProcessParentFileName == @"explorer.exe"
+    | where InitiatingProcessFileName == @"powershell.exe"
+    | where InitiatingProcessCommandLine matches regex @"(?i)\bhttp(s)?://"
+    | where InitiatingProcessCommandLine has_any (@"iex", @"iwr", @"-command", @"hidden", @"robot")
+    | project DevTime, DeviceId, PSInitProcParent = InitiatingProcessParentFileName, PSInitProc = InitiatingProcessFileName, PSCLI = InitiatingProcessCommandLine, PSAccountName = InitiatingProcessAccountName;
+// 
+DeviceEvents
+| extend DevTime2 = bin(Timestamp, 1s)
+| where ActionType == "GetClipboardData"
+| join kind=inner PsEvents on DeviceId
+| where abs(datetime_diff('second', DevTime, DevTime2)) <= 5
+| project DevTime, DeviceName, PSAccountName, PSInitProc, PSInitProcParent, PSCLI
