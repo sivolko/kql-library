@@ -1,0 +1,59 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookBack = 15m;
+
+// Replication GUIDs that grant DCSync capability
+let ReplicateAllGUID = "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2";
+let ReplicateGUID    = "1131f6ac-9c07-11d1-f79f-00c04fc2dcd2";
+
+// Exchange-related group members (recent adds)
+let ExchangeGroupMembers = SecurityEvent
+    | where TimeGenerated > ago(30d)
+    | where EventID in (4728, 4732, 4756)
+    | where TargetUserName has_any (
+        "Exchange Windows Permissions",
+        "Exchange Trusted Subsystem",
+        "Organization Management",
+        "Exchange Servers"
+    )
+    | summarize by ExchangeMember = tolower(MemberName),
+                   ExchangeGroup  = TargetUserName;
+
+// DCSync rights granted on domain root
+SecurityEvent
+| where TimeGenerated > ago(LookBack)
+| where EventID == 5136
+| where ObjectClass =~ "domainDNS"
+| where OperationType == "%%14674"             // Value written (ACE added)
+| where AttributeValue has_any(ReplicateAllGUID, ReplicateGUID)
+| extend
+    ActorNorm  = tolower(SubjectUserName),
+    ActorAcct  = strcat(SubjectDomainName, "\\", SubjectUserName)
+// Correlate: actor is an Exchange group member
+| join kind=inner (ExchangeGroupMembers) on $left.ActorNorm == $right.ExchangeMember
+| extend
+    Severity = "Critical",
+    WhySuspicious = strcat(
+        "Exchange_WriteDACL_DCSync_PrivExchange_Chain; ",
+        "Exchange_Group: ", ExchangeGroup, "; ",
+        "DCSync_Right_Granted_By: ", ActorAcct, "; ",
+        "Target_Object: ", ObjectDN, "; ",
+        "Right: ", case(
+            AttributeValue has ReplicateAllGUID,
+            "DS-Replication-Get-Changes-All (Full DCSync)",
+            "DS-Replication-Get-Changes"
+        )
+    )
+| project
+    TimeGenerated,
+    Severity,
+    WhySuspicious,
+    ActorAcct,
+    ExchangeGroup,
+    ObjectDN,
+    Computer,
+    SubjectUserName,
+    SubjectDomainName
+| order by TimeGenerated desc

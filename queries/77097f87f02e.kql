@@ -1,0 +1,135 @@
+// Source: https://github.com/kevinflint-cs2/sentinel-threat-hunting
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let knownAdminSources = dynamic(["10.0.1.10", "10.0.1.11"]); // Update with your admin IPs
+SecurityEvent
+| where TimeGenerated between (datetime({{ start_time }}) .. datetime({{ end_time }}))
+| where EventID == 4624 // Successful logon
+| where LogonType == 10 // RemoteInteractive (RDP)
+| where IpAddress !in (knownAdminSources)
+| where Computer has "{{ devicename }}" or Account has "{{ username }}"
+| extend Hour = hourofday(TimeGenerated)
+| where Hour < 6 or Hour > 22 // After hours
+| summarize 
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    ConnectionCount = count(),
+    UniqueTargets = dcount(Computer),
+    Targets = make_set(Computer, 10)
+    by Account, IpAddress, LogonType
+| where ConnectionCount > 2
+| project-reorder FirstSeen, LastSeen, Account, IpAddress, ConnectionCount, UniqueTargets, Targets
+| order by ConnectionCount desc
+
+// ----------------------------------------------------------------------------
+// 2. SMB Lateral Movement via Admin Shares
+// ----------------------------------------------------------------------------
+// Detects connections to admin shares (C$, ADMIN$) potentially for lateral movement
+SecurityEvent
+| where TimeGenerated between (datetime({{ start_time }}) .. datetime({{ end_time }}))
+| where EventID == 5140 // Network share object accessed
+| where ShareName in ("\\\\*\\C$", "\\\\*\\ADMIN$", "\\\\*\\IPC$")
+| where AccessMask has "0x2" // Write access
+| where Computer has "{{ devicename }}" or SubjectUserName has "{{ username }}"
+| summarize 
+    FirstAccess = min(TimeGenerated),
+    LastAccess = max(TimeGenerated),
+    AccessCount = count(),
+    UniqueShares = dcount(ShareName),
+    SharesAccessed = make_set(ShareName, 10),
+    TargetHosts = make_set(Computer, 10)
+    by SubjectUserName, SubjectDomainName, IpAddress
+| where AccessCount > 5
+| extend Severity = case(
+    AccessCount > 20, "High",
+    AccessCount > 10, "Medium",
+    "Low"
+)
+| project-reorder FirstAccess, LastAccess, SubjectUserName, SubjectDomainName, IpAddress, AccessCount, Severity
+
+// ----------------------------------------------------------------------------
+// 3. Pass-the-Hash Detection - Multiple Logons with Same NTLM Hash
+// ----------------------------------------------------------------------------
+// Detects potential pass-the-hash attacks by identifying multiple logons from same hash
+SecurityEvent
+| where TimeGenerated between (datetime({{ start_time }}) .. datetime({{ end_time }}))
+| where EventID == 4624
+| where LogonType in (3, 9) // Network or NewCredentials
+| where AuthenticationPackageName == "NTLM"
+| where Computer has "{{ devicename }}" or Account has "{{ username }}"
+| extend NTLMHash = extract(@"NTLM only:\s*([A-Fa-f0-9]+)", 1, tostring(LogonProcessName))
+| where isnotempty(NTLMHash)
+| summarize 
+    UniqueAccounts = dcount(Account),
+    Accounts = make_set(Account, 10),
+    UniqueComputers = dcount(Computer),
+    Computers = make_set(Computer, 10),
+    LogonCount = count()
+    by NTLMHash, IpAddress
+| where UniqueComputers > 3 or UniqueAccounts > 2
+| order by UniqueComputers desc
+
+// ----------------------------------------------------------------------------
+// 4. PSExec or Remote Service Creation for Lateral Movement
+// ----------------------------------------------------------------------------
+// Detects PSExec-style lateral movement via service creation
+SecurityEvent
+| where TimeGenerated between (datetime({{ start_time }}) .. datetime({{ end_time }}))
+| where EventID in (4697, 7045) // Service installed / Service was installed in the system
+| where ServiceName has_any ("PSEXESVC", "PAExec", "RemCom")
+    or ServiceFileName has_any ("psexesvc.exe", "paexec.exe", "remcom.exe", "\\\\127.0.0.1\\")
+| where Computer has "{{ devicename }}" or Account has "{{ username }}"
+| summarize 
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    ServiceCreations = count(),
+    AffectedHosts = make_set(Computer, 20),
+    ServiceNames = make_set(ServiceName, 10)
+    by Account, SubjectDomainName
+| project-reorder FirstSeen, LastSeen, Account, ServiceCreations, AffectedHosts
+
+// ----------------------------------------------------------------------------
+// 5. WMI Remote Execution for Lateral Movement
+// ----------------------------------------------------------------------------
+// Detects WMI being used to execute commands on remote systems
+SecurityEvent
+| where TimeGenerated between (datetime({{ start_time }}) .. datetime({{ end_time }}))
+| where EventID == 4688 // Process creation
+| where Process has_any ("wmic.exe", "powershell.exe")
+| where CommandLine has_any ("node:", "/node:", "process call create")
+| where Computer has "{{ devicename }}" or Account has "{{ username }}"
+| extend RemoteHost = extract(@"(?:node:|/node:)(\S+)", 1, CommandLine)
+| where isnotempty(RemoteHost)
+| summarize 
+    FirstExecution = min(TimeGenerated),
+    LastExecution = max(TimeGenerated),
+    ExecutionCount = count(),
+    TargetHosts = make_set(RemoteHost, 20),
+    Commands = make_set(CommandLine, 5)
+    by Account, Computer
+| where ExecutionCount > 2
+| order by ExecutionCount desc
+
+// ----------------------------------------------------------------------------
+// 6. Multiple Failed Logon Attempts Followed by Success (Brute Force)
+// ----------------------------------------------------------------------------
+// Detects potential credential brute forcing followed by successful lateral movement
+let FailedLogons = SecurityEvent
+| where TimeGenerated between (datetime({{ start_time }}) .. datetime({{ end_time }}))
+| where EventID == 4625 // Failed logon
+| where LogonType in (3, 10) // Network or RDP
+| where Computer has "{{ devicename }}" or Account has "{{ username }}"
+| summarize FailedCount = count() by Account, IpAddress, Computer, bin(TimeGenerated, 5m);
+let SuccessfulLogons = SecurityEvent
+| where TimeGenerated between (datetime({{ start_time }}) .. datetime({{ end_time }}))
+| where EventID == 4624 // Successful logon
+| where LogonType in (3, 10)
+| where Computer has "{{ devicename }}" or Account has "{{ username }}"
+| summarize SuccessTime = max(TimeGenerated) by Account, IpAddress, Computer, bin(TimeGenerated, 5m);
+FailedLogons
+| join kind=inner (SuccessfulLogons) on Account, IpAddress, Computer
+| where SuccessTime > TimeGenerated
+| where FailedCount > 5
+| project Account, IpAddress, Computer, FailedAttempts = FailedCount, FailedTime = TimeGenerated, SuccessTime
+| order by FailedAttempts desc

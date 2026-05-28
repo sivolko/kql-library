@@ -1,0 +1,21 @@
+// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let nowTime = now();
+let threshold = 12h;
+union 
+    (AADManagedIdentitySignInLogs | summarize LastIngest = max(TimeGenerated) | extend TableName = "AADManagedIdentitySignInLogs"),
+    (AADNonInteractiveUserSignInLogs | summarize LastIngest = max(TimeGenerated) | extend TableName = "AADNonInteractiveUserSignInLogs"),
+    (AADProvisioningLogs | summarize LastIngest = max(TimeGenerated) | extend TableName = "AADProvisioningLogs"),
+    (AADServicePrincipalSignInLogs | summarize LastIngest = max(TimeGenerated) | extend TableName = "AADServicePrincipalSignInLogs"),
+    (AuditLogs | summarize LastIngest = max(TimeGenerated) | extend TableName = "AuditLogs"),
+    (AzureActivity | summarize LastIngest = max(TimeGenerated) | extend TableName = "AzureActivity"),
+    (DeviceEvents | summarize LastIngest = max(TimeGenerated) | extend TableName = "DeviceEvents"),
+    (IntuneDevices | summarize LastIngest = max(TimeGenerated) | extend TableName = "IntuneDevices"),
+    (OfficeActivity | summarize LastIngest = max(TimeGenerated) | extend TableName = "OfficeActivity"),
+    (SecurityAlert | summarize LastIngest = max(TimeGenerated) | extend TableName = "SecurityAlert"),
+    (SecurityEvent | summarize LastIngest = max(TimeGenerated) | extend TableName = "SecurityEvent"),
+    (SigninLogs | summarize LastIngest = max(TimeGenerated) | extend TableName = "SigninLogs")
+| extend HoursSinceLastIngest = datetime_diff("hour", nowTime, LastIngest)
+| where HoursSinceLastIngest > 12

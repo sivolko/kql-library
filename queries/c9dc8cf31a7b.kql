@@ -1,0 +1,15 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where OfficeWorkload == "OneDrive"
+| where Operation in ("SecureLinkCreated", "AddedToSecureLink")
+| where TargetUserOrGroupType == "Guest" or TargetUserOrGroupName contains "#EXT#"
+| project
+    TimeGenerated,
+    ['User Who Shared']=UserId,
+    ['Guest Granted Access']=TargetUserOrGroupName,
+    ['File Shared']=OfficeObjectId
+| sort by TimeGenerated desc 

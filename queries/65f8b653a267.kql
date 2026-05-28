@@ -1,0 +1,13 @@
+// Source: https://github.com/Coalfire-CF/terraform-azurerm-sentinel
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let rate=5.22; //<-- set for client's LA ingest cost, sentinel ingest cost, or both (effective per GB price listed here:https://azure.microsoft.com/en-us/pricing/details/microsoft-sentinel/) )
+Heartbeat
+| where OSName contains "Windows 10" or OSName contains "Windows 11"
+| where TimeGenerated >ago(30d)
+| summarize arg_max(TimeGenerated, OSName) by Computer
+| join (SecurityEvent
+| where TimeGenerated >ago(30d)) on Computer
+| summarize GB=sum(_BilledSize)/1000/1000/1000
+| extend cost = GB*rate

@@ -1,0 +1,7 @@
+// Source: https://github.com/meyerchristiandringend-cpu/sentinel-governance
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+﻿// Normalized network VPN authentication events
+CommonSecurityLog
+| project TimeGenerated, SrcIP=SourceIP, Result=DeviceAction

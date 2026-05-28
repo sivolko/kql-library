@@ -1,0 +1,17 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timerange=90d;
+DeviceEvents
+| where TimeGenerated > ago (timerange) and TimeGenerated < ago(7d)
+| where ActionType startswith "Asr"
+| distinct ActionType
+| join kind=rightanti
+    (
+    DeviceEvents
+    | where TimeGenerated > ago(7d)
+    | where ActionType startswith "Asr"
+    )
+    on ActionType
+| summarize ['Device List']=make_set(DeviceName) by ActionType

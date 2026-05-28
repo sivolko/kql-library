@@ -1,0 +1,63 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let memberadded=
+    OfficeActivity
+    | where Operation == "MemberAdded"
+    | where CommunicationType == "Team"
+    | mv-expand Members
+    | extend User = tostring(Members.UPN)
+    | extend x = tostring(Members.Role)
+    | extend Activity = case(x == "1", strcat("User added as member"),
+        x == "2", strcat("User added as owner"), 
+        x == "3", strcat("User added as guest"),
+        "unknown")
+    | extend Action = "Add"
+    | project
+        TimeGenerated,
+        Action,
+        Activity,
+        Actor=UserId,
+        User,
+        TeamName,
+        TeamGuid,
+        ActorType=UserType;
+let memberremoved=
+    OfficeActivity
+    | where Operation == "MemberRemoved"
+    | where CommunicationType == "Team"
+    | mv-expand Members
+    | extend User = tostring(Members.UPN)
+    | extend Activity = "User removed from Team"
+    | extend ActorType = "User"
+    | extend Action = "Remove"
+    | project
+        TimeGenerated,
+        Action,
+        Activity,
+        Actor=UserId,
+        User,
+        TeamName,
+        TeamGuid,
+        ActorType=UserType;
+let memberaccesschanged=
+    OfficeActivity
+    | where Operation == "MemberRoleChanged"
+    | mv-expand Members
+    | extend User = tostring(Members.UPN)
+    | extend x = tostring(Members.Role)
+    | extend Activity = case(x == "1", strcat("User changed to member"),
+        x == "2", strcat("User changed to owner"), "unknown")
+    | extend Action = "Change"
+    | project
+        TimeGenerated,
+        Action,
+        Activity,
+        Actor=UserId,
+        User,
+        TeamName,
+        TeamGuid,
+        ActorType=UserType;
+union memberadded, memberremoved, memberaccesschanged
+| project-reorder TimeGenerated, Action, Activity, User, Actor, ActorType, TeamName, TeamGuid

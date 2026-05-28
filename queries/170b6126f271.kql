@@ -1,0 +1,8 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue contains "purge"
+| where ActivityStatusValue == "Start"
+| project TimeGenerated, OperationNameValue, ActivityStatusValue, ResourceGroup, Caller, CallerIpAddress

@@ -1,0 +1,13 @@
+// Source: https://github.com/yili6ms/kusto_gen
+// Collected: 2026-05-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Failed =
+    SecurityEvent
+    | where EventID == 4625
+    | summarize Failures=count() by Account;
+let Success =
+    SecurityEvent
+    | where EventID == 4624;
+Failed
+| join Success on Account
