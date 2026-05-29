@@ -1,0 +1,252 @@
+// Source: https://github.com/mattiasborg82/Talks
+// Collected: 2026-05-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+union withsource=src DeviceProcessEvents, DeviceNetworkEvents
+| extend IPfromCommandLine = extract(@"\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.|$)){4}\b",0,ProcessCommandLine)
+| extend IsPrivateIP = ipv4_is_private(IPfromCommandLine)
+| where IsPrivateIP == 0
+| where not(SuspiciousIPv4 has_any ("127.0.0","0.0.0.0"))
+| extend IPGEO = geo_info_from_ip_address(SuspiciousIPv4)
+| extend Type = iff(src=="DeviceProcessEvents","ProcessCommandLine","InboundConnection")
+| extend Country = IPGEO.country,
+         State = IPGEO.state,
+         City = IPGEO.city
+| project src,TimeGenerated,DeviceName,SuspiciousIPv4,Type
+
+
+
+//ASR Overview
+//Mattias Borg
+let endpointInfo = materialize (DeviceInfo
+  | where OnboardingStatus == "Onboarded"
+  | where DeviceType in("Workstation","Server")
+  | where OSDistribution contains "Windows"
+  | summarize arg_max(Timestamp,*) by DeviceId, DeviceName
+  | project DeviceId,DeviceName,DeviceType,OSDistribution,MachineGroup);
+DeviceEvents
+| where ActionType startswith "ASR"
+| extend ASRAction = extract(@"(Blocked$|Audited$|WarnBypassed$)",1,ActionType)
+| extend ConfigurationId = case(ActionType in ("AsrVulnerableSignedDriverBlocked","AsrVulnerableSignedDriverAudited","AsrVulnerableSignedDriverWarnBypassed"),"scid-2515",
+ActionType in ("AsrAdobeReaderChildProcessBlocked","AsrAdobeReaderChildProcessAudited","AsrAdobeReaderChildProcessWarnBypassed"),"scid-2513",
+ActionType in ("AsrOfficeChildProcessBlocked","AsrOfficeChildProcessAudited","AsrOfficeChildProcessWarnBypassed"),"scid-2501",
+ActionType in ("AsrLsassCredentialTheftBlocked","AsrLsassCredentialTheftAudited","AsrLsassCredentialTheftWarnBypassed"),"scid-2509",
+ActionType in ("AsrExecutableEmailContentBlocked","AsrExecutableEmailContentAudited","AsrExecutableEmailContentWarnBypassed"),"scid-2500",
+ActionType in ("AsrUntrustedExecutableBlocked","AsrUntrustedExecutableAudited","AsrUntrustedExecutableWarnBypassed"),"scid-2507",
+ActionType in ("AsrObfuscatedScriptBlocked","AsrObfuscatedScriptAudited","AsrObfuscatedScriptWarnBypassed"),"scid-2505",
+ActionType in ("AsrScriptExecutableDownloadBlocked","AsrScriptExecutableDownloadAudited","AsrScriptExecutableDownloadWarnBypassed"),"scid-2504",
+ActionType in ("AsrExecutableOfficeContentBlocked","AsrExecutableOfficeContentAudited","AsrExecutableOfficeContentWarnBypassed"),"scid-2502",
+ActionType in ("AsrOfficeProcessInjectionBlocked","AsrOfficeProcessInjectionAudited","AsrOfficeProcessInjectionWarnBypassed"),"scid-2503",
+ActionType in ("AsrOfficeCommAppChildProcessBlocked","AsrOfficeCommAppChildProcessAudited","AsrOfficeCommAppChildProcessWarnBypassed"),"scid-2512",
+ActionType in ("AsrPersistenceThroughWmiBlocked","AsrPersistenceThroughWmiAudited","AsrPersistenceThroughWmiWarnBypassed"),"scid-2514",
+ActionType in ("AsrPsexecWmiChildProcessBlocked","AsrPsexecWmiChildProcessAudited","AsrPsexecWmiChildProcessWarnBypassed"),"scid-2510",
+ActionType in ("AsrSafeModeRebootBlocked","AsrSafeModeRebootAudited","AsrSafeModeRebootWarnBypassed"),"scid-2518",
+ActionType in ("AsrUntrustedUsbProcessBlocked","AsrUntrustedUsbProcessAudited","AsrUntrustedUsbProcessWarnBypassed"),"scid-2511",
+ActionType in ("AsrAbusedSystemToolBlocked","AsrAbusedSystemToolAudited","AsrAbusedSystemToolWarnBypassed"),"scid-2517",
+ActionType in ("AsrWebShellOnServerBlocked","AsrWebShellOnServerAudited","AsrWebShellWarnBypassed"),"scid-2516",
+ActionType in ("AsrOfficeMacroWin32ApiCallsBlocked","AsrOfficeMacroWin32ApiCallsAudited","AsrOfficeMacroWin32ApiCallsWarnBypassed"),"scid-2506",
+ActionType in ("AsrRansomwareBlocked","AsrRansomwareAudited  AsrRansomwareWarnBypassed"),"scid-2508","Undefined")
+| join kind = leftouter (
+  endpointInfo) on DeviceId
+  | project-away *1
+| join kind=leftouter( DeviceTvmSecureConfigurationAssessment
+| where ConfigurationSubcategory == "Attack Surface Reduction"
+| join kind=leftouter (DeviceTvmSecureConfigurationAssessmentKB | project ConfigurationName, ConfigurationId) on ConfigurationId
+| mv-expand Context
+| extend Context = tostring(Context[0])
+| project-rename CurrentSetting = Context
+| join kind=leftouter (endpointInfo) on DeviceId
+| project-away *1
+| summarize AuditConfig =dcountif(DeviceName,CurrentSetting=="Audit"),
+  BlockConfig =dcountif(DeviceName,CurrentSetting=="Block"),
+  OffConfig =dcountif(DeviceName,CurrentSetting=="Off"),
+  WarnConfig =dcountif(DeviceName,CurrentSetting=="Warn"),
+  UniqueDevicesConfigPerRule =dcount(DeviceName),
+  CompliantDevicesConfig=dcountif(DeviceName,IsCompliant==1),
+  NoneCompliantDevicesConfig=dcountif(DeviceName,IsCompliant==0),
+  ServersAuditConfig = dcountif(DeviceName,DeviceType == "Server" and CurrentSetting=="Audit"),
+  ServersBlockConfig = dcountif(DeviceName,DeviceType == "Server" and CurrentSetting=="Block"),
+  ServersWarnConfig = dcountif(DeviceName,DeviceType == "Server" and CurrentSetting=="Warn"),
+  ServersOffConfig = dcountif(DeviceName,DeviceType == "Server" and CurrentSetting=="Off"),
+  WorkstationsAuditConfig = dcountif(DeviceName,DeviceType == "Workstation" and CurrentSetting=="Audit"),
+  WorkstationsBlockConfig = dcountif(DeviceName,DeviceType == "Workstation" and CurrentSetting=="Block"),
+  WorkstationsWarnConfig = dcountif(DeviceName,DeviceType == "Workstation" and CurrentSetting=="Warn"),
+  WorkstationsOffConfig = dcountif(DeviceName,DeviceType == "Workstation" and CurrentSetting=="Off")
+  by ConfigurationName, ConfigurationId
+  ) on ConfigurationId
+  | summarize TotalDevicesWithBlockEvents = dcountif(DeviceId,ASRAction == "Blocked"),
+  TotalDevicesWithAuditEvents = dcountif(DeviceId,ASRAction == "Audited"),
+  TotalDevicesWithWarnEvents = dcountif(DeviceId,ASRAction == "WarnBypassed"),
+  UniqueFiles=dcount(FileName),
+  TotalEvents=dcount(Timestamp),
+  SampleFiles = make_set(FileName,25),
+  ServersWithEvents=dcountif(Timestamp,DeviceType=="Server"),
+  WorkstationsWithEvents=dcountif(Timestamp,DeviceType=="Workstation"),
+  FileInDownloadOrDesktopFolder = dcountif(FileName,FolderPath matches regex @"(?i)\w\:\\Users\\\w+\\Downloads" or FolderPath matches regex @"(?i)\w\:\\Users\\\w+\\Desktop"),
+  FileInTempFolder = dcountif(FileName,FolderPath has "\\temp"),
+  FileInProgramFilesFolder = dcountif(FileName,FolderPath matches regex @"(?i)\w\:\\Program\sFiles(\s\(x86\))?"),
+  FileInSystem32Folder = dcountif(FileName,FolderPath matches regex @"(?i)\w\:\\Windows\\System32")
+  by
+  ConfigurationName, AuditConfig, BlockConfig, OffConfig, WarnConfig, UniqueDevicesConfigPerRule, CompliantDevicesConfig, NoneCompliantDevicesConfig, ServersAuditConfig, ServersBlockConfig,
+  ServersOffConfig, ServersWarnConfig, WorkstationsAuditConfig, WorkstationsBlockConfig, WorkstationsOffConfig, WorkstationsWarnConfig
+| project-reorder ConfigurationName,
+                    ServersAuditConfig,
+                    ServersBlockConfig,
+                    ServersWarnConfig,
+                    ServersOffConfig,
+                    ServersWithEvents,
+                    WorkstationsAuditConfig,
+                    WorkstationsBlockConfig,
+                    WorkstationsWarnConfig,
+                    WorkstationsOffConfig,
+                    WorkstationsWithEvents,
+                    TotalEvents,
+                    TotalDevicesWithAuditEvents,
+                    TotalDevicesWithBlockEvents,
+                    TotalDevicesWithWarnEvents,
+                    UniqueFiles,
+                    SampleFiles,
+                    CompliantDevicesConfig,
+                    NoneCompliantDevicesConfig,
+                    UniqueDevicesConfigPerRule,
+                    FileInDownloadOrDesktopFolder,
+                    FileInProgramFilesFolder,
+                    FileInSystem32Folder,
+                    FileInTempFolder
+
+
+
+let tools = dynamic(["Vnc Viewer", "Goverlan Reach", "UltraViewer", "DWService", "FixMe.IT", "ShowMyPC", "AweSun", "Remotely", "Radmin", "Fusion Connect", "Jump Desktop", "BeAnywhere", "Thinfinity Remote Desktop Server", "TeamViewer", "AnyDesk", "RemotePC", "Splashtop® Streamer", "Chrome Remote Desktop", "Microsoft Remote Desktop", "VNC Connect", "LogMeIn", "ConnectWise Control", "Remote Utilities", "NoMachine", "GoToMyPC", "Parallels Access", "AeroAdmin", "Ammyy Admin", "Remote Desktop Manager", "Wayk Now", "UltraVNC", "TightVNC", "RealVNC", "Dameware Remote Support", "Zoho Assist", "SimpleHelp", "Mikogo", "ISL Online", "ThinVNC", "LiteManager", "Anyplace Control", "Supremo", "ScreenConnect", "VNC", "Dameware Remote Everywhere", "Join.Me", "WebEx Support"]);
+DeviceProcessEvents
+| where Timestamp >= ago(230d)
+| where ProcessVersionInfoCompanyName has_any(tools) or ProcessVersionInfoProductName has_any(tools)
+| where ProcessVersionInfoProductName !contains "GoToMeeting"
+| summarize arg_max(Timestamp, *) by DeviceId, DeviceName
+| distinct Timestamp , DeviceId , DeviceName, ProcessVersionInfoCompanyName, ProcessVersionInfoProductName , ReportId
+
+
+
+
+let normalize_subject = (s:string) {
+    let x0 = tolower(s);
+    let x1 = replace_regex(x0, @"https?://([^\s/]+)[^\s]*", "<URL:\\1>");
+    let x2 = replace_regex(x1,  @"\bwww\.([^\s/]+)[^\s]*","<URL\\1>>");
+    let x3 = replace_regex(x2,  @"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})", "<EMAIL:\\1>");
+    let x4 = replace_regex(x3,  @"\b(?:\d{1,3}\.){3}\d{1,3}\b", "<IP>");
+    let x5 = replace_regex(x4,  @"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", "<UUID>");
+    let x6 = replace_regex(x5,  @"\b[0-9a-f]{16,}\b", "<HEX>");
+    let x7 = replace_regex(x6,  @"\b(?:inv(?:oice)?|order(?:[-_ ]?id)?|ref(?:#|:)?)\s*[:#-]*[A-Za-z0-9-]{4,}\b", "<ORDER>");
+    let x8 = replace_regex(x7,  @"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", "<DATE>");
+    let x9 = replace_regex(x8,  @"\b\d{4}[./-]\d{1,2}[./-]\d{1,2}\b",   "<DATE>");
+    let x10 = replace_regex(x9, @"\b\d{1,2}:\d{2}(?::\d{2})?\b", "<TIME>");
+    let x11 = replace_regex(x10, @"\b[A-Za-z0-9]{8,}\b", "<TOKEN>");
+    let x12 = replace_regex(x11, @"\b\d{3,}\b", "<NUM>");
+    let x13 = replace_regex(x12, @"[^a-z0-9 <>:]", " ");
+    let x14 = replace_regex(x13, @"[a-f0-9]{10,}","");
+    trim(' ', replace_regex(x14, @"\s+", " "))
+};
+AlertInfo
+| where Title contains "Email messages containing malicious URL removed after delivery​"
+| project-rename AlertTimetamp = Timestamp
+| join (AlertEvidence | summarize arg_max(Timestamp,*) by NetworkMessageId
+| project-rename EvidenceTimetamp = Timestamp
+) on AlertId
+| extend _json = parse_json(AdditionalFields)
+| extend SenderFromAddress = tostring(_json.Sender),
+         RecipientAddress = tostring(_json.Recipient)
+         | project-away _json
+         | extend ResearchSubject = replace_regex(EmailSubject,@"[a-f0-9]{10,}","")
+| project AlertTimetamp, EvidenceTimetamp, AccountUpn, EmailSubject, SenderFromAddress,RecipientAddress, NetworkMessageId, AlertId,ResearchSubject
+| join (EmailEvents |project SenderFromAddress, SenderFromDomain,RecipientEmailAddress, Timestamp, NetworkMessageId, Subject
+| project-rename EmailReceivedTimestamp = Timestamp
+) on NetworkMessageId
+| take 10
+| extend norm_subject = normalize_subject(Subject)
+
+
+
+ExposureGraphNodes
+| extend SIDHistory = todynamic(NodeProperties.rawData.sidHistory)
+| where array_length(SIDHistory) >0
+| mv-expand SIDHistory 
+| extend SIDHistory=tostring(SIDHistory)
+| extend AccountName  = tostring(todynamic(NodeProperties.rawData.accountName)),
+         AccountDomain  = tostring(todynamic(NodeProperties.rawData.accountDomain)),
+         HasLeakedCredentials  = tostring(todynamic(NodeProperties.rawData.hasLeakedCredentials)),
+         AccountUpn  = tostring(todynamic(NodeProperties.rawData.accountUpn)),
+         UserAccountControl  = tostring(todynamic(NodeProperties.rawData.userAccountControl))
+                        | mv-apply EntityIds on (
+                            summarize Identifiers = make_bag(
+                                                            pack(
+                                                                    tostring(EntityIds.type), 
+                                                                    EntityIds.id
+                                                                )
+                                                        )
+                        )
+| join kind=leftouter (
+                        union (                 
+        ExposureGraphNodes
+        | where NodeLabel == "group"
+        | distinct ADSid = tostring(todynamic(NodeProperties.rawData.adSid)),SidHistoryTranslation=tostring(todynamic(NodeProperties.rawData.adSamAccountName))
+      ),
+      (
+        ExposureGraphNodes
+        | where NodeLabel == "user"
+        | distinct ADSid = tostring(todynamic(NodeProperties.rawData.adSid)),SidHistoryTranslation=tostring(todynamic(NodeProperties.rawData.accountName))
+      )
+                    ) on $left.SIDHistory == $right.ADSid
+                    | project-away ADSid
+                    | extend DomainIdentifier = extract(@"S-\d-\d-\d{2}-((\d+-){2}\d+)-\d+", 1, tostring(SIDHistory))
+      | join kind = leftouter (
+                   ExposureGraphNodes
+                    | where NodeLabel == "user"
+                    | extend _tmpSID =  tostring(todynamic(NodeProperties.rawData.adSid))
+                    | where isnotempty(_tmpSID)
+                    |extend DomainIdentifier = extract(@"S-\d-\d-\d{2}-((\d+-){2}\d+)-\d+", 1, tostring(_tmpSID))
+                    | distinct DomainIdentifier,Domain=tostring(todynamic(NodeProperties.rawData.accountDomain))      
+                    | where Domain !has "onmicrosoft.com"
+            ) on DomainIdentifier
+
+let HomeDomain = "chief365defender.com";
+let HomeTenantId = "5e8aaf5b-c4b2-4900-8176-a9a58b618f1d";
+let ChatUrlMessages = materialize (
+CloudAppEvents
+| where ActionType == "MessageSent"
+| where array_length(RawEventData["ParticipantInfo"]["ParticipatingTenantIds"]) > 1
+| extend MessageUrl = RawEventData.MessageURLs
+| where isnotempty(MessageUrl)
+| extend csChatThreadId = tostring(RawEventData.ChatThreadId),
+         csTimestamp = format_datetime(Timestamp,'yy-MM-dd [HH:mm:ss]')
+| mv-expand MessageUrl
+| extend MessagesLinks = bag_pack(csTimestamp,MessageUrl)
+| summarize MessagesLinks = make_bag(MessagesLinks) by csChatThreadId);
+CloudAppEvents
+| where Application == "Microsoft Teams"
+| where ActionType in("ChatCreated")
+| extend csCrossTenant = RawEventData.ParticipantInfo.HasForeignTenantUsers,
+         csChatThreadId = tostring(RawEventData.ChatThreadId),
+         Members = RawEventData.Members
+| mv-apply with_itemindex = i key = Members to typeof(string) on (
+    summarize Members = make_bag(pack(key, Members[i])))
+| join kind=inner (ChatUrlMessages) on csChatThreadId
+| project-away *1,AuditSource,IsExternalUser,ActivityType,IsAdminOperation, Type,AdditionalFields, ApplicationId, AppInstanceId,ActivityObjects
+| extend csCrossTenant = RawEventData.ParticipantInfo.HasForeignTenantUsers,
+         csHasGuestUsers = RawEventData.ParticipantInfo.HasGuestUsers,
+         csHasUnauthenticatedUsers = RawEventData.ParticipantInfo.HasUnauthenticatedUsers,
+         csExternalDomains = RawEventData.ParticipantInfo.ParticipatingDomains            
+
+
+
+let corpDomains = dynamic(["yourdomainnamehere.com"]);
+EmailUrlInfo
+| extend urlinfo = parse_url(Url)
+| extend hostname = tostring(urlinfo.Host)
+| extend domain = extract(@"(\w+\.\w+)$",1,hostname)
+| distinct domain
+| extend domainUni = unicode_codepoints_from_string(domain)
+| extend corpdomains = corpDomains
+| mv-expand corpdomains to typeof(string)
+| extend corpdomainsuni = unicode_codepoints_from_string(corpdomains)
+| extend similarity = series_cosine_similarity(domainUni,corpdomainsuni)
+| where domain != corpdomains
+| sort by similarity desc         

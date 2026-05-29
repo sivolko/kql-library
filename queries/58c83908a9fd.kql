@@ -1,0 +1,15 @@
+// Source: https://github.com/grabery/graber.cloud-azure-templates
+// Collected: 2026-05-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceInfo
+| union DeviceNetworkInfo
+| union DeviceProcessEvents
+| union DeviceNetworkEvents
+| union DeviceFileEvents
+| union DeviceRegistryEvents
+| union DeviceLogonEvents
+| union DeviceImageLoadEvents
+| union DeviceEvents
+| union DeviceFileCertificateInfo
+| summarize RecordCount = count(), MDETotalSizeMB = round(sum(estimate_data_size(*))/pow(1024,2),2)

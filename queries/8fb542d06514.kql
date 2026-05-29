@@ -1,0 +1,9 @@
+// Source: https://github.com/n7on/jig-microsoft
+// Collected: 2026-05-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| summarize FailedAttempts = count() by Account, Computer, IpAddress
+| order by FailedAttempts desc
+| project Account, Computer, IpAddress, FailedAttempts

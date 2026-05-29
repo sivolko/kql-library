@@ -1,0 +1,15 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-05-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let snowflakesDA = _GetWatchlist("snowflakes")
+    | project Account_Name;
+let snowflakesSA = _GetWatchlist("snowflakes_t1")
+    | project Account_Name;
+let snowflakesCombined = union snowflakesDA, snowflakesSA;
+SecurityEvent
+| where EventID == 4624
+| where LogonType == 10
+| where TargetUserName !contains "auditor"
+| where TargetUserName in (snowflakesCombined)
+| project TimeGenerated, TargetUserName, IpAddress, Computer, LogonType

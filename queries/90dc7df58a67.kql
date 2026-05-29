@@ -1,0 +1,6 @@
+// Source: https://github.com/Crimson7research/C7SigmaTools
+// Collected: 2026-05-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where (InitiatingProcessFolderPath endswith "\\powershell.exe" or InitiatingProcessFolderPath endswith "\\pwsh.exe") and (not(SourceParentImage endswith ":\\Windows\\System32\\CompatTelRunner.exe"))

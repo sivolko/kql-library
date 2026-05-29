@@ -1,0 +1,27 @@
+// Source: https://github.com/Cybersec120/azure-soc-lab
+// Collected: 2026-05-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4732
+| where TargetUserName == "Administrators"
+| project
+    TimeGenerated,
+    Computer,
+    AccountAdded = MemberName,
+    AddedBy = SubjectUserName,
+    AddedByDomain = SubjectDomainName,
+    EventID
+| join kind=leftouter (
+    SecurityEvent
+    | where EventID == 4720
+    | project AccountCreated = TargetUserName, CreatedTime = TimeGenerated, Computer
+) on $left.AccountAdded == $right.AccountCreated, Computer
+| project
+    TimeGenerated,
+    Computer,
+    AccountAdded,
+    AddedBy,
+    AddedByDomain,
+    AccountCreatedTime = CreatedTime
+| sort by TimeGenerated desc

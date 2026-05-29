@@ -1,0 +1,12 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let EPwithNewLocalAccount =
+DeviceEvents
+| where Timestamp > ago(1h)
+| where ActionType == "UserAccountCreated" and AccountName has "$"
+| distinct DeviceName;
+DeviceRegistryEvents
+| where RegistryKey has "HKEY_LOCAL_MACHINE\\SAM\\SAM\\Domains\\Account\\Users"
+| where DeviceName has_any(EPwithNewLocalAccount)
