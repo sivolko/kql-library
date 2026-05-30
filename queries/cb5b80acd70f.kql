@@ -1,0 +1,31 @@
+// Source: https://github.com/IslandNC/Azure-Sentinel-Deployment
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago(1h)
+| where ResultType != 0
+| where isnotempty(IPAddress)
+| summarize
+    FailedAttempts = count(),
+    FirstAttempt   = min(TimeGenerated),
+    LastAttempt    = max(TimeGenerated)
+    by IPAddress, UserPrincipalName
+| where FailedAttempts >= 5
+| order by FailedAttempts desc, LastAttempt desc
+
+// ============================================================
+// Tuning Notes:
+// - Threshold of 5 is appropriate for a lab environment.
+//   In production, consider 10+ depending on baseline noise.
+// - Add TimeDelta to show attack velocity:
+//   | extend TimeDelta = LastAttempt - FirstAttempt
+// - Cross-reference IPs with threat intelligence:
+//   | join kind=leftouter (ThreatIntelligenceIndicator
+//     | where Active == true
+//     | project TI_IP = NetworkIP, ThreatType)
+//     on $left.IPAddress == $right.TI_IP
+// - Difference from 5-minute version:
+//   * This version: use for hunting and broad pattern detection
+//   * 5-minute version: use in scheduled Sentinel analytic rules
+// ============================================================

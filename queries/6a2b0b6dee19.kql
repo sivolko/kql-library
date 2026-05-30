@@ -1,0 +1,12 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago (90d)
+| extend BeginLat = toreal(parse_json(tostring(LocationDetails.geoCoordinates)).latitude)
+| extend BeginLon = toreal(parse_json(tostring(LocationDetails.geoCoordinates)).longitude)
+| summarize Count=count() by BeginLon, BeginLat
+| project-reorder BeginLon, BeginLat, Count
+| where isnotempty(BeginLon)
+| render scatterchart with (kind=map)

@@ -1,0 +1,10 @@
+// Source: https://github.com/dragnet-dev/haul-rules-kql
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ((FolderPath endswith ".aspx" or FolderPath endswith ".asp" or FolderPath endswith ".php" or FolderPath endswith ".jsp" or FolderPath endswith ".jspx"))
+    and (FolderPath has_any ("\inetpub\wwwroot\", "\htdocs\", "\www\", "/var/www/"))
+    and  not FolderPath has_any ("\w3wp.exe", "\httpd.exe", "\nginx.exe")
+| project Timestamp, DeviceName, ActionType, InitiatingProcessFolderPath, InitiatingProcessCommandLine
+| limit 1000

@@ -1,0 +1,19 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let FortiBelsenLeakTable=externaldata(RawData:string)
+[h'https://raw.githubusercontent.com/SlimKQL/Hunting-Queries-Detection-Rules/refs/heads/main/IOC/fortigate-belsen-leak-15K-IPs.txt']
+| parse RawData with LeakIP:string;
+let MatchedDestinationIP =
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DeviceVendor has "fortinet"
+| summarize arg_max(TimeGenerated, *) by DestinationIP
+| join FortiBelsenLeakTable on $left.DestinationIP == $right.LeakIP;
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DeviceVendor has "fortinet"
+| summarize arg_max(TimeGenerated, *) by SourceIP
+| join FortiBelsenLeakTable on $left.SourceIP == $right.LeakIP
+| union MatchedDestinationIP

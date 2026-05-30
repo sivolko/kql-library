@@ -1,0 +1,412 @@
+// Source: https://github.com/louisgiles/KQL
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let AlertTime = datetime(2026-01-01T00:00:00Z);
+let AnchorMode = "alert";
+let TimeToCheck = 5m;
+//
+let RunFileLifecycle        = true;
+let RunCreatorContext       = true;
+let RunFileMetadata         = true;
+let RunExecutionStatus      = true;
+let RunNetworkReach         = true;
+let RunRegistryWrites       = true;
+let RunSiblingFiles         = true;
+let RunMdeActions           = true;
+let RunCreatorAncestry      = true;
+let RunExecutedDescendants  = true;
+let RunPersistenceCreated   = true;
+let RunPrecedingContext     = true;
+//
+let HostToCheck = "";
+let FileNameToCheck = "";
+let SHA256ToCheck = "";
+let FolderPathToCheck = "";
+let AncestryLookback = 24h;
+let PrecedingContextLookback = 1h;
+//
+let _wideLookback = 90d;
+let _fileOriginEvent = materialize(
+    DeviceFileEvents
+    | where Timestamp between (AlertTime - _wideLookback .. AlertTime)
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | where ActionType == "FileCreated"
+    | where FileNameToCheck == "" or FileName contains FileNameToCheck
+    | where SHA256ToCheck == "" or SHA256 contains SHA256ToCheck
+    | where FolderPathToCheck == "" or FolderPath contains FolderPathToCheck
+    | summarize arg_min(Timestamp, *)
+);
+let _anchorTime = iff(AnchorMode == "file_origin",
+    coalesce(toscalar(_fileOriginEvent | project Timestamp), AlertTime),
+    AlertTime
+);
+let _windowStart = _anchorTime - TimeToCheck;
+let _windowEnd = _anchorTime + TimeToCheck;
+let _execWindowEnd = _anchorTime + max_of(TimeToCheck, 24h);
+let FileScope = materialize(
+    DeviceFileEvents
+    | where Timestamp between (_windowStart .. _windowEnd)
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | where FileNameToCheck == "" or FileName contains FileNameToCheck
+    | where SHA256ToCheck == "" or SHA256 contains SHA256ToCheck
+    | where FolderPathToCheck == "" or FolderPath contains FolderPathToCheck
+);
+let TargetSHA256s = toscalar(FileScope | where isnotempty(SHA256) | summarize make_set(SHA256, 100));
+let TargetSHA1s = toscalar(FileScope | where isnotempty(SHA1) | summarize make_set(SHA1, 100));
+let TargetFolderPaths = toscalar(FileScope | where isnotempty(FolderPath) | summarize make_set(FolderPath, 100));
+let TargetFileNames = toscalar(FileScope | where isnotempty(FileName) | summarize make_set(FileName, 100));
+let CreatorPidKeys = toscalar(FileScope | where isnotempty(InitiatingProcessId) | summarize make_set(strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime)), 100));
+let ExecutedPidKeys = toscalar(
+    DeviceProcessEvents
+    | where Timestamp between (_windowStart .. _execWindowEnd)
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | where SHA256 in (TargetSHA256s) or FolderPath in (TargetFolderPaths)
+    | summarize make_set(strcat(tostring(ProcessId), "|", tostring(ProcessCreationTime)), 100)
+);
+let ParentPidKeys = toscalar(
+    DeviceProcessEvents
+    | where Timestamp >= _anchorTime - AncestryLookback and Timestamp <= _windowEnd
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | extend pkey = strcat(tostring(ProcessId), "|", tostring(ProcessCreationTime))
+    | where pkey in (CreatorPidKeys)
+    | summarize make_set(strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime)), 100)
+);
+let GrandparentPidKeys = toscalar(
+    DeviceProcessEvents
+    | where Timestamp >= _anchorTime - AncestryLookback and Timestamp <= _windowEnd
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | extend pkey = strcat(tostring(ProcessId), "|", tostring(ProcessCreationTime))
+    | where pkey in (ParentPidKeys)
+    | summarize make_set(strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime)), 100)
+);
+let ChildPidKeys = toscalar(
+    DeviceProcessEvents
+    | where Timestamp between (_windowStart .. _execWindowEnd)
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | extend ipkey = strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime))
+    | where ipkey in (ExecutedPidKeys)
+    | summarize make_set(strcat(tostring(ProcessId), "|", tostring(ProcessCreationTime)), 100)
+);
+let GrandchildPidKeys = toscalar(
+    DeviceProcessEvents
+    | where Timestamp between (_windowStart .. _execWindowEnd)
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | extend ipkey = strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime))
+    | where ipkey in (ChildPidKeys)
+    | summarize make_set(strcat(tostring(ProcessId), "|", tostring(ProcessCreationTime)), 100)
+);
+let CreatorAndForwardPidKeys = set_union(CreatorPidKeys, ExecutedPidKeys, ChildPidKeys, GrandchildPidKeys);
+// === SECTION 1: File Lifecycle ===
+FileScope
+| where RunFileLifecycle
+| project
+    Timestamp,
+    ActionType,
+    FileName,
+    FolderPath,
+    FileOriginUrl,
+    FileOriginReferrerUrl,
+    FileOriginIP,
+    PreviousFileName,
+    PreviousFolderPath,
+    SHA256,
+    FileSize,
+    InitiatingProcessFileName,
+    InitiatingProcessId,
+    InitiatingProcessAccountName,
+    DeviceName
+| sort by Timestamp asc
+;
+// === SECTION 2: Creator Context ===
+FileScope
+| where RunCreatorContext
+| project
+    Timestamp,
+    FileName,
+    FolderPath,
+    InitiatingProcessFileName,
+    InitiatingProcessFolderPath,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName,
+    InitiatingProcessParentFileName,
+    InitiatingProcessId,
+    DeviceName
+| sort by Timestamp asc
+;
+// === SECTION 3: File Metadata ===
+FileScope
+| where RunFileMetadata
+| extend PathCategory = case(
+    FolderPath has_any (@"\Users\Public\", @"\ProgramData\", @"\Windows\Temp\"), "User-Writable / Temp",
+    FolderPath has_any (@"\AppData\Local\Temp", @"\AppData\Roaming\"), "User AppData",
+    FolderPath has @"\Windows\System32" or FolderPath has @"\Windows\SysWOW64", "System",
+    FolderPath has @"\Program Files", "Program Files",
+    FolderPath has @"\Users\" and not(FolderPath has_any (@"\Temp", @"\AppData\")), "User Profile",
+    "Other"
+)
+| join kind=leftouter (
+    DeviceFileCertificateInfo
+    | where SHA1 in (TargetSHA1s)
+    | summarize arg_max(Timestamp, Signer, Issuer, IsSigned, IsTrusted, SignatureType) by SHA1
+) on SHA1
+| project
+    Timestamp,
+    FileName,
+    FolderPath,
+    PathCategory,
+    SHA256,
+    FileSize,
+    IsSigned,
+    IsTrusted,
+    Signer,
+    Issuer,
+    SignatureType,
+    DeviceName
+| sort by Timestamp asc
+;
+// === SECTION 4: Execution Status ===
+DeviceProcessEvents
+| where RunExecutionStatus
+| where Timestamp between (_windowStart .. _execWindowEnd)
+| where HostToCheck == "" or DeviceName =~ HostToCheck
+| where SHA256 in (TargetSHA256s) or FolderPath in (TargetFolderPaths)
+| project
+    Timestamp,
+    ActionType,
+    FileName,
+    FolderPath,
+    SHA256,
+    ProcessCommandLine,
+    AccountName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    ProcessId,
+    DeviceName
+| sort by Timestamp asc
+;
+// === SECTION 5: Network Reach ===
+DeviceNetworkEvents
+| where RunNetworkReach
+| where Timestamp between (_windowStart .. _execWindowEnd)
+| where HostToCheck == "" or DeviceName =~ HostToCheck
+| extend ipkey = strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime))
+| where ipkey in (CreatorAndForwardPidKeys)
+| extend ProcessRole = case(
+    ipkey in (CreatorPidKeys), "Creator",
+    ipkey in (ExecutedPidKeys), "Executed",
+    "Descendant"
+)
+| project
+    Timestamp,
+    ProcessRole,
+    InitiatingProcessFileName,
+    InitiatingProcessId,
+    RemoteUrl,
+    RemoteIP,
+    RemotePort,
+    LocalIP,
+    LocalPort,
+    Protocol,
+    DeviceName
+| sort by Timestamp asc
+;
+// === SECTION 6: Registry Writes ===
+DeviceRegistryEvents
+| where RunRegistryWrites
+| where Timestamp between (_windowStart .. _execWindowEnd)
+| where HostToCheck == "" or DeviceName =~ HostToCheck
+| extend ipkey = strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime))
+| where ipkey in (CreatorAndForwardPidKeys)
+| extend ProcessRole = case(
+    ipkey in (CreatorPidKeys), "Creator",
+    ipkey in (ExecutedPidKeys), "Executed",
+    "Descendant"
+)
+| project
+    Timestamp,
+    ProcessRole,
+    ActionType,
+    RegistryKey,
+    RegistryValueName,
+    RegistryValueData,
+    InitiatingProcessFileName,
+    InitiatingProcessId,
+    DeviceName
+| sort by Timestamp asc
+;
+// === SECTION 7: Sibling Files ===
+DeviceFileEvents
+| where RunSiblingFiles
+| where Timestamp between (_windowStart .. _windowEnd)
+| where HostToCheck == "" or DeviceName =~ HostToCheck
+| extend ipkey = strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime))
+| where ipkey in (CreatorPidKeys)
+| where not(SHA256 in (TargetSHA256s) and FolderPath in (TargetFolderPaths))
+| project
+    Timestamp,
+    ActionType,
+    FileName,
+    FolderPath,
+    SHA256,
+    FileSize,
+    InitiatingProcessFileName,
+    InitiatingProcessId,
+    DeviceName
+| sort by Timestamp asc
+;
+// === SECTION 8: MDE Actions ===
+union
+(
+    DeviceFileEvents
+    | where RunMdeActions
+    | where Timestamp between (_windowStart .. _execWindowEnd)
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | where SHA256 in (TargetSHA256s) or FolderPath in (TargetFolderPaths) or FileName in (TargetFileNames)
+    | where FolderPath has @"\ProgramData\Microsoft\Windows Defender\Quarantine"
+        or InitiatingProcessFileName =~ "MsMpEng.exe"
+        or InitiatingProcessFileName =~ "MpDefenderCoreService.exe"
+    | extend ActionSource = "FileEvent", ActionDetail = ActionType
+    | project Timestamp, ActionSource, ActionDetail, FileName, FolderPath,
+        PreviousFileName, PreviousFolderPath, SHA256,
+        InitiatingProcessFileName, DeviceName
+),
+(
+    DeviceEvents
+    | where RunMdeActions
+    | where Timestamp between (_windowStart .. _execWindowEnd)
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | where ActionType has_any ("AntivirusDetection", "AntivirusScanCompleted",
+        "AntivirusReport", "ExploitGuardNetworkProtectionBlocked",
+        "SmartScreenUrlWarning", "SmartScreenAppWarning", "SmartScreenExploitWarning",
+        "TamperingAttempt", "AsrProcessBlocked", "AsrLsassBlocked", "AsrPersistenceThroughWmiBlocked")
+    | where SHA256 in (TargetSHA256s) or FolderPath in (TargetFolderPaths) or FileName in (TargetFileNames)
+    | extend ActionSource = "DefenderEvent", ActionDetail = ActionType
+    | extend PreviousFileName = "", PreviousFolderPath = ""
+    | project Timestamp, ActionSource, ActionDetail, FileName, FolderPath,
+        PreviousFileName, PreviousFolderPath, SHA256,
+        InitiatingProcessFileName, DeviceName
+)
+| sort by Timestamp asc
+;
+// === SECTION 9: Creator Ancestry ===
+union
+(
+    FileScope
+    | where RunCreatorAncestry
+    | where isnotempty(InitiatingProcessId)
+    | summarize arg_max(Timestamp, *) by InitiatingProcessId
+    | extend AncestryLevel = "0 Creator (row-projection)", Source = "row-projection"
+    | project
+        Timestamp,
+        AncestryLevel,
+        Source,
+        FileName = InitiatingProcessFileName,
+        FolderPath = InitiatingProcessFolderPath,
+        ProcessId = InitiatingProcessId,
+        ProcessCommandLine = InitiatingProcessCommandLine,
+        ParentName = InitiatingProcessParentFileName,
+        AccountName = InitiatingProcessAccountName,
+        DeviceName
+),
+(
+    DeviceProcessEvents
+    | where RunCreatorAncestry
+    | where Timestamp >= _anchorTime - AncestryLookback and Timestamp <= _windowEnd
+    | where HostToCheck == "" or DeviceName =~ HostToCheck
+    | extend pkey = strcat(tostring(ProcessId), "|", tostring(ProcessCreationTime))
+    | where pkey in (CreatorPidKeys) or pkey in (ParentPidKeys) or pkey in (GrandparentPidKeys)
+    | extend AncestryLevel = case(
+        pkey in (CreatorPidKeys), "0 Creator",
+        pkey in (ParentPidKeys), "1 Parent (creation-event)",
+        "2 Grandparent"
+    )
+    | extend Source = "creation-event"
+    | project
+        Timestamp,
+        AncestryLevel,
+        Source,
+        FileName,
+        FolderPath,
+        ProcessId,
+        ProcessCommandLine,
+        ParentName = InitiatingProcessFileName,
+        AccountName,
+        DeviceName
+)
+| sort by AncestryLevel asc, Timestamp asc
+;
+// === SECTION 10: Executed Descendants ===
+DeviceProcessEvents
+| where RunExecutedDescendants
+| where Timestamp between (_windowStart .. _execWindowEnd)
+| where HostToCheck == "" or DeviceName =~ HostToCheck
+| extend pkey = strcat(tostring(ProcessId), "|", tostring(ProcessCreationTime))
+| where pkey in (ExecutedPidKeys) or pkey in (ChildPidKeys) or pkey in (GrandchildPidKeys)
+| extend DescendantLevel = case(
+    pkey in (ExecutedPidKeys), "0 Executed",
+    pkey in (ChildPidKeys), "1 Child",
+    "2 Grandchild"
+)
+| project
+    Timestamp,
+    DescendantLevel,
+    FileName,
+    FolderPath,
+    ProcessId,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessId,
+    InitiatingProcessCommandLine,
+    AccountName,
+    DeviceName
+| sort by DescendantLevel asc, Timestamp asc
+;
+// === SECTION 11: Persistence Created ===
+DeviceEvents
+| where RunPersistenceCreated
+| where Timestamp between (_windowStart .. _execWindowEnd)
+| where HostToCheck == "" or DeviceName =~ HostToCheck
+| where ActionType in ("ServiceInstalled", "ScheduledTaskCreated", "ScheduledTaskUpdated")
+| extend ipkey = strcat(tostring(InitiatingProcessId), "|", tostring(InitiatingProcessCreationTime))
+| where ipkey in (CreatorAndForwardPidKeys)
+| extend ProcessRole = case(
+    ipkey in (CreatorPidKeys), "Creator",
+    ipkey in (ExecutedPidKeys), "Executed",
+    "Descendant"
+)
+| project
+    Timestamp,
+    ActionType,
+    ProcessRole,
+    FileName,
+    FolderPath,
+    AdditionalFields,
+    InitiatingProcessFileName,
+    InitiatingProcessFolderPath,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName,
+    DeviceName
+| sort by Timestamp asc
+;
+// === SECTION 12: Preceding Context ===
+DeviceNetworkEvents
+| where RunPrecedingContext
+| where Timestamp between (_anchorTime - PrecedingContextLookback .. _anchorTime)
+| where HostToCheck == "" or DeviceName =~ HostToCheck
+| where InitiatingProcessFileName has_any (
+    "msedge.exe", "chrome.exe", "firefox.exe", "brave.exe", "opera.exe", "iexplore.exe",
+    "outlook.exe", "teams.exe",
+    "powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe",
+    "curl.exe", "wget.exe", "bitsadmin.exe", "certutil.exe"
+)
+| project
+    Timestamp,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName,
+    RemoteUrl,
+    RemoteIP,
+    RemotePort,
+    DeviceName
+| sort by Timestamp asc

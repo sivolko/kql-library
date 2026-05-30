@@ -1,0 +1,29 @@
+// Source: https://github.com/Azure/Azure-Sentinel
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+    let time_zome = 'Europe/Madrid';
+    // If empty, take current time
+    let parsed_date_time = iff(isnull(date_time), now(), date_time);
+    let corrected_date_time = datetime_utc_to_local(parsed_date_time, time_zome);
+    // Start and end hours of daily work schedule
+    let schedule_start_hour = 8;
+    let schedule_end_hour = 17;
+    let schedule_intensive_end_hour = 15;
+    let schedule_friday_end_hour = 14;
+    // Start date of intensive working time
+    let IntensiveStartTime = make_datetime(getyear(parsed_date_time), 6, 16);
+    // End date of intensive working time
+    let IntensiveEndTime = make_datetime(getyear(parsed_date_time), 9, 16);
+    let hour_of_day = hourofday(corrected_date_time);
+    let day_of_week = dayofweek(corrected_date_time - 1d)/1d + 1;
+    let Intensive = corrected_date_time between (IntensiveStartTime .. IntensiveEndTime);
+    // Return boolean indicating if a date is working time
+    case(
+        day_of_week < 5 and not(Intensive) and hour_of_day between (schedule_start_hour..(schedule_end_hour - 1)), true, // Monday to Thursday
+        day_of_week < 5 and Intensive and hour_of_day between (schedule_start_hour..(schedule_intensive_end_hour - 1)), true, // Intensive Monday to Thursday
+        day_of_week == 5 and hour_of_day between (schedule_start_hour .. (schedule_friday_end_hour - 1)), true, // Friday
+        false
+    )
+//};
+//Function(date_time)

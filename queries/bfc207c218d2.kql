@@ -1,0 +1,18 @@
+// Source: https://github.com/TheAlistairRoss/AzureMonitor
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let isTimeRange = (TimeToCheck: datetime, StartTime: time, QueryFrequency: time) {
+    let Start = startofday(now()) + StartTime; 
+    let End = Start + QueryFrequency;
+    iif(
+        TimeToCheck between(Start .. End), true, false
+    )
+};
+let StartTime = totimespan("16:20"); // Write this in 24 hour format with hh:mm UTC
+let QueryFrequency = 10m; // This is the frequency of the alert. Specify this to avoid it running multiple times
+//
+// Your Query below, with a where filter to ignore any results unless run within the required TimePeriod
+SecurityEvent
+| where isTimeRange(now(), StartTime, QueryFrequency)  == true
+| take 10

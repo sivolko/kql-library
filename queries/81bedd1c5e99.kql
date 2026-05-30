@@ -1,0 +1,24 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let knownusers=
+    AzureActivity
+    | where TimeGenerated > ago(90d) and TimeGenerated < ago(1d)
+    | where OperationName == "List Storage Account Keys"
+    | where ActivityStatus == "Succeeded"
+    | project-rename Actor=Caller
+    | distinct Actor;
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where OperationName == "List Storage Account Keys"
+| where ActivityStatus == "Succeeded"
+| project-rename Actor=Caller
+| where Actor !in (knownusers)
+| project
+    TimeGenerated,
+    Actor,
+    ['Actor IP Address']=CallerIpAddress,
+    ['Storage Account Name']=Resource,
+    ['Azure Subscription Id']=SubscriptionId,
+    ['Azure Resource Group']=ResourceGroup 

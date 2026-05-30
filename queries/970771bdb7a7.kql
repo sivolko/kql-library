@@ -1,0 +1,12 @@
+// Source: https://github.com/Raoof128/ADCSAD
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4768 and LogonProcessName == "User32"
+| extend ClientAddress = tostring(parse_json(AdditionalInfo)["ClientAddress"])
+| summarize count() by TargetUserName, ClientAddress, bin(TimeGenerated, 15m)
+| join kind=inner (
+    SecurityAlert
+    | where AlertName has "certificate" or AlertName has "ADCS"
+) on $left.TargetUserName == $right.CompromisedEntity

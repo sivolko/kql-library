@@ -1,0 +1,17 @@
+// Source: https://github.com/bhavyau39/azure-honeypot-lab
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let FailedLogons = 
+    SecurityEvent
+    | where EventID == 4625
+    | project TimeGenerated, IpAddress = RemoteIp;
+
+FailedLogons
+| join kind=leftouter (
+    GetWatchlist("geoip")
+    | project SearchKey, cityname, countryname, latitude, longitude
+) on $left.IpAddress == $right.SearchKey
+| summarize FailedAttempts = count()
+    by IpAddress, cityname, countryname, latitude, longitude
+| sort by FailedAttempts desc

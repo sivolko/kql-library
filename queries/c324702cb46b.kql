@@ -1,0 +1,68 @@
+// Source: https://github.com/LaurieRhodes/Powershell-Kusto-Schema-Tools
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+﻿// ============================================================================
+// Azure Data Explorer KQL Script for WsSecurityEvents_CL
+// ============================================================================
+// Generated: 2025-09-19 14:23:13
+// Table type: Custom (presumed for JSON exports)
+// Schema imported from JSON export file
+// ============================================================================
+
+.create-merge table WsSecurityEvents_CLRaw (records:dynamic)
+
+.alter-merge table WsSecurityEvents_CLRaw policy retention softdelete = 1d
+
+.alter table WsSecurityEvents_CLRaw policy caching hot = 1h
+
+// JSON mapping - choose appropriate option based on data structure
+.create-or-alter table WsSecurityEvents_CLRaw ingestion json mapping 'WsSecurityEvents_CLRawMapping' '[{"column":"records","Properties":{"path":"$.records"}}]'
+// Alternative for direct events: '[{"column":"records","Properties":{"path":"$"}}]'
+
+.create-merge table WsSecurityEvents_CL(
+TimeGenerated:datetime,
+Activity:string,
+AdditionalExtensions:string,
+DeviceAction:string,
+DeviceCustomString1:string,
+DeviceCustomString1Label:string,
+DeviceCustomString2:string,
+DeviceCustomString2Label:string,
+DeviceEventClassID:string,
+DeviceVendor:string,
+LogSeverity:int,
+Message:string,
+SimplifiedDeviceAction:string,
+SourceHostName:string,
+SourceUserName:string,
+PersistenceTimestamp:datetime,
+_TimeReceived:datetime)
+
+.alter table WsSecurityEvents_CL policy caching hot = 1d
+
+.create-or-alter function WsSecurityEvents_CLExpand() {
+WsSecurityEvents_CLRaw
+| mv-expand events = records
+// Alternative for non-nested: | extend events = records
+| project
+TimeGenerated=todatetime(events.TimeGenerated),
+Activity=tostring(events.Activity),
+AdditionalExtensions=tostring(events.AdditionalExtensions),
+DeviceAction=tostring(events.DeviceAction),
+DeviceCustomString1=tostring(events.DeviceCustomString1),
+DeviceCustomString1Label=tostring(events.DeviceCustomString1Label),
+DeviceCustomString2=tostring(events.DeviceCustomString2),
+DeviceCustomString2Label=tostring(events.DeviceCustomString2Label),
+DeviceEventClassID=tostring(events.DeviceEventClassID),
+DeviceVendor=tostring(events.DeviceVendor),
+LogSeverity=toint(events.LogSeverity),
+Message=tostring(events.Message),
+SimplifiedDeviceAction=tostring(events.SimplifiedDeviceAction),
+SourceHostName=tostring(events.SourceHostName),
+SourceUserName=tostring(events.SourceUserName),
+PersistenceTimestamp=todatetime(events.PersistenceTimestamp),
+_TimeReceived=todatetime(now())
+}
+
+.alter table WsSecurityEvents_CL policy update @'[{"Source": "WsSecurityEvents_CLRaw", "Query": "WsSecurityEvents_CLExpand()", "IsEnabled": "True", "IsTransactional": true}]'

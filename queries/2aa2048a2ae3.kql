@@ -1,0 +1,11 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago (1d)
+| where UserType == "Guest"
+| project TimeGenerated, UserPrincipalName, AppDisplayName, ResultType, IPAddress, HomeTenantId, ResourceTenantId, AADTenantId
+| extend ['Guest Type']=case(AADTenantId != HomeTenantId and HomeTenantId != ResourceTenantId, strcat("Inbound Guest"),
+                             AADTenantId == HomeTenantId and ResourceTenantId != AADTenantId, strcat("Outbound Guest"),
+"unknown")

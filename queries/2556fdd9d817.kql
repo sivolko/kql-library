@@ -1,0 +1,19 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LolBins = dynamic( [@"powershell.exe", @"cmd.exe", @"wscript.exe", @"mshta.exe", @"certutil.exe", @"bitsadmin", @"curl.exe", @"wget.exe", @"msiexec.exe", @"msbuild.exe"] );
+let LNKevents = 
+    DeviceEvents
+    | extend DevTime = bin(Timestamp, 1s)
+    | where ActionType == "BrowserLaunchedToOpenUrl"
+    | where RemoteUrl endswith @".lnk" and RemoteUrl !contains "http"
+    | where RemoteUrl has_any (@"desktop", @"downloads", @"public", @"documents")
+    | project DevTime, DeviceId, RemoteUrl, devInitProcId = InitiatingProcessId;
+DeviceProcessEvents
+| extend DevProcTime = bin(Timestamp, 1s)
+| where FileName has_any (LolBins)
+| join kind = inner hint.shufflekey = DeviceId LNKevents on DeviceId
+| where DevProcTime == DevTime
+| where InitiatingProcessId == devInitProcId
+| project DevProcTime, DeviceName, AccountName, FileName, ProcessCommandLine, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, RemoteUrl

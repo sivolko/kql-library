@@ -1,0 +1,8 @@
+// Source: https://github.com/Ascendstarcel/Hunting-with-KQL
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4720
+| project TimeGenerated, Account, SubjectUserName, Computer
+| order by TimeGenerated desc

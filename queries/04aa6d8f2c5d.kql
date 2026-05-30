@@ -1,0 +1,8 @@
+// Source: https://github.com/rod-trent/Security-Copilot
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.SECURITYCOPILOT/CAPACITIES/WRITE"
+| where ActivityStatusValue == "Success"
+| project Caller, CallerIpAddress, ResourceGroup

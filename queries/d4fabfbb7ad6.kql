@@ -1,0 +1,6 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+search in (AzureActivity) "*err*" or "*warn*" 
+| where TimeGenerated > ago(1h)

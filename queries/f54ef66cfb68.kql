@@ -1,0 +1,21 @@
+// Source: https://github.com/olatunjiabel/sc200-soc-portfolio
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+## Detection Query (KQL)
+
+```kql
+// Detects brute force attack followed by successful RDP login within 30 minutes
+
+SecurityEvent
+| where TimeGenerated >= ago(30m)
+| where EventID in (4624, 4625)
+| where LogonType in (3, 10)
+| extend Account = tolower(Account)
+| summarize 
+    FailedAttempts = countif(EventID == 4625),
+    SuccessfulAttempts = countif(EventID == 4624 and LogonType == 10)
+    by Account, IpAddress, bin(TimeGenerated, 30m)
+| where FailedAttempts >= 10 and SuccessfulAttempts >= 1
+| sort by FailedAttempts desc
+```

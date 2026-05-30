@@ -1,0 +1,29 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-05-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 1h;
+let security_process_creations =
+    SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | where EventID == 4688
+    | project SecurityTime = TimeGenerated, NewProcessId, NewProcessName, SubjectUserName;
+
+let edr_process_creations =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | project EdrTime = Timestamp, ProcessId, FileName, InitiatingProcessFileName;
+
+security_process_creations
+| join kind=leftanti edr_process_creations
+    on $left.NewProcessId == $right.ProcessId
+| where NewProcessName !endswith "svchost.exe"
+    and NewProcessName !endswith "csrss.exe"
+    and NewProcessName !endswith "smss.exe"
+| summarize
+    Count = count(),
+    ProcessNames = make_set(NewProcessName, 20),
+    Users = make_set(SubjectUserName, 5)
+    by bin(SecurityTime, 5m)
+| where Count >= 3
+| order by Count desc
