@@ -1,0 +1,74 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-05-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+let AllSPActivity = (AADServicePrincipalSignInLogs | invoke ExcludeAllowlistedIPs())
+    | where TimeGenerated > ago(180d)
+    | where ResultType == "0"
+    | summarize
+        TotalSignins     = count(),
+        LastSignin       = max(TimeGenerated),
+        UniqueResources  = dcount(ResourceDisplayName),
+        LastResources    = make_set(ResourceDisplayName, 5)
+        by ServicePrincipalId, ServicePrincipalName, AppId;
+
+// --- Inactive SPs: last sign-in was >90 days ago ---
+let InactiveSPs = AllSPActivity
+    | where LastSignin < ago(90d);
+
+// --- Check for recent credential additions to inactive SPs (reactivation signal) ---
+let RecentCredChanges = AuditLogs
+    | where TimeGenerated > ago(90d)
+    | where OperationName has_any (
+        "Add service principal credentials",
+        "Update application – Certificates and secrets management",
+        "Update service principal")
+    | where Result =~ "success"
+    | extend SPId      = tostring(TargetResources[0].id)
+    | extend Initiator = coalesce(
+        tostring(InitiatedBy.user.userPrincipalName),
+        tostring(InitiatedBy.app.displayName))
+    | summarize
+        RecentChanges    = count(),
+        ChangeTypes      = make_set(OperationName, 5),
+        Initiators       = make_set(Initiator, 5),
+        LastChange       = max(TimeGenerated)
+        by SPId;
+
+// --- Check for recent AzureActivity calls from inactive SPs (headless management access) ---
+// isfuzzy=true: AzureActivity may not be connected in all environments
+let RecentMgmtActivity = union isfuzzy=true
+    AzureActivity,
+    (datatable(TimeGenerated:datetime, ActivityStatusValue:string, OperationNameValue:string, Caller:string)[])
+    | where TimeGenerated > ago(90d)
+    | where ActivityStatusValue =~ "Success"
+    | summarize
+        MgmtOps          = count(),
+        LastMgmtOp       = max(TimeGenerated),
+        Operations        = make_set(OperationNameValue, 5)
+        by Caller;
+
+InactiveSPs
+| join kind=leftouter RecentCredChanges on $left.ServicePrincipalId == $right.SPId
+| join kind=leftouter RecentMgmtActivity on $left.ServicePrincipalId == $right.Caller
+| extend DaysInactive         = datetime_diff("day", now(), LastSignin)
+| extend HasRecentCredChange  = RecentChanges > 0
+| extend HasMgmtActivity      = MgmtOps > 0
+| extend RiskAssessment = case(
+    HasRecentCredChange == true and HasMgmtActivity == true,
+        "Critical — Stale SP Reactivated with New Creds + Mgmt Activity",
+    HasRecentCredChange == true,
+        "High — Stale SP Had Credential Change (Possible Reactivation)",
+    HasMgmtActivity == true,
+        "High — Stale SP Has Recent Management Plane Activity",
+    DaysInactive > 180,
+        "Medium — Very Long Dormancy (>180 days), Cleanup Recommended",
+        "Low — Stale SP, No Recent Activity or Changes")
+| project
+    ServicePrincipalName, ServicePrincipalId, AppId,
+    LastSignin, DaysInactive, TotalSignins,
+    UniqueResources, LastResources,
+    HasRecentCredChange, RecentChanges, ChangeTypes, Initiators, LastChange,
+    HasMgmtActivity, MgmtOps, LastMgmtOp, Operations,
+    RiskAssessment
+| order by RiskAssessment asc, DaysInactive desc

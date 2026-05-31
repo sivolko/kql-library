@@ -1,0 +1,11 @@
+// Source: https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries
+// Collected: 2026-05-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+let CompromisedAccountUPN = "test@test.com";
+let SearchWindow = 48h; //Customizable h = hours, d = days
+AzureActivity
+| where Caller =~ CompromisedAccountUPN
+| where TimeGenerated > ago(SearchWindow)
+| summarize TotalEvents = count() by OperationNameValue
+| sort by TotalEvents desc
