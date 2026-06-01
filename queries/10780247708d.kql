@@ -1,0 +1,10 @@
+// Source: https://github.com/gnarly-cl0s/AZ-500CheatSheet
+// Collected: 2026-06-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+﻿  SigninLogs 
+  | where ResultType == "50057" 
+  | where ResultDescription == "User account is disabled. The account has been disabled by an administrator." 
+  | summarize StartTimeUtc = min(TimeGenerated), EndTimeUtc = max(TimeGenerated), count() by AppDisplayName, UserPrincipalName
+  | extend timestamp = StartTimeUtc, AccountCustomEntity = UserPrincipalName
+  | order by count_ desc

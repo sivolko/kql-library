@@ -1,0 +1,7 @@
+// Source: https://github.com/Ifeanyii00/azure-home-soc-lab
+// Collected: 2026-06-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvents
+| where EventID == 4625
+| project TimeGenrated, Account, Conputer, EvenID, Activity, IPAddress

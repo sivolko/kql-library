@@ -1,0 +1,12 @@
+// Source: https://github.com/jonahchn/security-engineering
+// Collected: 2026-06-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated >= ago(30d)
+| where Process contains "powershell.exe" and CommandLine contains " -enc"
+| extend b64 = extract("[A-Za-z0-9|+|=|/]{30,}", 0,CommandLine)
+| extend utf8_decode=base64_decodestring(b64)
+| extend decode =  replace ("\x00","", utf8_decode)
+| where decode contains 'Gzip' or decode contains 'IEX' or decode contains 'Invoke' or decode contains '.MemoryStream' or decode contains '7zip' or decode contains 'LsaIso.exe'
+| summarize by Computer, Account, decode, CommandLine

@@ -1,0 +1,8 @@
+// Source: https://github.com/rod-trent/SentinelKQL
+// Collected: 2026-06-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 7045
+| where EventData contains "stopped"
+| project TimeGenerated, Computer, EventData

@@ -1,0 +1,41 @@
+// Source: https://github.com/abenezerbirri/azure-cybersecurity-lab
+// Collected: 2026-06-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+let alerts = SecurityAlert
+| where TimeGenerated > ago(3h)
+| where ProductName == "Microsoft Defender Advanced Threat Protection"
+| extend EntitiesParsed = parse_json(Entities)
+| mv-expand entity = EntitiesParsed
+| extend EntityType = tostring(entity.Type)
+| extend AlertHost = tolower(tostring(entity.HostName))
+| where EntityType == "host"
+| project AlertTime = TimeGenerated, AlertName, AlertSeverity, AlertHost,
+          AlertId = SystemAlertId, Description;
+let logons = SecurityEvent
+| where TimeGenerated > ago(4h)
+| where EventID == 4624
+| where LogonType in (2, 7, 10, 11)
+| where TargetUserName !endswith "$"
+| where TargetUserName !in~ ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE", "DWM-1", "UMFD-0", "UMFD-1")
+| extend LogonHost = tolower(tostring(Computer))
+| extend LogonHostShort = tolower(tostring(split(Computer, ".")[0]))
+| project LogonTime = TimeGenerated, LogonHost, LogonHostShort,
+          LogonUser = TargetUserName, LogonDomain = TargetDomainName;
+let signins = SigninLogs
+| where TimeGenerated > ago(4h)
+| where ResultType == 0
+| extend SigninUserShort = tolower(tostring(split(UserPrincipalName, "@")[0]))
+| project SigninTime = TimeGenerated, UserPrincipalName, SigninUserShort,
+          IPAddress, AppDisplayName, Country = tostring(LocationDetails.countryOrRegion);
+alerts
+| join kind=inner (logons) on $left.AlertHost == $right.LogonHostShort
+| where LogonTime between (AlertTime - 2h .. AlertTime + 30m)
+| extend LogonUserShort = tolower(LogonUser)
+| join kind=inner (signins) on $left.LogonUserShort == $right.SigninUserShort
+| where SigninTime between (AlertTime - 2h .. AlertTime + 2h)
+| project AlertTime, AlertName, AlertSeverity, AlertHost,
+          LogonUser, LogonTime,
+          UserPrincipalName, SigninTime, IPAddress, Country, AppDisplayName,
+          Description
+| order by AlertTime desc

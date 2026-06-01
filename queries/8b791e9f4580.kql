@@ -1,0 +1,96 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-06-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+let GroomWindow = 60s;   // Grooming phase typically completes within 60 seconds
+let IOCTLThreshold = 200; // >200 AFD IOCTLs in window = anomalous for non-server
+
+let AfdGroomers =
+    DeviceEvents
+    | where TimeGenerated > ago(1d)
+    | where ActionType == "DeviceIoControlRequest"
+    | where AdditionalFields has "\\Device\\Afd"
+    | summarize
+        AfdIoctlCount = count(),
+        FirstSeen = min(TimeGenerated),
+        LastSeen = max(TimeGenerated),
+        UniqueIoctlCodes = dcount(tostring(AdditionalFields))
+        by DeviceName, ProcessId, InitiatingProcessFileName,
+           InitiatingProcessIntegrityLevel, InitiatingProcessAccountName
+    | where AfdIoctlCount > IOCTLThreshold
+    | where InitiatingProcessIntegrityLevel in ("Low", "Medium")  // Not elevated
+    | extend GroomDurationSec = datetime_diff('second', LastSeen, FirstSeen)
+    | where GroomDurationSec <= 120  // High rate within 2-minute window
+    | project
+        DeviceName,
+        ProcessId,
+        ProcessName = InitiatingProcessFileName,
+        Account = InitiatingProcessAccountName,
+        AfdIoctlCount,
+        GroomDurationSec,
+        FirstSeen,
+        LastSeen,
+        IntegrityLevel = InitiatingProcessIntegrityLevel;
+
+AfdGroomers
+| project-reorder DeviceName, Account, ProcessName, AfdIoctlCount, GroomDurationSec, FirstSeen
+
+
+// ============================================================================
+// Query 2: Token elevation events correlated with AFD grooming activity
+//
+// Correlates EventID 4672 (Special Privileges Assigned to New Logon) on the
+// same host as the AFD grooming, within a short time window after the groom.
+// ============================================================================
+let ElevationWindow = 30s;  // Token swap usually triggers elevation within 30s
+
+let TokenElevations =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4672  // Special privileges assigned
+    | where PrivilegeList has_any ("SeDebugPrivilege", "SeTcbPrivilege", "SeLoadDriverPrivilege")
+    | project
+        ElevationTime = TimeGenerated,
+        ElevatedAccount = Account,
+        ElevatedProcess = ProcessName,
+        Computer,
+        LogonId,
+        PrivilegeList;
+
+AfdGroomers
+| join kind=inner TokenElevations
+    on $left.DeviceName == $right.Computer
+| where ElevationTime between (LastSeen .. (LastSeen + ElevationWindow))
+| project
+    DeviceName,
+    Account,
+    ProcessName,
+    AfdIoctlCount,
+    GroomDurationSec,
+    GroomEnd = LastSeen,
+    ElevationTime,
+    ElevatedAccount,
+    PrivilegeList,
+    SecondsBetween = datetime_diff('second', ElevationTime, LastSeen)
+| order by ElevationTime desc
+
+
+// ============================================================================
+// Query 3: Rapid socket open/close cycle detection (simplified)
+//
+// Uses process event telemetry to detect processes spawning many short-lived
+// socket handles in rapid succession — characteristic of LFH bucket grooming.
+// ============================================================================
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType in ("CreateFile", "CloseHandle")
+| where AdditionalFields has "\\Device\\Afd"
+| summarize
+    Opens = countif(ActionType == "CreateFile"),
+    Closes = countif(ActionType == "CloseHandle"),
+    TimeSpanSec = datetime_diff('second', max(TimeGenerated), min(TimeGenerated))
+    by DeviceName, ProcessId, InitiatingProcessFileName, bin(TimeGenerated, 10s)
+| where Opens > 30 and Closes > 20   // High open+close rate in 10s window
+| where TimeSpanSec <= 10
+| extend OpenRate = Opens * 1.0 / TimeSpanSec
+| order by OpenRate desc

@@ -1,0 +1,11 @@
+// Source: https://github.com/mr-r3b00t/KQL
+// Collected: 2026-06-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where Channel == "Security"
+| where TimeGenerated > ago(30d)
+| sort by TimeGenerated desc
+| where EventID == 4771
+| summarize count() by bin(TimeGenerated, 60m)
+| render columnchart 

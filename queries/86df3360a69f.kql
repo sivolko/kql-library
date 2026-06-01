@@ -1,0 +1,7 @@
+// Source: https://github.com/MarioVSF/SOC-Detection-Engineering
+// Collected: 2026-06-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent 
+| where EventID == 4688 
+| where (NewProcessName endswith @'\SystemSettingsAdminFlows.exe' and CommandLine contains @'SystemSettingsAdminFlows.exe' and CommandLine contains @'Defender')
