@@ -1,0 +1,14 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-06-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4662
+| where not (SubjectUserSid contains "S-1-5-18")
+| where AccessMask == "0x10"
+| where strlen(Properties) >= 2000
+
+// MITRE ATT&CK
+// Technique: T1069 Permission Groups Discovery
+// Tactic: TA0007 Discovery

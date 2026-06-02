@@ -1,5 +1,317 @@
 [
   {
+    "id": "a1897a30a48b",
+    "title": "Rare Admin Operations",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "azure",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/jasonachkar/microsoft-sentinel-siem-detection\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\n/*\nRuleId: dba8a2af-a17b-43fb-b5b7-09b2e659dd3a\nName: Rare Admin Operations (Entra ID + Azure Activity)\nCategory: cloud\nSeverity: Medium\nTactics: DefenseEvasion\nTechniques: T1562\nDataSources: AuditLogs (Microsoft Entra ID), AzureActivity\nQueryFrequency: PT1H\nQueryPeriod: PT1D\nTriggerOperator: GreaterThan\nTriggerThreshold: 0\nVersion: 1.0.0\nAuthor: Jason Achkar Diab (template)\nStatus: Production\nDescription: Identifies high-impact admin operations that are rare for the initiating actor.\nFalsePositives: First-time admin actions; maintenance windows; new admin onboarding\n*/\n\nlet BaselinePeriod = 30d;\nlet DetectionWindow = 1d;\nlet MaxHistoricalCount = 1;\n// High-impact Entra ID operations (conditional access, security defaults, authentication policy).\nlet AadOps = AuditLogs\n| where TimeGenerated >= ago(BaselinePeriod)\n| where OperationName has_any (\"Conditional Access\", \"security defaults\", \"authentication methods\", \"Update policy\", \"Delete policy\")\n| extend OperationSource = \"EntraID\"\n| extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName), \"Unknown\")\n| extend TargetResource = tostring(TargetResources[0].displayName)\n| extend Operation = tostring(OperationName)\n| project TimeGenerated, OperationSource, Operation, Actor, TargetResource, Result;\n// High-impact Azure resource operations.\nlet AzureOps = AzureActivity\n| where TimeGenerated >= ago(BaselinePeriod)\n| where OperationNameValue in~ (\n    \"Microsoft.Authorization/policyAssignments/delete\",\n    \"Microsoft.Authorization/policyAssignments/write\",\n    \"Microsoft.Authorization/roleAssignments/delete\",\n    \"Microsoft.Authorization/roleAssignments/write\",\n    \"Microsoft.Security/pricings/write\",\n    \"Microsoft.Insights/diagnosticSettings/delete\",\n    \"Microsoft.Insights/diagnosticSettings/write\",\n    \"Microsoft.Network/networkSecurityGroups/securityRules/delete\",\n    \"Microsoft.KeyVault/vaults/accessPolicies/write\"\n  )\n| extend OperationSource = \"AzureActivity\"\n| extend Actor = tostring(Caller)\n| extend TargetResource = tostring(ResourceId)\n| extend Operation = tostring(OperationNameValue)\n| project TimeGenerated, OperationSource, Operation, Actor, TargetResource, Result=ActivityStatusValue;\n// Combine and baseline.\nlet AllOps = union isfuzzy=true AadOps, AzureOps;\nlet Baseline = AllOps\n| where TimeGenerated between (ago(BaselinePeriod) .. ago(DetectionWindow))\n| summarize HistoricalCount=count() by Actor, OperationSource, Operation;\nlet Recent = AllOps\n| where TimeGenerated >= ago(DetectionWindow)\n| summarize RecentCount=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), Targets=make_set(TargetResource, 5)\n  by Actor, OperationSource, Operation;\nRecent\n| join kind=leftouter Baseline on Actor, OperationSource, Operation\n| extend HistoricalCount = coalesce(HistoricalCount, 0)\n| where HistoricalCount <= MaxHistoricalCount\n| extend Account = Actor\n| project TimeGenerated=LastSeen, Account, Actor, OperationSource, Operation, HistoricalCount, RecentCount, Targets, FirstSeen, LastSeen",
+    "source_repo": "jasonachkar/microsoft-sentinel-siem-detection",
+    "source_url": "https://github.com/jasonachkar/microsoft-sentinel-siem-detection/blob/0ece530e353c89d192dd3eaca56f9a2385be1803/sentinel-detection-pack/rules/cloud/Rare_Admin_Operations.kql",
+    "filename": "Rare_Admin_Operations.kql",
+    "collected_at": "2026-06-02T03:19:39.219973+00:00"
+  },
+  {
+    "id": "91c310b58b61",
+    "title": "New Public IP via Network Interface",
+    "description": "Detects creation of public IPs attached to NICs (exposing VMs).",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/pirateape/Azure-Security\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| where TimeGenerated > ago(24h)\n| where OperationNameValue =~ \"Microsoft.Network/networkInterfaces/write\"\n| where Properties has \"publicIPAddresses\"\n| project TimeGenerated, Caller, ResourceGroup, ResourceId, Properties",
+    "source_repo": "pirateape/Azure-Security",
+    "source_url": "https://github.com/pirateape/Azure-Security/blob/26686e4839219eb6a8c9e2151a1bd1045dd320ce/src/KQL/Edge/Infra_NewPublicIP.kql",
+    "filename": "Infra_NewPublicIP.kql",
+    "collected_at": "2026-06-02T03:19:38.510901+00:00"
+  },
+  {
+    "id": "637ddde92c79",
+    "title": "Ingest Health",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/Contoso-State/azure-sentinel-analytics-rules\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet diag = AzureDiagnostics\n| where TimeGenerated > ago(24h)\n| where ResourceProvider == \"MICROSOFT.COGNITIVESERVICES\"\n| summarize Records=count(), LastSeen=max(TimeGenerated) by Source=strcat(\"AzureDiagnostics:\", Category);\nlet metrics = AzureMetrics\n| where TimeGenerated > ago(24h)\n| where ResourceProvider == \"MICROSOFT.COGNITIVESERVICES\"\n| summarize Records=count(), LastSeen=max(TimeGenerated) by Source=\"AzureMetrics:CognitiveServices\";\nlet activity = AzureActivity\n| where TimeGenerated > ago(24h)\n| where ResourceProviderValue =~ \"MICROSOFT.COGNITIVESERVICES\"\n| summarize Records=count(), LastSeen=max(TimeGenerated) by Source=\"AzureActivity:CognitiveServices\";\nlet alerts = SecurityAlert\n| where TimeGenerated > ago(24h)\n| where ProductName has_any (\"Azure AI\", \"Defender for AI\", \"Microsoft Defender for Cloud\")\n| summarize Records=count(), LastSeen=max(TimeGenerated) by Source=\"SecurityAlert:DefenderForAI\";\ndiag\n| union metrics\n| union activity\n| union alerts\n| extend Status = iff(Records > 0, \"Receiving\", \"Missing in last 24h\")\n| project Source, Status, Records, LastSeen\n| order by Source asc",
+    "source_repo": "Contoso-State/azure-sentinel-analytics-rules",
+    "source_url": "https://github.com/Contoso-State/azure-sentinel-analytics-rules/blob/6763c047d2d3e5a16a35c82680108976340c6e13/scenarios/ai-monitoring/queries-native/ingest_health.kql",
+    "filename": "ingest_health.kql",
+    "collected_at": "2026-06-02T03:19:37.619284+00:00"
+  },
+  {
+    "id": "46635a8f14ee",
+    "title": "Track Privilege Escalation & Delegation   Microsoft.Authorizationroleassignmentswrite",
+    "description": "Captures all WRITE operations to role assignments in Azure.",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/Cyberlorians/KQL\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff// Objective: Surfaces Azure RBAC role assignments to service principals, enabling detection of privileged access or escalation in Azure resource scopes.\n//\nlet TargetSPs = dynamic([]);     // Example: dynamic([\"11111111-2222-3333-4444-555555555555\"])\nlet TargetActors = dynamic([]);  // Example: dynamic([\"admin@contoso.com\"]);\n//\n// ----- Part 1: Filter Azure Activity for Role Assignments -----\n// Captures all WRITE operations to role assignments in Azure.\n//\nAzureActivity\n| where TimeGenerated > ago(30d)\n| where OperationNameValue == \"MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE\"\n//\n// ----- Part 2: Extract Key Fields from Properties -----\n// Parse nested requestbody for SP and role details.\n//\n| extend RawProps = parse_json(tostring(Properties_d.requestbody)).Properties\n| extend \n    ServicePrincipalObjectId = tostring(RawProps.PrincipalId),\n    ServicePrincipalType = tostring(RawProps.PrincipalType),\n    Scope = tostring(RawProps.Scope),\n    RoleAdded = tostring(RawProps.RoleDefinitionId),\n    Actor = tostring(Properties_d.caller),\n    ResourceProvider = tostring(parse_json(Properties).resourceProviderValue)\n//\n// ----- Part 3: Apply Escalation Filters and Optional Targeting -----\n// Only include entries for service principals, with optional filters for SPs and actors.\n//\n| where ServicePrincipalType == \"ServicePrincipal\"\n| where (array_length(TargetSPs) == 0 or ServicePrincipalObjectId in (TargetSPs))\n| where (array_length(TargetActors) == 0 or Actor in (TargetActors))\n//\n// ----- Part 4: Final Output -----\n//\n| distinct TimeGenerated, RoleAdded, ResourceProvider, Scope, ServicePrincipalObjectId, Actor\n| sort by TimeGenerated desc\n| take 50",
+    "source_repo": "Cyberlorians/KQL",
+    "source_url": "https://github.com/Cyberlorians/KQL/blob/cd68909313472ee9539ac16f468a3d1113572991/Azure/AzureActivity/Track%20Privilege%20Escalation%20&%20Delegation%20-%20MICROSOFT.AUTHORIZATIONROLEASSIGNMENTSWRITE.kql",
+    "filename": "Track Privilege Escalation & Delegation - MICROSOFT.AUTHORIZATIONROLEASSIGNMENTSWRITE.kql",
+    "collected_at": "2026-06-02T03:19:36.724690+00:00"
+  },
+  {
+    "id": "f2174fbb2703",
+    "title": "Source: https://github.com/sivolko/kql-library",
+    "description": "Collected: 2026-05-28 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet AzureRoleIDs = externaldata(Role: string, ID: string)['https://raw.githubusercontent.com/MorganCPatz/KQL-Queries/refs/heads/main/AzureBuiltinRoleIDs.json'] with (format='multijson');\nAzureActivity\n| where TimeGenerated > ago (7d)\n| where ResourceId contains \"Microsoft.KeyVault\"\n| where OperationName == \"Create role assignment\"\n| extend Scope = parse_json(Authorization).scope \n| parse Scope with * '/secrets/' Secret: string '/' *\n| parse Scope with * '/vaults/' KeyVault: string '/' *\n| extend ['KeyVault or Secret'] = coalesce(tostring(Secret), KeyVault)\n| extend ObjectID = parse_json(tostring(parse_json(tostring(parse_json(Properties).requestbody)).Properties)).PrincipalId\n| extend RoleDefinitionID = tostring(parse_json(tostring(parse_json(tostring(parse_json(Properties).requestbody)).Properties)).RoleDefinitionId)\n| extend RoleID = extract(@'.*\\/(.*)$', 1, RoleDefinitionID)\n| lookup AzureRoleIDs on $left.RoleID == $right.ID\n| where isnotnull(ObjectID)\n| project TimeGenerated, ResourceGroup, KeyVault, ['KeyVault or Secret'], OperationName, Caller, ObjectID, Role",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/89f4af543c8807b56bcabf5739e507bff760423b/queries/c4886b442a7d.kql",
+    "filename": "c4886b442a7d.kql",
+    "collected_at": "2026-06-02T03:19:36.027567+00:00"
+  },
+  {
+    "id": "406cc27f55fd",
+    "title": "Global Secure Access Enforcement by Conditional Access Policy",
+    "description": "Hunting query which helps to identify and analyze sign-in requests outside of Global Secure Access with details about exclusion on Compliant Network conditions in Conditional Access",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/Cloud-Architekt/AzureSentinel\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet CaPolicyGsaBlockOutside = '<DisplayNameOfConditionalAccessPolicyForBlockedOutsideOfGSA>';\n// Definition of excluded Cloud Apps from compliant network CA, examples covers recommendation by Microsoft for exclusions\nlet ExplicitlyGsaExcludedCloudAppIds = dynamic([\n    \"372140e0-b3b7-4226-8ef9-d57986796201\", // Azure Windows VM Sign-In\n    \"0000000a-0000-0000-c000-000000000000\", // Microsoft Intune\n    \"d4ebce55-015a-49b5-a083-c84d1797ae8c\"  // Microsoft Intune Enrollment\n]);\nunion SigninLogs, AADNonInteractiveUserSignInLogs\n// Filter for successful sign-ins to home tenant only\n| where HomeTenantId == ResourceTenantId and ResultType == \"0\" // Successful sign-ins\n// Filter for specific time window and user\n// | where UserPrincipalName == \"<UserPrincipalName>\"\n//         and CreatedDateTime between ( todatetime('<StartTime>') .. todatetime('<EndTime>') )\n// Expand device details\n| extend DeviceDetail = iff(isempty( DeviceDetail_dynamic ), todynamic(DeviceDetail_string), DeviceDetail_dynamic)\n| extend DeviceId = tostring(tolower(DeviceDetail.deviceId))\n| extend DeviceName = tostring(toupper(DeviceDetail.displayName))\n// Expand Token Protection Status details\n| extend TokenProtectionStatus = iff(isempty( TokenProtectionStatusDetails_dynamic ), todynamic(TokenProtectionStatusDetails_string), TokenProtectionStatusDetails_dynamic)\n| extend SignInSessionStatus = tostring(TokenProtectionStatus.signInSessionStatus)\n// Correlate token acquisition with NetworkAccessTraffic logs from GSA\n| join kind = leftouter ( NetworkAccessTraffic\n    | project TimeGenerated, TransactionId, ConnectionId, IPAddress = SourceIp, AgentVersion, UserId, DeviceId, UniqueTokenIdentifier = UniqueTokenId, InitiatingProcessName\n) on UserId, DeviceId, UniqueTokenIdentifier, IPAddress\n// Summarize Results\n| extend ResultType = toint(ResultType)\n| project-reorder CreatedDateTime, SessionId, IncomingTokenType, TokenIssuerType, SignInSessionStatus, UniqueTokenIdentifier, AppDisplayName, ResourceDisplayName, IsThroughGlobalSecureAccess, InitiatingProcessName\n// Correlation with events from XDR AH EntraIdSignInEvents to get Conditional Access details\n| join kind=innerunique (\n    EntraIdSignInEvents\n    | where IsGuestUser == \"0\" and ErrorCode == \"0\"\n) on $left.SessionId == $right.SessionId, $left.CorrelationId == $right.CorrelationId, $left.OriginalRequestId == $right.RequestId, $left.ResultType == $right.ErrorCode, $left.IPAddress == $right.IPAddress, $left.UserId == $right.AccountObjectId\n// Enrichment GSA Insights \n| mv-apply ConditionalAccessPolicyGsa = parse_json(ConditionalAccessPolicies) to typeof(dynamic) on (\n    where ConditionalAccessPolicyGsa.displayName startswith (CaPolicyGsaBlockOutside)\n)\n    | extend IsGsaEnforced =  iff(\n        (\n            parse_json(ConditionalAccessPolicyGsa)[\"result\"] == 'notApplied' and\n            parse_json(ConditionalAccessPolicyGsa)[\"excludeRulesSatisfied\"] has 'locationId' and\n            parse_json(ConditionalAccessPolicyGsa)[\"enforcedGrantControls\"][0] == 'Block'\n        ), true, false)\n    | extend GsaEnforcedResourceScope =  case(\n        (\n            (AppId in~ (ExplicitlyGsaExcludedCloudAppIds) or ResourceIdentity in~ (ExplicitlyGsaExcludedCloudAppIds)) and\n            parse_json(ConditionalAccessPolicyGsa)[\"excludeRulesSatisfied\"] has 'appId')\n        , \"ExplicitlyExcluded\",      \n            (parse_json(ConditionalAccessPolicyGsa)[\"includeRulesSatisfied\"] has AppId)\n        , \"ExplicitlyIncluded\",                  \n            parse_json(ConditionalAccessPolicyGsa)[\"includeRulesSatisfied\"] has 'allApps' and \n            parse_json(ConditionalAccessPolicyGsa)[\"excludeRulesSatisfied\"] !has 'appId'\n        , \"AllAppsIncluded\",            \n            (AppId !in~ (ExplicitlyGsaExcludedCloudAppIds) or ResourceIdentity !in~ (ExplicitlyGsaExcludedCloudAppIds)) and\n            parse_json(ConditionalAccessPolicyGsa)[\"excludeRulesSatisfied\"] has 'appId'\n        , \"MicrosoftExcluded\", \"Unknown\"\n        )\n    | extend GsaEnforcedUserScope = case(\n        (\n            parse_json(ConditionalAccessPolicyGsa)[\"excludeRulesSatisfied\"] has 'userId')\n        , \"ExplicitlyExcluded\",\n            (parse_json(ConditionalAccessPolicyGsa)[\"includeRulesSatisfied\"] has 'userId')\n        , \"ExplicitlyIncluded\",                  \n            parse_json(ConditionalAccessPolicyGsa)[\"includeRulesSatisfied\"] has 'allUsers' and \n            parse_json(ConditionalAccessPolicyGsa)[\"excludeRulesSatisfied\"] !has 'userId'\n        , \"AllUsersIncluded\",            \n            parse_json(ConditionalAccessPolicyGsa)[\"includeRulesSatisfied\"] !has 'allUsers' and \n            (parse_json(ConditionalAccessPolicyGsa)[\"includeRulesSatisfied\"] !has 'userId') and\n            parse_json(ConditionalAccessPolicyGsa)[\"excludeRulesSatisfied\"] !has 'userId'\n        , \"UserNotIncluded\", \"Unknown\"\n        )\n| project CreatedDateTime, UserPrincipalName, IncomingTokenType, SignInSessionStatus, AppDisplayName, ResourceDisplayName, InitiatingProcessName, IsThroughGlobalSecureAccess, ConnectionId, IsGsaEnforced, GsaEnforcedUserScope, GsaEnforcedResourceScope, ConditionalAccessPolicyGsa\n| sort by CreatedDateTime desc\n// Filter for sign-ins which are not going trough GSA and have not been enforced to use GSA\n| where IsThroughGlobalSecureAccess == false and IsGsaEnforced == false",
+    "source_repo": "Cloud-Architekt/AzureSentinel",
+    "source_url": "https://github.com/Cloud-Architekt/AzureSentinel/blob/7576c825d55d5afc344df03640c94c553578229e/Hunting%20Queries/EID-TokenHunting/EnrichedEntraSignInLogs-GsaEnforcementByCaPolicy.kql",
+    "filename": "EnrichedEntraSignInLogs-GsaEnforcementByCaPolicy.kql",
+    "collected_at": "2026-06-02T03:19:23.323752+00:00"
+  },
+  {
+    "id": "a1a6fcc98a49",
+    "title": "Author: Microsoft Azure",
+    "description": "Display name: Process Names Executed Description: Lists number of executions per process. Categories: security Solutions: SecurityInsights Topic: Security",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/microsoft/AzureMonitorCommunity\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4688\n| summarize ExecutionCount = count() by NewProcessName",
+    "source_repo": "microsoft/AzureMonitorCommunity",
+    "source_url": "https://github.com/microsoft/AzureMonitorCommunity/blob/1a382bc9b8be899968a04b8252aa16e8c9bdeb1f/Solutions/SecurityInsights/Queries/Security/Process%20Names%20Executed.kql",
+    "filename": "Process Names Executed.kql",
+    "collected_at": "2026-06-02T03:19:18.896914+00:00"
+  },
+  {
+    "id": "d5cdc228ea3d",
+    "title": "pre-filtering",
+    "description": "pre-filtering",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/cseelhoff-ms/pysigma-sentinel\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent \n// pre-filtering\n| where (isnull(starttime) or TimeGenerated >= starttime)\n    and (isnull(endtime) or TimeGenerated <= endtime)\n    and (EventSourceName == \"Microsoft-Windows-Sysmon\" and EventID == 1)\n    and (array_length(dvcipaddr_has_any_prefix) == 0)\n    and (array_length(commandline_has_all) == 0 or EventData has_all (commandline_has_all)) \n    and (array_length(commandline_has_any) == 0 or EventData has_any (commandline_has_any)) \n    and (array_length(commandline_has_any_ip_prefix) == 0 or has_any_ipv4_prefix(EventData, commandline_has_any_ip_prefix)) \n    and (array_length(actingprocess_has_any) == 0 or EventData has_any (actingprocess_has_any)) \n    and (array_length(targetprocess_has_any) == 0 or EventData has_any (targetprocess_has_any)) \n    and (array_length(parentprocess_has_any) == 0)\n    and (targetusername_has == '*' or EventData has targetusername_has)  \n    and (array_length(dvchostname_has_any) == 0 or Computer has_any (dvchostname_has_any))  \n| parse-kv EventData as (\n    ProcessGuid: string, \n    ProcessId: string,\n    Image: string,\n    FileVersion: string,\n    Description: string,\n    Product: string,\n    Company: string,\n    OriginalFileName: string,\n    CommandLine: string,\n    CurrentDirectory: string,\n    User: string,\n    LogonGuid: string, \n    LogonId: string,\n    IntegrityLevel: string,\n    Hashes: string,\n    ParentProcessGuid: string, \n    ParentProcessId: string,\n    ParentImage: string,\n    ParentCommandLine: string,\n    ParentUser: string\n    ) \n    with (regex=@'<Data Name=\"(\\w+)\">{?([^<]*?)}?</Data>')\n// -- post-filtering\n| where (array_length(commandline_has_any) == 0 or CommandLine has_any (commandline_has_any)) \n    and (array_length(commandline_has_all) == 0 or CommandLine has_all (commandline_has_all)) \n    and (array_length(commandline_has_any_ip_prefix) == 0 or has_any_ipv4_prefix(CommandLine, commandline_has_any_ip_prefix)) \n    and (array_length(actingprocess_has_any) == 0 or ParentImage has_any (actingprocess_has_any)) \n    and (targetusername_has == '*' or User has targetusername_has) \n    and (array_length(targetprocess_has_any) == 0 or Image has_any (targetprocess_has_any))\n// --\n| parse-kv Hashes as (MD5: string, SHA1: string, SHA256: string, IMPHASH: string) with (quote='\"')\n| extend\n    Hash = coalesce (SHA256, SHA1, IMPHASH, MD5, \"\")\n| extend\n    HashType = tostring(dynamic([\"SHA256\", \"SHA1\", \"IMPHASH\", \"MD5\"])[array_index_of(pack_array(SHA256, SHA1, IMPHASH, MD5), Hash)])\n| project-rename\n    TargetProcessMD5 = MD5,\n    TargetProcessSHA1 = SHA1,\n    TargetProcessSHA256 = SHA256,\n    TargetProcessIMPHASH = IMPHASH\n| project-away Hashes\n| extend         \n    TargetUsername = User,\n    TargetProcessCommandLine = CommandLine\n| project-rename \n    DvcHostname = Computer,\n    TargetUserSessionGuid = LogonGuid,\n    TargetProcessId = ProcessId,\n    TargetUserSessionId = LogonId,  \n    TargetProcessGuid = ProcessGuid,\n    TargetProcessName = Image,\n    TargetProcessFilename = OriginalFileName,\n    TargetProcessCurrentDirectory = CurrentDirectory,\n    TargetProcessIntegrityLevel = IntegrityLevel,    \n    TargetProcessFileCompany = Company,\n    TargetProcessFileDescription = Description,\n    TargetProcessFileVersion = FileVersion,\n    TargetProcessFileProduct = Product,   \n    ActingProcessId = ParentProcessId,\n    ActingProcessGuid = ParentProcessGuid,                          \n    ActingProcessCommandLine = ParentCommandLine,\n    ActingProcessName = ParentImage,\n    ActorUsername = ParentUser\n| extend \n    TargetUsernameType = iff(isnotempty(TargetUsername), 'Windows', ''),\n    ActorUsernameType = iff(isnotempty(ActorUsername), 'Windows', ''),\n    EventProduct = \"Sysmon\",\n    // aliases\n    Process = TargetProcessName,\n    Dvc = DvcHostname,\n    EventType = \"ProcessCreated\",\n    EventOriginalType = \"1\",\n    EventStartTime = todatetime(TimeGenerated),\n    EventEndTime = todatetime(TimeGenerated),\n    EventCount = int(1),\n    EventVendor = \"Microsoft\",\n    EventSchemaVersion = \"0.1.0\",\n    EventSchema = 'ProcessEvent',\n    EventResult = 'Success',\n    DvcOs = \"Windows\"\n| project-away\n    EventData,\n    AzureDeploymentID,\n    EventID,\n    ManagementGroupName,\n    SourceSystem,\n    Channel,\n    Task,\n    Level,\n    Activity,\n    SourceComputerId,\n    EventOriginId,\n    TimeCollected\n",
+    "source_repo": "cseelhoff-ms/pysigma-sentinel",
+    "source_url": "https://github.com/cseelhoff-ms/pysigma-sentinel/blob/f17046ba6bc400641f7bdc85e92781d0e73cd312/Im_ProcessCreateCustom.kql",
+    "filename": "Im_ProcessCreateCustom.kql",
+    "collected_at": "2026-06-02T03:19:18.177133+00:00"
+  },
+  {
+    "id": "7e15f9791b6a",
+    "title": "Geoip Enriched Failed Logins",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/syedmustafa22/azure-soc-sentinel-lab\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet GeoIPDB_FULL = _GetWatchlist(\"geoip\");\nlet WindowsEvents = SecurityEvent\n    | where EventID == 4625\n    | order by TimeGenerated desc\n    | evaluate ipv4_lookup(GeoIPDB_FULL, IpAddress, network);\nWindowsEvents\n| project Computer, AttackerIp = IpAddress, cityname, countryname, latitude, longitude",
+    "source_repo": "syedmustafa22/azure-soc-sentinel-lab",
+    "source_url": "https://github.com/syedmustafa22/azure-soc-sentinel-lab/blob/a3a561087808b86838bcbff0df06b39974df6880/queries/geoip_enriched_failed_logins.kql",
+    "filename": "geoip_enriched_failed_logins.kql",
+    "collected_at": "2026-06-02T03:19:17.475061+00:00"
+  },
+  {
+    "id": "2d5b4e3a5217",
+    "title": "\ud83d\udea8 New Sentinel KQL Detection for ShadowHound \ud83d\udea8",
+    "description": "https://blog.fndsec.net/2024/11/25/shadowhound/",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago(1h)\n| where EventID == 4662\n| where not (SubjectUserSid contains \"S-1-5-18\")\n| where AccessMask == \"0x10\"\n| where strlen(Properties) >= 2000\n\n// MITRE ATT&CK\n// Technique: T1069 Permission Groups Discovery\n// Tactic: TA0007 Discovery",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/19e3acda471a9b4a8956957e45412218f19498e8/Sentinel/Sentinel%20KQL%20Detection%20for%20ShadowHound.kql",
+    "filename": "Sentinel KQL Detection for ShadowHound.kql",
+    "collected_at": "2026-06-02T03:19:16.755312+00:00"
+  },
+  {
+    "id": "8848e7fde840",
+    "title": "--- Tunables ---",
+    "description": "--- Tunables ---",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/AttacktheSOC/Azure-SecOps\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet TableName = \"SecurityEvent\";\n// --- Tunables ---\nlet MinDeltaGB_24h = 5.0;          // absolute increase over baseline (GB) required to alert\nlet SpikePct_24h   = 50.0;         // percent increase over baseline required to alert\nlet SpikeMultiplier_24h = 1.8;     // optional: current 24h must be > baseline * multiplier\n// --- Helpers ---\nlet MB_to_GB = (mb:real) { mb / 1000.0 }; // decimal GB\nlet SafeReal = (x:real) { iif(isnull(x) or isnan(x), 0.0, x) };\n// --- Window alignment: \"current day\" = last 24 hours ---\nlet Anchor = ago(24h);             // bucket boundary for the current 24h window\nlet NowTime = now();\n// Pull enough history to compute up to 30 prior 24h windows (+ current)\nlet Windows =\n    Usage\n    | where DataType =~ TableName\n    //| where IsBillable == true // billable ingestion only\n    | where StartTime between (ago(31d) .. NowTime)\n    // Create rolling 24h windows aligned to Anchor\n    | extend WindowStart = bin_at(StartTime, 1d, Anchor)\n    | summarize WindowMB = sum(Quantity) by WindowStart;\n// Current rolling 24h window: [now-24h .. now]\nlet Current =\n    Windows\n    | where WindowStart between (Anchor .. NowTime)\n    | summarize Current24hMB = SafeReal(sum(WindowMB))\n    | extend joinKey = 1;\n// Baseline function: average of previous N rolling 24h windows (excluding current)\nlet Baseline24h = (days:int) {\n    Windows\n    | where WindowStart between (ago(totimespan(days * 1d)) .. ago(1d))\n    | summarize\n        AvgMB  = SafeReal(avg(WindowMB)),\n        P95MB  = SafeReal(percentile(WindowMB, 95)),\n        StdevMB = SafeReal(stdev(WindowMB))\n    | extend joinKey = 1\n};\n// Build baselines\nlet B7  = Baseline24h(7)  | project Avg7MB=AvgMB,  P95_7MB=P95MB  | extend joinKey=1;\nlet B14 = Baseline24h(14) | project Avg14MB=AvgMB, P95_14MB=P95MB | extend joinKey=1;\nlet B30 = Baseline24h(30) | project Avg30MB=AvgMB, P95_30MB=P95MB | extend joinKey=1;\n// Join and compute deltas/percentages\nCurrent\n| join kind=inner B7  on joinKey\n| join kind=inner B14 on joinKey\n| join kind=inner B30 on joinKey\n| extend\n    Current24hGB = MB_to_GB(Current24hMB),\n    Avg7_24hGB  = MB_to_GB(Avg7MB),\n    Avg14_24hGB = MB_to_GB(Avg14MB),\n    Avg30_24hGB = MB_to_GB(Avg30MB)\n| extend\n    Delta7_24hGB  = Current24hGB - Avg7_24hGB,\n    Delta14_24hGB = Current24hGB - Avg14_24hGB,\n    Delta30_24hGB = Current24hGB - Avg30_24hGB\n| extend\n    Pct7_24h  = iif(Avg7_24hGB  <= 0.0, real(null), 100.0 * (Current24hGB - Avg7_24hGB)  / Avg7_24hGB),\n    Pct14_24h = iif(Avg14_24hGB <= 0.0, real(null), 100.0 * (Current24hGB - Avg14_24hGB) / Avg14_24hGB),\n    Pct30_24h = iif(Avg30_24hGB <= 0.0, real(null), 100.0 * (Current24hGB - Avg30_24hGB) / Avg30_24hGB)\n| extend\n    AlarmReason = case(\n        // Primary detection: 24h increase vs 7-day baseline\n        (Avg7_24hGB > 0.0 and Delta7_24hGB >= MinDeltaGB_24h and Pct7_24h >= SpikePct_24h),\n            \"Last-24h spike vs 7d rolling-24h baseline\",\n        // Optional multiplier-based detection (useful when baselines are large)\n        (Avg7_24hGB > 0.0 and Current24hGB >= Avg7_24hGB * SpikeMultiplier_24h and Delta7_24hGB >= MinDeltaGB_24h),\n            \"Last-24h spike (multiplier) vs 7d rolling-24h baseline\",\n        \"NoAlert\"\n    )\n//| where AlarmReason != \"NoAlert\"\n| project\n    TimeGenerated = now(),\n    TableName,\n    WindowStart = Anchor,\n    WindowEnd = NowTime,\n    AlarmReason,\n    Current24hGB,\n    Avg7_24hGB, Avg14_24hGB, Avg30_24hGB,\n    Delta7_24hGB, Delta14_24hGB, Delta30_24hGB,\n    Pct7_24h, Pct14_24h, Pct30_24h",
+    "source_repo": "AttacktheSOC/Azure-SecOps",
+    "source_url": "https://github.com/AttacktheSOC/Azure-SecOps/blob/1283063b774104d202ad6ffb84d32fac9d563eb4/KQL/Table%20Info/TableIngestionMonitor.kql",
+    "filename": "TableIngestionMonitor.kql",
+    "collected_at": "2026-06-02T03:19:15.889412+00:00"
+  },
+  {
+    "id": "22e81bf55cec",
+    "title": "KQL query to detect IPsec DH Groups with low modulus",
+    "description": "KQL query to detect IPsec DH Groups with low modulus",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Azure/ausgovcaf-cloudsoe\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent \n| where EventID == 4650 or EventID == 4651\n| extend ed = parse_xml(EventData).EventData.Data\n| mv-apply ed on \n(\n    where ed['@Name'] == 'DHGroup'\n    | project DHGroup = ed['#text']\n)\n| where DHGroup != \"%%8232\" and DHGroup != \"%%8248\" and DHGroup != \"%%8233\" and DHGroup != \"%%8234\"\n| project TimeGenerated, Computer, Activity, DHGroup",
+    "source_repo": "Azure/ausgovcaf-cloudsoe",
+    "source_url": "https://github.com/Azure/ausgovcaf-cloudsoe/blob/a51ffc2c08875d71978e953c7cdb48f0c27a8a9b/kql/windows-ipsec-detect-low-modulus-dh-groups.kql",
+    "filename": "windows-ipsec-detect-low-modulus-dh-groups.kql",
+    "collected_at": "2026-06-02T03:19:15.111810+00:00"
+  },
+  {
+    "id": "ed03b1c74c33",
+    "title": "Locate remote servers where data was sent, and then identify the cryptocurrency wallets where the money was transferred",
+    "description": "Locate remote servers where data was sent, and then identify the cryptocurrency wallets where the money was transferred",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/rod-trent/KQLMysteries\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 3 // Network connection event\n| where ProcessName has_any ('MsMpEng.exe', 'cert.exe', 'agent.exe') // Malicious processes\n| where RemoteAddress !in ('127.0.0.1', '::1') // Exclude local connections\n| where RemotePort != 443 // Exclude HTTPS connections\n| join kind=inner ( // Join with the blob storage table that contains the IP and domain information\n    externaldata (IP:string, Domain:string, Location:string, Owner:string, Reputation:string) \n    [h'https://storageaccount.blob.core.windows.net/container/blob.csv'] with (format=\"csv\")\n) on $left.RemoteAddress == $right.IP // Join on the remote address and IP columns\n| join kind=inner ( // Join with the blob storage table that contains the cryptocurrency transaction and wallet information\n    externaldata (TransactionID:string, SourceWallet:string, DestinationWallet:string, Amount:double, Date:datetime) \n    [h'https://storageaccount.blob.core.windows.net/container/blob.csv'] with (format=\"csv\")\n) on $left.CommandLine contains $right.SourceWallet or $left.CommandLine contains $right.DestinationWallet // Join on the command line and wallet columns\n| project TimeGenerated, ComputerName, Account, ProcessName, RemoteAddress, RemotePort, Domain, Location, Owner, Reputation, TransactionID, SourceWallet, DestinationWallet, Amount, Date // Select relevant fields",
+    "source_repo": "rod-trent/KQLMysteries",
+    "source_url": "https://github.com/rod-trent/KQLMysteries/blob/2519106d7b566505bdd3d1d6b40fb49251d9fba3/Queries/Chapter_3_Crypto_Wallets.kql",
+    "filename": "Chapter_3_Crypto_Wallets.kql",
+    "collected_at": "2026-06-02T03:19:14.390298+00:00"
+  },
+  {
+    "id": "df21a666a343",
+    "title": "Enter a reference list of hostnames for your DC servers",
+    "description": "let DCServersList = dynamic ([\"DC01.prime.pri\",\"DC02.prime.pri\"]);",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/tomwechsler/Microsoft_Certified_Windows_Server_Hybrid_Administrator_Associate\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n//| where Computer in (DCServersList)\n| where EventID == 4662 and ObjectServer == 'DS'\n| where AccountType != 'Machine'\n| where Properties has '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2' //DS-Replication-Get-Changes\n    or Properties has '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2' //DS-Replication-Get-Changes-All\n    or Properties has '89e95b76-444d-4c62-991a-0facbeda640c' //DS-Replication-Get-Changes-In-Filtered-Set\n| project TimeGenerated, Account, Activity, Properties, SubjectLogonId, Computer\n| join kind=leftouter\n(\n    SecurityEvent\n    //| where Computer in (DCServersList)\n    | where EventID == 4624 and LogonType == 3\n    | where AccountType != 'Machine'\n    | project TargetLogonId, IpAddress\n)\non $left.SubjectLogonId == $right.TargetLogonId\n| project-reorder TimeGenerated, Computer, Account, IpAddress\n| extend timestamp = TimeGenerated, AccountCustomEntity = Account, HostCustomEntity = Computer, SourceAddress = IpAddress",
+    "source_repo": "tomwechsler/Microsoft_Certified_Windows_Server_Hybrid_Administrator_Associate",
+    "source_url": "https://github.com/tomwechsler/Microsoft_Certified_Windows_Server_Hybrid_Administrator_Associate/blob/f450c7e1756606ba331a809198917c9657c89853/AZ-801/Non_DC_AD_Replication.kql",
+    "filename": "Non_DC_AD_Replication.kql",
+    "collected_at": "2026-06-02T03:19:13.471065+00:00"
+  },
+  {
+    "id": "4443c92b29db",
+    "title": "description: detects suspicious launches of msbuild.exe. RedLine stealer has been",
+    "description": "using this to check for cryptocurrency wallets on the target system",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "defender"
+    ],
+    "content": "// Source: https://github.com/reversinglabs/reversinglabs-siem-rules\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet exclusions = @'.*\\\\(devenv.exe|msbuild.exe|python.exe|explorer.exe|nuget.exe)$';\nSysmonParser\n| where EventID == 1 \n| where ((Image endswith @'\\MSBuild.exe' or OriginalFileName =~ @'MSBuild.exe') and not (ParentImage matches regex exclusions))\n| union \n(SecurityEvent\n| where EventID == 4688\n| where ((NewProcessName endswith @'\\MSBuild.exe') and not (ParentProcessName matches regex exclusions))),\n(DeviceProcessEvents\n| where ActionType == \"ProcessCreated\"\n| where ((FolderPath endswith @'\\MSBuild.exe') and not (InitiatingProcessFolderPath matches regex exclusions)))",
+    "source_repo": "reversinglabs/reversinglabs-siem-rules",
+    "source_url": "https://github.com/reversinglabs/reversinglabs-siem-rules/blob/23fc452b527f2f8e08c26c6dffc0f734e750a2be/Malware/RedLine/20230731/KQL/redline-process-msbuild.kql",
+    "filename": "redline-process-msbuild.kql",
+    "collected_at": "2026-06-02T03:19:12.528878+00:00"
+  },
+  {
+    "id": "f2013e39566a",
+    "title": "Kerberoasting",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Amanpreet-Ramgharia/soc-analyst-portfolio\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4769\n| where TicketEncryptionType == \"0x17\"\n| summarize Count = count() by Account, ServiceName\n| order by Count desc",
+    "source_repo": "Amanpreet-Ramgharia/soc-analyst-portfolio",
+    "source_url": "https://github.com/Amanpreet-Ramgharia/soc-analyst-portfolio/blob/9722e7c727a075d4757896337407b4d13cc9ff5e/KQL-Queries/Kerberoasting.kql",
+    "filename": "Kerberoasting.kql",
+    "collected_at": "2026-06-02T03:19:11.608445+00:00"
+  },
+  {
+    "id": "4a07a8759d9e",
+    "title": "----- Part 0: Analyst-Driven Targeting (Optional) -----",
+    "description": "To see all activity, leave the list empty: dynamic([]) To target specific users, add their SIDs inside the brackets.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Cyberlorians/KQL\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff// Objective: Tracks user logoff events (Event ID 4634) in Windows SecurityEvent logs, enabling targeted filtering by user SID and reporting on session termination for user activity auditing.\n//\n// ----- Part 0: Analyst-Driven Targeting (Optional) -----\n// To see all activity, leave the list empty: dynamic([])\n// To target specific users, add their SIDs inside the brackets.\nlet Targeted_User_SIDs = dynamic([]); // Example: dynamic([\"S-1-5-...\"])\n// \n// ----- Part 1: Filter for Relevant 4634 Events -----\n// GPO Path: To capture 4634 events, you must enable the following subcategory:\n// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logoff (Success)\n// Note: This event is generated when a logon session is terminated and is used to track when users log off.\nSecurityEvent\n| where TimeGenerated > ago(14d)\n| where EventID == 4634\n| where Activity == \"4634 - An account was logged off.\"\n| where AccountType == \"User\"\n//\n// ----- Part 2: Custom Filtering -----\n// Exclude common service and system accounts.\n| where not(TargetUserName has_any ('MSOL', 'svc', '$'))\n//\n// ----- Part 3: Flexible Filtering for Targeted Accounts -----\n// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.\n| where array_length(Targeted_User_SIDs) == 0 or TargetUserSid in (Targeted_User_SIDs)\n//\n// ----- Part 4: Analysis & Enrichment -----\n// Add logon type and analyst targeting flag.\n| extend\n    LogonTypeName = case(\n        LogonType == 2, \"Interactive (Console)\",\n        LogonType == 3, \"Network\",\n        LogonType == 4, \"Batch\",\n        LogonType == 5, \"Service\",\n        LogonType == 10, \"RemoteInteractive (RDP)\",\n        \"Other\"\n    ),\n    IsTargetedUser = TargetUserSid in (Targeted_User_SIDs)\n//\n// ----- Part 5: Final Output -----\n// Output distinct, sorted, and enriched logoff activity.\n| distinct TimeGenerated, IsTargetedUser, TargetUserName, TargetUserSid, Computer, LogonTypeName, LogonProcessName, Activity\n| sort by TimeGenerated desc\n| take 50",
+    "source_repo": "Cyberlorians/KQL",
+    "source_url": "https://github.com/Cyberlorians/KQL/blob/cd68909313472ee9539ac16f468a3d1113572991/Windows/SecurityEvent/4634%20-%20An%20account%20was%20logged%20off%20-%20System%20Access%20&%20Log%20Off%20(SuccessFailure).kql",
+    "filename": "4634 - An account was logged off - System Access & Log Off (SuccessFailure).kql",
+    "collected_at": "2026-06-02T03:19:10.852193+00:00"
+  },
+  {
+    "id": "80c28a5fb6e9",
+    "title": "Credential Dumping Lsass Access",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Git805/detection-query-library\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\n# Credential Dumping via LSASS Memory Access \u2014 KQL (Microsoft Sentinel)\n# MITRE ATT&CK: T1003.001 \u2014 OS Credential Dumping: LSASS Memory\n# Author: Charudatta Padhye\n# Date: 2025-04-25\n# Reference: https://attack.mitre.org/techniques/T1003/001/\n#\n# Description:\n#   Detects credential dumping attempts targeting LSASS process memory.\n#   Tools like Mimikatz, ProcDump, and Windows Task Manager can dump\n#   LSASS memory to extract plaintext credentials, NTLM hashes, and\n#   Kerberos tickets. Detection focuses on non-system processes\n#   requesting PROCESS_VM_READ access to lsass.exe.\n#\n# Tested against: Mimikatz sekurlsa::logonpasswords, ProcDump -ma lsass,\n#   Cobalt Strike hashdump, Metasploit kiwi module\n#\n# Tuning:\n#   Add legitimate security tools (EDR agents, AV) to excludedProcesses.\n#   These legitimately access LSASS and will cause FP without exclusion.\n#\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nlet excludedProcesses = dynamic([\n    \"MsMpEng.exe\",      // Windows Defender\n    \"csrss.exe\",        // System process\n    \"wininit.exe\",      // System process\n    \"lsm.exe\",          // Local Session Manager\n    \"svchost.exe\"       // Service host (tune carefully)\n]);\n\nSecurityEvent\n| where TimeGenerated > ago(1h)\n| where EventID == 4656  // Handle requested for object\n| where ObjectName contains \"lsass\"\n| where ProcessName !in (excludedProcesses)\n| where AccessMask in (\n    \"0x1010\",   // PROCESS_VM_READ + PROCESS_QUERY_INFORMATION\n    \"0x1410\",   // Common Mimikatz access mask\n    \"0x143a\",   // ProcDump access mask\n    \"0x1fffff\"  // PROCESS_ALL_ACCESS\n)\n| summarize\n    AccessAttempts = count(),\n    AccessMasks = make_set(AccessMask),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated)\n    by Computer, ProcessName, SubjectUserName, SubjectDomainName\n| extend\n    MITRETechnique = \"T1003.001\",\n    Tactic = \"Credential Access\",\n    Severity = \"High\",\n    Description = strcat(ProcessName, \" attempted LSASS memory access on \",\n        Computer, \" as \", SubjectDomainName, \"\\\\\", SubjectUserName)\n| project\n    FirstSeen,\n    LastSeen,\n    Computer,\n    ProcessName,\n    SubjectUserName,\n    SubjectDomainName,\n    AccessAttempts,\n    AccessMasks,\n    Severity,\n    MITRETechnique,\n    Tactic,\n    Description\n| order by AccessAttempts desc",
+    "source_repo": "Git805/detection-query-library",
+    "source_url": "https://github.com/Git805/detection-query-library/blob/8f1f0141439097bc4ce55bec29fc12345ab3a25e/kql/credential_dumping_lsass_access.kql",
+    "filename": "credential_dumping_lsass_access.kql",
+    "collected_at": "2026-06-02T03:19:10.131761+00:00"
+  },
+  {
+    "id": "b7df7e91de34",
+    "title": "Collectionofgroupchangequeries",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/am-it-github/Azure-Scripts-Functions\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nACCOUNT ADDED TO GLOBAL GROUP:\nSecurityEvent\n| where EventID == 4728\n \nACCOUNT REMOVAL FROM GLOBAL GROUP:\nSecurityEvent\n| where EventID == 4729\n| where MemberName contains \"NAME\"\n \nACCOUNT ADDED TO LOCAL GROUP:\nSecurityEvent\n| where EventID == 4732\n \nACCOUNT REMOVAL FROM LOCAL GROUP:\nSecurityEvent\n| where EventID == 4733\n \nGROUP CHANGED:\nSecurityEvent\n| where EventID == 4737\n| where TargetUserName contains \"NAME\"\n \nLOCAL GROUP CHANGED:\nSecurityEvent\n| where EventID == 4735\n| where TargetUserName contains \"NAME\"\n \nGLOBAL GROUP DELETED:\nSecurityEvent\n| where EventID == 4730\n \nLOCAL GROUP DELETED:\nSecurityEvent\n| where EventID == 4734",
+    "source_repo": "am-it-github/Azure-Scripts-Functions",
+    "source_url": "https://github.com/am-it-github/Azure-Scripts-Functions/blob/bb3637702ff4d42853135650f856932adb6bcc22/KQL/General%20Account%20and%20Group%20Queries/CollectionOfGroupChangeQueries.kql",
+    "filename": "CollectionOfGroupChangeQueries.kql",
+    "collected_at": "2026-06-02T03:19:09.418798+00:00"
+  },
+  {
+    "id": "5f3ea4b0ec6c",
+    "title": "Function Name: vimRegistryEventMicrosoftSecurityEvent",
+    "description": "Description: This ASIM parser supports normalizing Microsoft Windows events (event numbers 4657 and 4663), logs ingested in 'SecurityEvent' table to the ASIM Registry Event normalized schema.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/LaurieRhodes/PUBLIC-adx-basic\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff//\n// Function Name: vimRegistryEventMicrosoftSecurityEvent\n// Description: This ASIM parser supports normalizing Microsoft Windows events (event numbers 4657 and 4663), logs ingested in 'SecurityEvent' table to the ASIM Registry Event normalized schema.\n\n// Version: \n// Last Updated: \n//\n.create-or-alter function with (skipvalidation=true) vimRegistryEventMicrosoftSecurityEvent(    ['starttime']:datetime=datetime(null),\n    ['endtime']:datetime=datetime(null),\n    ['eventtype_in']:dynamic=dynamic([]),\n    ['actorusername_has_any']:dynamic=dynamic([]),\n    ['registrykey_has_any']:dynamic=dynamic([]),\n    ['registryvalue_has_any']:dynamic=dynamic([]),\n    ['registrydata_has_any']:dynamic=dynamic([]),\n    ['dvchostname_has_any']:dynamic=dynamic([]),\n    ['disabled']:bool=false)\n{\nlet parser = (\nstarttime: datetime=datetime(null),\nendtime: datetime=datetime(null),\neventtype_in: dynamic=dynamic([]),\nactorusername_has_any: dynamic=dynamic([]),\nregistrykey_has_any: dynamic =dynamic([]),\nregistryvalue_has_any: dynamic =dynamic([]),\nregistrydata_has_any: dynamic =dynamic([]),\ndvchostname_has_any: dynamic=dynamic([]),\ndisabled: bool=false\n) {\nlet ASIM_GetAccountType = (sid: string) {\niif (\nsid in (\"S-1-0-0\", \"S-1-5-18\", \"S-1-5-19\", \"S-1-5-20\"),\n\"Simple\"\n    ,\n\"Windows\"\n)\n};\n    let ASIM_ParseSecurityEvents = (SecurityEvent: (SubjectDomainName: string, SubjectUserName: string, ProcessId: string, ObjectName: string, SubjectUserSid: string, SubjectLogonId: string, ProcessName: string)) {\n    SecurityEvent\n        | project-rename\n            ActorUsername = SubjectUserName\n            ,\n            ActorUserId = SubjectUserSid\n            ,\n            ActorSessionId = SubjectLogonId\n            ,\n            ActingProcessName = ProcessName\n            ,\n            ActorDomainName = SubjectDomainName\n        | extend\n            ActorUsername = iif(isnotempty(ActorDomainName), strcat(ActorDomainName, @'\\', ActorUsername), ActorUsername)\n            ,\n            ActingProcessId = tostring(toint(tolong(ProcessId)))\n            ,\n            RegistryKey = iif(\n                ObjectName startswith @\"\\REGISTRY\\MACHINE\",\n                replace_string(ObjectName, @\"\\REGISTRY\\MACHINE\", \"HKEY_LOCAL_MACHINE\")\n            ,\n                replace_string(ObjectName, @\"\\REGISTRY\\USER\", \"HKEY_USERS\")\n            )\n};\n    let Event4663TypeLookup = datatable (AccessMask: string, EventType: string)\n        [\n    \"0x1\", \"RegistryValueRead\"\n        ,\n    \"0x10\", \"RegistryKeyNotify\"\n        ,\n    \"0x10000\", \"RegistryKeyDeleted\"\n        ,\n    \"0x2\", \"RegistryValueSet\"\n        ,\n    \"0x20000\", \"MetadataAccessed\"\n        ,\n    \"0x20006\", \"RegistryValueSet\"\n        ,\n    \"0x40000\", \"MetadataModified\"\n        ,\n    \"0x8\", \"RegistrySubkeyEnumerated\"\n];\n    let Event4567TypeLookup = datatable (EventOriginalSubType: string, EventType: string)\n        [\n    \"%%1904\", \"RegistryValueSet\"\n        ,\n    \"%%1905\", \"RegistryValueSet\"\n        ,\n    \"%%1906\", \"RegistryValueDeleted\"\n];\n    let RegistryType = datatable (TypeCode: string, TypeName: string)\n        [\n    \"%%1872\", \"REG_NONE\"\n        ,\n    \"%%1873\", \"REG_SZ\"\n        ,\n    \"%%1874\", \"REG_EXPAND_SZ\"\n        ,\n    \"%%1875\", \"REG_BINARY\"\n        ,\n    \"%%1876\", \"REG_DWORD\"\n        ,\n    \"%%1879\", \"REG_MULTI_SZ\"\n        ,\n    \"%%1883\", \"REG_QWORD\"\n];\n    union isfuzzy=false\n        (\n        SecurityEvent\n        | where not(disabled)\n        | where (isnull(starttime) or TimeGenerated >= starttime)\n            and (isnull(endtime) or TimeGenerated <= endtime)\n        | where EventID == 4663 and ObjectType == \"Key\"\n        | where (array_length(actorusername_has_any) == 0 or (SubjectDomainName has_any (actorusername_has_any)) or (SubjectUserName has_any (actorusername_has_any)) or (strcat(SubjectDomainName, '\\\\', SubjectUserName) has_any (actorusername_has_any))) and\n            (array_length(registryvalue_has_any) == 0) and\n            (array_length(registrydata_has_any) == 0) and\n            (array_length(dvchostname_has_any) == 0 or Computer has_any (dvchostname_has_any))\n        | lookup Event4663TypeLookup on AccessMask\n        | extend EventType = iif(isempty(EventType), \"Other\", EventType)\n        | where (array_length(eventtype_in) == 0 or EventType in~ (eventtype_in))\n        | invoke ASIM_ParseSecurityEvents()\n        | where (array_length(registrykey_has_any) == 0 or RegistryKey has_any (registrykey_has_any))\n        | project\n            TimeGenerated,\n            Computer,\n            EventID,\n            EventType,\n            ActorUsername,\n            ActorDomainName,\n            ActorUserId,\n            ActorSessionId,\n            ActingProcessName,\n            ActingProcessId,\n            RegistryKey,\n            _ResourceId,\n            Type\n        ),\n            (\n            SecurityEvent\n            | where not(disabled)\n            | where (isnull(starttime) or TimeGenerated >= starttime)\n                and (isnull(endtime) or TimeGenerated <= endtime)\n            | where EventID == 4657\n            | where (array_length(actorusername_has_any) == 0 or (SubjectDomainName has_any (actorusername_has_any)) or (SubjectUserName has_any (actorusername_has_any)) or (strcat(SubjectDomainName, '\\\\', SubjectUserName) has_any (actorusername_has_any))) and\n                (array_length(registryvalue_has_any) == 0 or (ObjectValueName) has_any (registrydata_has_any)) and\n                (array_length(registrydata_has_any) == 0 or (NewValue) has_any (registrydata_has_any)) and\n                (array_length(dvchostname_has_any) == 0 or Computer has_any (dvchostname_has_any))\n            | invoke ASIM_ParseSecurityEvents()\n            | where (array_length(registrykey_has_any) == 0 or RegistryKey has_any (registrykey_has_any))\n            | extend\n                EventOriginalSubType = OperationType\n                ,\n                RegistryValue = ObjectValueName\n            | lookup Event4567TypeLookup on EventOriginalSubType\n            | extend EventType = iif(isempty(EventType), \"Other\", EventType)\n            | where (array_length(eventtype_in) == 0 or EventType in~ (eventtype_in))\n            | project\n                TimeGenerated,\n                Computer,\n                EventID,\n                EventType,\n                ActorUsername,\n                ActorDomainName,\n                ActorUserId,\n                ActorSessionId,\n                ActingProcessName,\n                ActingProcessId,\n                RegistryKey,\n                _ResourceId,\n                Type,\n                NewValueType,\n                OldValueType,\n                EventOriginalSubType,\n                OldValue,\n                NewValue,\n                RegistryValue\n            )\n        | lookup RegistryType on $left.NewValueType == $right.TypeCode\n        | project-rename RegistryValueType = TypeName\n        | lookup RegistryType on $left.OldValueType == $right.TypeCode\n        | project-rename RegistryPreviousValueType = TypeName\n        | extend\n            RegistryValueData = iff (EventOriginalSubType == \"%%1906\", OldValue, NewValue)\n            ,\n            RegistryPreviousKey = iff (EventOriginalSubType == \"%%1905\", RegistryKey, \"\")\n            ,\n            RegistryPreviousValue = iff (EventOriginalSubType == \"%%1905\", RegistryValue, \"\")\n            ,\n            RegistryPreviousValueData = iff (EventOriginalSubType == \"%%1905\", OldValue, \"\")\n        | project-away\n            NewValueType,\n            OldValueType,\n            EventOriginalSubType,\n            OldValue,\n            NewValue\n    | invoke _ASIM_ResolveFQDN (\"Computer\")\n    | extend\n        ActorUserIdType = iff (ActorUserId <> \"S-1-0-0\", \"SID\", \"\"),\n        ActorUserId = iff (ActorUserId <> \"S-1-0-0\", ActorUserId, \"\")\n    | project-rename\n        DvcDomainType = DomainType\n        ,\n        DvcHostname = ExtractedHostname\n    | extend\n        DvcFQDN = iif(DvcDomainType == \"FQDN\", FQDN, \"\")\n        ,\n        DvcDomain = iif(isnotempty(Domain), Domain, \"\")\n        ,\n        Dvc = iif(DvcDomainType == \"FQDN\", FQDN, \"DvcHostname\")\n    | extend\n        ActorUserType = _ASIM_GetWindowsUserType(ActorUsername, ActorUserId)\n        ,\n        ActorUsernameType = ASIM_GetAccountType(ActorUserId)\n    | extend\n        User = ActorUsername\n        ,\n        UserId = ActorUserId\n        ,\n        ActorUserSid = ActorUserId\n        ,\n        Process = ActingProcessName\n        ,\n        Dvc = iif(DvcDomainType == \"FQDN\", Computer, \"\")\n        ,\n        EventStartTime = TimeGenerated\n        ,\n        EventEndTime = TimeGenerated\n        ,\n        EventOriginalType = tostring(EventID)\n    | extend\n        EventSchemaVersion = \"0.1\"\n        ,\n        EventSchema = \"RegistryEvent\"\n        ,\n        EventCount = toint(1)\n        ,\n        EventResult = \"Success\"\n        ,\n        EventVendor = \"Microsoft\"\n        ,\n        EventProduct = \"Security Events\"\n        ,\n        DvcOs = \"Windows\"\n        | project-away ActorDomainName,ActorUserSid,ActorUserType,Computer,Domain,DvcDomainType,DvcDomain,DvcFQDN,EventID,FQDN,UserId,_ResourceId\n};\nparser (\n    starttime                = starttime,\n    endtime                  = endtime,\n    eventtype_in             = eventtype_in,\n    actorusername_has_any    = actorusername_has_any,\n    registrykey_has_any = registrykey_has_any,\n    registryvalue_has_any = registryvalue_has_any,\n    registrydata_has_any = registrydata_has_any,\n    dvchostname_has_any= dvchostname_has_any,\n    disabled                 = disabled\n)\n}",
+    "source_repo": "LaurieRhodes/PUBLIC-adx-basic",
+    "source_url": "https://github.com/LaurieRhodes/PUBLIC-adx-basic/blob/f3caf87f4eed4093d3ddbdd688e6fde74e71c48f/schema/ASIM/Parsers/ASimRegistryEvent/vimRegistryEventMicrosoftSecurityEvent.kql",
+    "filename": "vimRegistryEventMicrosoftSecurityEvent.kql",
+    "collected_at": "2026-06-02T03:19:08.473013+00:00"
+  },
+  {
+    "id": "98c257a1ee26",
+    "title": "Query the SecurityEvent table to locate Python language activity - which could relate to Open AI development",
+    "description": "Query the SecurityEvent table to locate Python language activity - which could relate to Open AI development",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/rod-trent/OpenAISecurity\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated >=ago(24h)\n| where EventID == \"4688\"\n| where Process == \"python.exe\"\n| project SubjectDomainName, SubjectUserName, CommandLine",
+    "source_repo": "rod-trent/OpenAISecurity",
+    "source_url": "https://github.com/rod-trent/OpenAISecurity/blob/fd35e38d8d570f17b49712c9ff8596883ea41c3e/Security/Sentinel/KQL/PythonUsage.kql",
+    "filename": "PythonUsage.kql",
+    "collected_at": "2026-06-02T03:19:07.754623+00:00"
+  },
+  {
+    "id": "6cd2a6111d71",
+    "title": "Source: https://github.com/rod-trent/SentinelKQL",
+    "description": "Collected: 2026-05-10 KQL Hunter - https://github.com/YOUR_USER/kql-hunter",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where CommandLine has \"ux=copilot\"\n| where Process == \"msedge.exe\"\n\n//Copilot in Excel\nSecurityEvent\n| where CommandLine has \"copilot\"\n| where NewProcessName has \"EXCEL.EXE\"\n\n//Copilot in PowerPoint\nSecurityEvent\n| where CommandLine has \"copilot\"\n| where NewProcessName has \"POWERPNT.EXE\"\n\n//Copilot in Visual Studio\nSecurityEvent\n| where CommandLine has \"copilot\"\n| where NewProcessName has \"vsce-sign.exe\"",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/89f4af543c8807b56bcabf5739e507bff760423b/queries/aae47dbfd353.kql",
+    "filename": "aae47dbfd353.kql",
+    "collected_at": "2026-06-02T03:19:07.020016+00:00"
+  },
+  {
     "id": "84ce5f34776e",
     "title": " Asim Dns Zscalerziav04",
     "description": "KQL query collected from public GitHub repositories.",

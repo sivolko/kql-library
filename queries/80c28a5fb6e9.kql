@@ -1,0 +1,71 @@
+// Source: https://github.com/Git805/detection-query-library
+// Collected: 2026-06-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+# Credential Dumping via LSASS Memory Access — KQL (Microsoft Sentinel)
+# MITRE ATT&CK: T1003.001 — OS Credential Dumping: LSASS Memory
+# Author: Charudatta Padhye
+# Date: 2025-04-25
+# Reference: https://attack.mitre.org/techniques/T1003/001/
+#
+# Description:
+#   Detects credential dumping attempts targeting LSASS process memory.
+#   Tools like Mimikatz, ProcDump, and Windows Task Manager can dump
+#   LSASS memory to extract plaintext credentials, NTLM hashes, and
+#   Kerberos tickets. Detection focuses on non-system processes
+#   requesting PROCESS_VM_READ access to lsass.exe.
+#
+# Tested against: Mimikatz sekurlsa::logonpasswords, ProcDump -ma lsass,
+#   Cobalt Strike hashdump, Metasploit kiwi module
+#
+# Tuning:
+#   Add legitimate security tools (EDR agents, AV) to excludedProcesses.
+#   These legitimately access LSASS and will cause FP without exclusion.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+let excludedProcesses = dynamic([
+    "MsMpEng.exe",      // Windows Defender
+    "csrss.exe",        // System process
+    "wininit.exe",      // System process
+    "lsm.exe",          // Local Session Manager
+    "svchost.exe"       // Service host (tune carefully)
+]);
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4656  // Handle requested for object
+| where ObjectName contains "lsass"
+| where ProcessName !in (excludedProcesses)
+| where AccessMask in (
+    "0x1010",   // PROCESS_VM_READ + PROCESS_QUERY_INFORMATION
+    "0x1410",   // Common Mimikatz access mask
+    "0x143a",   // ProcDump access mask
+    "0x1fffff"  // PROCESS_ALL_ACCESS
+)
+| summarize
+    AccessAttempts = count(),
+    AccessMasks = make_set(AccessMask),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by Computer, ProcessName, SubjectUserName, SubjectDomainName
+| extend
+    MITRETechnique = "T1003.001",
+    Tactic = "Credential Access",
+    Severity = "High",
+    Description = strcat(ProcessName, " attempted LSASS memory access on ",
+        Computer, " as ", SubjectDomainName, "\\", SubjectUserName)
+| project
+    FirstSeen,
+    LastSeen,
+    Computer,
+    ProcessName,
+    SubjectUserName,
+    SubjectDomainName,
+    AccessAttempts,
+    AccessMasks,
+    Severity,
+    MITRETechnique,
+    Tactic,
+    Description
+| order by AccessAttempts desc

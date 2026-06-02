@@ -1,0 +1,9 @@
+// Source: https://github.com/Amanpreet-Ramgharia/soc-analyst-portfolio
+// Collected: 2026-06-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4769
+| where TicketEncryptionType == "0x17"
+| summarize Count = count() by Account, ServiceName
+| order by Count desc

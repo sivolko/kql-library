@@ -1,0 +1,9 @@
+// Source: https://github.com/pirateape/Azure-Security
+// Collected: 2026-06-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(24h)
+| where OperationNameValue =~ "Microsoft.Network/networkInterfaces/write"
+| where Properties has "publicIPAddresses"
+| project TimeGenerated, Caller, ResourceGroup, ResourceId, Properties

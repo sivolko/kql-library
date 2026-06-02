@@ -1,0 +1,38 @@
+// Source: https://github.com/am-it-github/Azure-Scripts-Functions
+// Collected: 2026-06-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+ACCOUNT ADDED TO GLOBAL GROUP:
+SecurityEvent
+| where EventID == 4728
+ 
+ACCOUNT REMOVAL FROM GLOBAL GROUP:
+SecurityEvent
+| where EventID == 4729
+| where MemberName contains "NAME"
+ 
+ACCOUNT ADDED TO LOCAL GROUP:
+SecurityEvent
+| where EventID == 4732
+ 
+ACCOUNT REMOVAL FROM LOCAL GROUP:
+SecurityEvent
+| where EventID == 4733
+ 
+GROUP CHANGED:
+SecurityEvent
+| where EventID == 4737
+| where TargetUserName contains "NAME"
+ 
+LOCAL GROUP CHANGED:
+SecurityEvent
+| where EventID == 4735
+| where TargetUserName contains "NAME"
+ 
+GLOBAL GROUP DELETED:
+SecurityEvent
+| where EventID == 4730
+ 
+LOCAL GROUP DELETED:
+SecurityEvent
+| where EventID == 4734

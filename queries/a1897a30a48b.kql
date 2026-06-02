@@ -1,0 +1,69 @@
+// Source: https://github.com/jasonachkar/microsoft-sentinel-siem-detection
+// Collected: 2026-06-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+/*
+RuleId: dba8a2af-a17b-43fb-b5b7-09b2e659dd3a
+Name: Rare Admin Operations (Entra ID + Azure Activity)
+Category: cloud
+Severity: Medium
+Tactics: DefenseEvasion
+Techniques: T1562
+DataSources: AuditLogs (Microsoft Entra ID), AzureActivity
+QueryFrequency: PT1H
+QueryPeriod: PT1D
+TriggerOperator: GreaterThan
+TriggerThreshold: 0
+Version: 1.0.0
+Author: Jason Achkar Diab (template)
+Status: Production
+Description: Identifies high-impact admin operations that are rare for the initiating actor.
+FalsePositives: First-time admin actions; maintenance windows; new admin onboarding
+*/
+
+let BaselinePeriod = 30d;
+let DetectionWindow = 1d;
+let MaxHistoricalCount = 1;
+// High-impact Entra ID operations (conditional access, security defaults, authentication policy).
+let AadOps = AuditLogs
+| where TimeGenerated >= ago(BaselinePeriod)
+| where OperationName has_any ("Conditional Access", "security defaults", "authentication methods", "Update policy", "Delete policy")
+| extend OperationSource = "EntraID"
+| extend Actor = coalesce(tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName), "Unknown")
+| extend TargetResource = tostring(TargetResources[0].displayName)
+| extend Operation = tostring(OperationName)
+| project TimeGenerated, OperationSource, Operation, Actor, TargetResource, Result;
+// High-impact Azure resource operations.
+let AzureOps = AzureActivity
+| where TimeGenerated >= ago(BaselinePeriod)
+| where OperationNameValue in~ (
+    "Microsoft.Authorization/policyAssignments/delete",
+    "Microsoft.Authorization/policyAssignments/write",
+    "Microsoft.Authorization/roleAssignments/delete",
+    "Microsoft.Authorization/roleAssignments/write",
+    "Microsoft.Security/pricings/write",
+    "Microsoft.Insights/diagnosticSettings/delete",
+    "Microsoft.Insights/diagnosticSettings/write",
+    "Microsoft.Network/networkSecurityGroups/securityRules/delete",
+    "Microsoft.KeyVault/vaults/accessPolicies/write"
+  )
+| extend OperationSource = "AzureActivity"
+| extend Actor = tostring(Caller)
+| extend TargetResource = tostring(ResourceId)
+| extend Operation = tostring(OperationNameValue)
+| project TimeGenerated, OperationSource, Operation, Actor, TargetResource, Result=ActivityStatusValue;
+// Combine and baseline.
+let AllOps = union isfuzzy=true AadOps, AzureOps;
+let Baseline = AllOps
+| where TimeGenerated between (ago(BaselinePeriod) .. ago(DetectionWindow))
+| summarize HistoricalCount=count() by Actor, OperationSource, Operation;
+let Recent = AllOps
+| where TimeGenerated >= ago(DetectionWindow)
+| summarize RecentCount=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), Targets=make_set(TargetResource, 5)
+  by Actor, OperationSource, Operation;
+Recent
+| join kind=leftouter Baseline on Actor, OperationSource, Operation
+| extend HistoricalCount = coalesce(HistoricalCount, 0)
+| where HistoricalCount <= MaxHistoricalCount
+| extend Account = Actor
+| project TimeGenerated=LastSeen, Account, Actor, OperationSource, Operation, HistoricalCount, RecentCount, Targets, FirstSeen, LastSeen
