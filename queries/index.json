@@ -1,5 +1,56 @@
 [
   {
+    "id": "c08694c80b45",
+    "title": "Source: https://github.com/McBeer89/tired-smithy",
+    "description": "Collected: 2026-05-22 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-03\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 24h;\nlet tgt_issuances =\n    SecurityEvent\n    | where TimeGenerated > ago(lookback)\n    | where EventID == 4768\n    | where Status == \"0x0\"\n    | distinct TargetUserName;\nSecurityEvent\n| where TimeGenerated > ago(lookback)\n| where EventID == 4769\n| where Status == \"0x0\"\n| join kind=leftanti tgt_issuances on TargetUserName\n| extend IsMachineAccount = TargetUserName endswith \"$\"\n| project\n    TimeGenerated,\n    Computer,\n    TargetUserName,\n    TargetDomainName,\n    ServiceName,\n    TicketOptions,\n    TicketEncryptionType,\n    IpAddress,\n    IpPort,\n    IsMachineAccount\n| sort by TimeGenerated desc\n;\n\n\n// TRR0013.AD.A \u2014 Query 2: Defender for Identity IdentityLogonEvents\n// DDM Operation: n1 \"Receive Network Request\" (TGS-REQ)\n// Baseline Kerberos TGS events \u2014 correlation for absent AS-REQ requires parsing AdditionalFields.\n\nIdentityLogonEvents\n| where Timestamp > ago(24h)\n| where Protocol == \"Kerberos\"\n| project\n    Timestamp,\n    ActionType,\n    AccountName,\n    AccountDomain,\n    DeviceName,\n    DestinationDeviceName,\n    Protocol,\n    AdditionalFields\n| sort by Timestamp desc\n;",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/15844d6528ea991ec1dbc751658f7c1811debb45/queries/d18bf482a955.kql",
+    "filename": "d18bf482a955.kql",
+    "collected_at": "2026-06-03T03:19:20.081023+00:00"
+  },
+  {
+    "id": "177c55377e59",
+    "title": "Source: https://github.com/AttacktheSOC/Azure-SecOps",
+    "description": "Collected: 2026-05-10 KQL Hunter - https://github.com/YOUR_USER/kql-hunter",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-03\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet serverLockouts = materialize(SecurityEvent\n| where EventID == 4740\n| summarize StartTime=min(TimeGenerated), EndTime=max(TimeGenerated), Lockouts=count() by Activity, UserPrincipalName, TargetUserName, TargetSid, TargetDomainName, SourceComputerId, SourceDomainController = Computer\n| project EndTime, AccountName=TargetUserName, Source=TargetDomainName, Type=\"Server Logs\" );\nlet onPremLockouts = materialize(IdentityLogonEvents\n| where FailureReason startswith \"AccountLocked\"\n| extend serversplit = split(DeviceName, \".\")\n| extend Server = tostring(parse_json(serversplit)[0])\n| summarize EndTime=max(TimeGenerated) by AccountName, Source=Server\n| extend Type=\"OnPrem\");\nSigninLogs\n| where ResultType == 50053\n| extend UPNSplit = split(AlternateSignInName, '@')\n| extend AccountName = tostring(parse_json(UPNSplit)[0])\n| summarize EndTime=max(TimeGenerated) by AccountName, Source=IPAddress\n| extend Type=\"Entra SignIns\"\n| union serverLockouts, onPremLockouts\n| summarize ['Last Lockout']=max(EndTime) by AccountName, Source, Type\n| join kind=leftouter (IdentityInfo | distinct AccountDisplayName, AccountName, AccountUpn ) on AccountName\n| project-away AccountName1\n| order by AccountName, ['Last Lockout']\n| extend eventID = row_window_session(['Last Lockout'], 2m, 2m, AccountName != prev(AccountName) and Source != prev(Source))\n| summarize by AccountName, Source=tolower(Source), LastLockout=eventID, AccountDisplayName, AccountUpn",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/15844d6528ea991ec1dbc751658f7c1811debb45/queries/cdd5d72ed525.kql",
+    "filename": "cdd5d72ed525.kql",
+    "collected_at": "2026-06-03T03:19:18.670256+00:00"
+  },
+  {
+    "id": "b488c0dffd87",
+    "title": "Source: https://github.com/sivolko/kql-library",
+    "description": "Collected: 2026-05-21 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "azure",
+      "m365",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-03\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet StartDate = startofday(ago(1d));\nlet EndDate = startofday(now());\nunion DeviceRegistryEvents,DeviceProcessEvents,DeviceNetworkEvents,DeviceLogonEvents,DeviceImageLoadEvents,DeviceEvents,\nDeviceFileEvents,BehaviorEntities,BehaviorInfo,EmailPostDeliveryEvents,UrlClickEvents,IdentityDirectoryEvents,IdentityQueryEvents,\nIdentityLogonEvents,CloudAppEvents,DeviceCustomFileEvents,DeviceCustomNetworkEvents,AADRiskyUsers,DeviceCustomScriptEvents,\nAzureActivity,AADUserRiskEvents,SecurityEvent,AADManagedIdentitySignInLogs,BehaviorAnalytics,SigninLogs,\nAADNonInteractiveUserSignInLogs,SentinelHealth,MicrosoftServicePrincipalSignInLogs,AADServicePrincipalSignInLogs,\nAzureDiagnostics,IntuneDevices,AuditLogs,IntuneDeviceComplianceOrg \n| where TimeGenerated between (StartDate .. EndDate)\n| extend Action = coalesce(OperationName, OperationNameValue, ActionType, tostring(EventID)) \n| where isnotempty(Action) \n| summarize TotalEvents = count() by Type, Action\n| extend RetrievalDate = StartDate, TableName = Type\n| sort by TableName",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/15844d6528ea991ec1dbc751658f7c1811debb45/queries/d559f2fa22d1.kql",
+    "filename": "d559f2fa22d1.kql",
+    "collected_at": "2026-06-03T03:19:16.140397+00:00"
+  },
+  {
     "id": "a1897a30a48b",
     "title": "Rare Admin Operations",
     "description": "KQL query collected from public GitHub repositories.",
