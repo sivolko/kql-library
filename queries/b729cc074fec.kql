@@ -1,0 +1,190 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-06-04
+// KQL Library - https://github.com/sivolko/kql-library
+
+let UPNChangeWindow = 10m;
+let UPNChanges =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4738   // User Account Changed
+    | where UserPrincipalName != ""
+    | extend
+        ModifiedAccount = TargetUserName,
+        ModifiedUPN     = UserPrincipalName,
+        ModifyingUser   = SubjectUserName,
+        ModifyTime      = TimeGenerated
+    | project ModifyTime, ModifiedAccount, ModifiedUPN, ModifyingUser, Computer;
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID == 4887   // Certificate Services approved a request
+| extend
+    RequesterAccount = extract(@"Requester:\s+(\S+)", 1, EventData),
+    TemplateName     = extract(@"Template:\s+(\S+)", 1, EventData),
+    CertReqTime      = TimeGenerated
+| join kind=inner (UPNChanges) on $left.RequesterAccount == $right.ModifiedAccount
+| where CertReqTime between (ModifyTime .. (ModifyTime + UPNChangeWindow))
+| extend DeltaSeconds = datetime_diff("second", CertReqTime, ModifyTime)
+| project
+    ModifyTime,
+    CertReqTime,
+    DeltaSeconds,
+    ModifiedAccount,
+    ModifiedUPN,
+    ModifyingUser,
+    TemplateName,
+    Computer
+| order by DeltaSeconds asc
+
+
+// ============================================================================
+// Query 2: PKINIT authentication for a UPN that was recently modified
+//
+// Rationale: After obtaining the cert, the attacker authenticates via PKINIT
+// (Kerberos certificate-based pre-auth, PA-PK-AS-REQ). The authentication
+// request will use the *original target* UPN — not the attacker's own account
+// — because the cert carries the target UPN embedded during the window when
+// the victim account held it. A PKINIT event for a privileged account shortly
+// after a UPN modification is a strong indicator.
+// ============================================================================
+let PostCertAuthWindow = 15m;
+let RecentUPNChanges =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4738
+    | where UserPrincipalName != ""
+    | extend ModifyTime = TimeGenerated, OriginalUPN = UserPrincipalName
+    | project ModifyTime, OriginalUPN, SubjectUserName;
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID == 4768   // Kerberos TGT request
+| where PreAuthType == "17" or PreAuthType == "16"  // PKINIT (PA-PK-AS-REQ)
+| where TargetUserName in~ ("administrator", "krbtgt", "svc-*")
+    or TargetUserName endswith "$"   // machine accounts also valid targets
+| extend PKINITTime = TimeGenerated, AuthAccount = TargetUserName
+| join kind=inner (RecentUPNChanges) on
+    $left.AuthAccount == $right.OriginalUPN
+| where PKINITTime between (ModifyTime .. (ModifyTime + PostCertAuthWindow))
+| extend DeltaSeconds = datetime_diff("second", PKINITTime, ModifyTime)
+| project
+    ModifyTime,
+    PKINITTime,
+    DeltaSeconds,
+    AuthAccount,
+    SubjectUserName,
+    Computer
+| order by DeltaSeconds asc
+
+
+// ============================================================================
+// Query 3: Full ESC16 chain — UPN modify → cert issued → PKINIT (15-min window)
+//
+// Rationale: The highest-confidence signal correlates all three events. A UPN
+// modification followed by certificate issuance followed by PKINIT authentication
+// for the *target* identity within a 15-minute window is the complete ESC16
+// exploit sequence and should trigger immediate investigation.
+// ============================================================================
+let ChainWindow = 15m;
+let UPNModEvents =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4738
+    | where UserPrincipalName != ""
+    | project
+        UPNModTime      = TimeGenerated,
+        ModifiedAccount = TargetUserName,
+        NewUPN          = UserPrincipalName,
+        ModifyActor     = SubjectUserName,
+        DCName          = Computer;
+let CertIssuedEvents =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4887
+    | extend
+        Requester    = extract(@"Requester:\s+(\S+)", 1, EventData),
+        Template     = extract(@"Template:\s+(\S+)", 1, EventData)
+    | project
+        CertIssuedTime = TimeGenerated,
+        Requester,
+        Template,
+        CAHost = Computer;
+let PKINITEvents =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4768
+    | where PreAuthType in ("16", "17")
+    | project
+        PKINITTime   = TimeGenerated,
+        AuthUser     = TargetUserName,
+        AuthIP       = IpAddress,
+        KDCHost      = Computer;
+UPNModEvents
+| join kind=inner (CertIssuedEvents) on $left.ModifiedAccount == $right.Requester
+| where CertIssuedTime between (UPNModTime .. (UPNModTime + ChainWindow))
+| join kind=inner (PKINITEvents) on $left.NewUPN == $right.AuthUser
+| where PKINITTime between (UPNModTime .. (UPNModTime + ChainWindow))
+| extend
+    UPN_to_Cert_Sec  = datetime_diff("second", CertIssuedTime, UPNModTime),
+    Cert_to_Auth_Sec = datetime_diff("second", PKINITTime, CertIssuedTime),
+    TotalChainSec    = datetime_diff("second", PKINITTime, UPNModTime)
+| project
+    UPNModTime,
+    CertIssuedTime,
+    PKINITTime,
+    TotalChainSec,
+    UPN_to_Cert_Sec,
+    Cert_to_Auth_Sec,
+    ModifiedAccount,
+    NewUPN,
+    ModifyActor,
+    Template,
+    AuthUser,
+    AuthIP,
+    DCName,
+    CAHost,
+    KDCHost
+| extend Severity = iff(TotalChainSec < 300, "Critical", "High")
+| order by TotalChainSec asc
+
+
+// ============================================================================
+// Query 4: PKI enumeration burst — ESC16 reconnaissance pattern
+//
+// Rationale: Before exploiting ESC16, attackers enumerate the CA configuration
+// to confirm szOID_NTDS_CA_SECURITY_EXT absence. Certipy and enum_esc16.py
+// produce LDAP queries to the Enrollment Services container. A burst of LDAP
+// reads against PKI objects from a non-privileged account signals pre-exploit
+// reconnaissance.
+// ============================================================================
+let EnumBurstThreshold = 20;   // PKI object reads in TimeWindow
+let TimeWindow = 5m;
+AuditLogs
+| where TimeGenerated > ago(1d)
+| where OperationName in (
+    "Read pKIEnrollmentService",
+    "Read pKICertificateTemplate",
+    "List pKI objects"
+  )
+| extend
+    ActorUPN = tostring(InitiatedBy.user.userPrincipalName),
+    TargetDN = tostring(TargetResources[0].displayName)
+| where TargetDN contains "Enrollment Services"
+      or TargetDN contains "Public Key Services"
+| summarize
+    QueryCount = count(),
+    FirstSeen  = min(TimeGenerated),
+    LastSeen   = max(TimeGenerated),
+    ObjectsRead = make_set(TargetDN)
+    by ActorUPN, bin(TimeGenerated, TimeWindow)
+| where QueryCount > EnumBurstThreshold
+| extend
+    SpanSeconds = datetime_diff("second", LastSeen, FirstSeen),
+    UniqueObjects = array_length(ObjectsRead)
+| project
+    FirstSeen,
+    LastSeen,
+    SpanSeconds,
+    ActorUPN,
+    QueryCount,
+    UniqueObjects,
+    ObjectsRead
+| order by QueryCount desc

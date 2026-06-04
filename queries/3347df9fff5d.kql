@@ -1,0 +1,12 @@
+// Source: https://github.com/troytrojan01/ot-cybersecurity-with-sentinel
+// Collected: 2026-06-04
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where DeviceVendor in~ ("Dragos", "Forescout")
+| where isempty(SourceIP) or isempty(DestinationIP)
+| extend IpsInExtensions = extract(@"(\d+\.\d+\.\d+\.\d+)", 1, AdditionalExtensions)
+| project TimeGenerated, DeviceVendor, DeviceProduct, DeviceEventClassID,
+          SourceIP, DestinationIP, IpsInExtensions, AdditionalExtensions
+| take 50

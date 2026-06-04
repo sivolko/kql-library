@@ -1,0 +1,13 @@
+// Source: https://github.com/R-iT-GmbH/CodeSnippet
+// Collected: 2026-06-04
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 6272
+| extend xmlData = parse_xml(EventData)
+| where ClientName == "Sophos UTM"
+| project TimeGenerated, Account,
+          Src_MAC = tostring(replace_string(CallingStationID, "-", ":")),
+          CallingStationID, CalledStationID, NASIdentifier
+| project TimeGenerated, Account, Src_MAC, CallingStationID, CalledStationID, NASIdentifier
+//| where Src_MAC == "B4:C4:FC:FD:31:8D"

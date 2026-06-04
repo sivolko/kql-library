@@ -1,0 +1,8 @@
+// Source: https://github.com/Koifman/Deathcon25
+// Collected: 2026-06-04
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == "4688"
+| where NewProcessName endswith "RDCMan.exe" or NewProcessName endswith "RDCMan-x86.exe"
+| project NewProcessName, CommandLine

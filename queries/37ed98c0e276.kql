@@ -1,0 +1,27 @@
+// Source: https://github.com/am-it-github/Azure-Scripts-Functions
+// Collected: 2026-06-04
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent 
+| where  EventID == 4624 
+| where TargetAccount contains "user.name" 
+| extend FormattedDate = format_datetime(TimeGenerated, 'MM-dd-yyyy'),
+         FormattedTime = format_datetime(TimeGenerated, 'HH:mm:ss')
+| project FormattedDate, FormattedTime, TargetAccount, EventID, Activity, Computer, LogonProcessName, IpAddress
+
+
+//FOR LOG OFF
+SecurityEvent 
+| where  EventID == 4634 
+| where TargetAccount contains "user.name" 
+| extend FormattedDate = format_datetime(TimeGenerated, 'MM-dd-yyyy'),
+         FormattedTime = format_datetime(TimeGenerated, 'HH:mm:ss')
+| project FormattedDate, FormattedTime, TargetAccount, EventID, Activity, Computer, LogonProcessName, IpAddress
+
+//FOR BOTH 
+SecurityEvent 
+| where  EventID == 4624 or EventID == 4634
+| where TargetAccount contains "user.name" 
+| extend FormattedDate = format_datetime(TimeGenerated, 'MM-dd-yyyy'),
+         FormattedTime = format_datetime(TimeGenerated, 'HH:mm:ss')
+| project FormattedDate, FormattedTime, TargetAccount, EventID, Activity, Computer, LogonProcessName, IpAddress

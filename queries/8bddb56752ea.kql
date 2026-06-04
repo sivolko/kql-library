@@ -1,0 +1,20 @@
+// Source: https://github.com/shubhendushubham/kali-browser
+// Collected: 2026-06-04
+// KQL Library - https://github.com/sivolko/kql-library
+
+let failed_threshold = 5; // threshold for failed login times
+let failed_count = 2; // threshold for number of failed logins
+SecurityEvent
+| where EventID == 4625
+| where AccountName == "admin"
+| project TimeGenerated, Computer, AccountName, EventID
+| sort by TimeGenerated asc
+| serialize
+| extend nextAccount = next(AccountName, 1), nextTimeGenerated = next(TimeGenerated, 1)
+| where AccountName == nextAccount
+| extend TimeDeltaInSeconds = datetime_diff("second", nextTimeGenerated, TimeGenerated)
+| where TimeDeltaInSeconds <= failed_threshold
+| project TimeGenerated, TimeDeltaInSeconds, AccountName, Computer
+| summarize Failed_Logins = count(), avg(TimeDeltaInSeconds), first_failed = min(TimeGenerated), last_failed = max(TimeGenerated) by AccountName
+| where Failed_Logins >= failed_count
+| sort by Failed_Logins desc

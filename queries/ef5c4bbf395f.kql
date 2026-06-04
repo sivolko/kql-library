@@ -1,0 +1,14 @@
+// Source: https://github.com/reversinglabs/iconburst-iocs
+// Collected: 2026-06-04
+// KQL Library - https://github.com/sivolko/kql-library
+
+let iconburstHashes = externaldata(filename: string, version: string, sha1: string, sha256: string, md5: string) [@"https://raw.githubusercontent.com/reversinglabs/iconburst-iocs/master/filehashes.csv"] with(ignoreFirstRecord=true, format="csv");
+(union isfuzzy=true
+(CommonSecurityLog
+| where isnotempty(FileHash)
+| join kind=inner iconburstHashes on $left.FileHash == $right.sha256
+| extend timestamp = TimeGenerated, HostCustomEntity = SourceHostName),
+(DeviceFileEvents
+| where isnotempty(SHA256)
+| join kind=inner iconburstHashes on $left.SHA256 == $right.sha256
+| extend timestamp = TimeGenerated, HostCustomEntity = DeviceName))
