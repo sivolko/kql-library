@@ -1,0 +1,25 @@
+// Source: https://github.com/EEN421/KQL-Queries
+// Collected: 2026-06-05
+// KQL Library - https://github.com/sivolko/kql-library
+
+let rate = 4.30;                                        //<-- Effective Cost per GB
+SecurityEvent		             		        //<-- Query the SecurityEvent table
+| where TimeGenerated > ago(1h)		            	//<-- Query the last hour
+| where EventID == 8002			                //<-- Query for EventID 8002
+| summarize GB=sum(_BilledSize)/1000/1000/1000	        //<-- Summarize billable volume in GB using the _BilledSize table column
+| extend cost = GB*rate                                 //<-- Multiply total GBs for the month by the effective rate (defined in first line of query)
+
+//You can change the last line in the above query to the following if you’re a stickler for Gibibytes versus Gigabytes: 
+| summarize GB=sum(_BilledSize)/1024/1024/1024	
+
++++++++++++++++++++++++++++++++++++++++++++++++++
+
+SecurityEvent
+| where TimeGenerated >ago(90d)
+| where EventID == "5156"
+| where _IsBillable == True
+| summarize Billable_GB=round(sum(_BilledSize / 1000 / 1000 / 1000),2) by Computer
+| extend TotalCost = round(Billable_GB * 2.74, 2)
+| extend TotalCost=strcat('$', TotalCost)
+| sort by Billable_GB desc
+| limit 10

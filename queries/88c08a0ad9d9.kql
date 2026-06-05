@@ -1,0 +1,13 @@
+// Source: https://github.com/kyhomelab/azure-sentinel-honeypot
+// Collected: 2026-06-05
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625 // Event ID for failed logon attempts
+| extend IpAddress = tostring(parse_json(tostring(ParameterXml.sys.EventData.Data))['IpAddress'])
+| extend Account = tostring(parse_json(tostring(ParameterXml.sys.EventData.Data))['TargetUserName'])
+| where isnotempty(IpAddress) and isnotempty(Account)
+| summarize FailedCount = count() by IpAddress, Account, bin(TimeGenerated, 5m) // Summarize every 5 minutes
+| extend Geo = geo_info_from_ip_address(IpAddress)
+| project TimeGenerated, Account, IpAddress, FailedCount, Country=Geo.country, State=Geo.state, City=Geo.city
+| order by TimeGenerated desc

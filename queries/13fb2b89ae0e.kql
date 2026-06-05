@@ -1,0 +1,7 @@
+// Source: https://github.com/Robinzor/magma
+// Collected: 2026-06-05
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4688
+| where NewProcessName contains 'ransomware.exe'

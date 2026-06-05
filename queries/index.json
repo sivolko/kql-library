@@ -1,5 +1,193 @@
 [
   {
+    "id": "b488c2d8b88a",
+    "title": "Detect when a user connects to 3 or more unique devices via RDP over a 30 minute period",
+    "description": "Detect when a user connects to 3 or more unique devices via RDP over a 30 minute period",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/RBNoronha/KQL\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (1d)\n| where EventID == \"4624\"\n| where LogonType == 10\n| where SubjectDomainName == TargetDomainName\n//Account is dropped to lower case to make sure each account is only listed once, i.e Reprise99 and reprise99 are combined\n| summarize\n    ['Distinct device logon count']=dcount(Computer),\n    ['List of devices']=make_set(Computer)\n    by tolower(Account), bin(TimeGenerated, 30m)\n//Find accounts that have logged on to 3 or more unique devices in less than 30 minutes\n| where ['Distinct device logon count'] >= 3",
+    "source_repo": "RBNoronha/KQL",
+    "source_url": "https://github.com/RBNoronha/KQL/blob/f85d37568ad4abe4b6ceaef67a8dfc5954eaad47/Windows%20Security%20Events/SecEvents-PotentialRDPRecon.kql",
+    "filename": "SecEvents-PotentialRDPRecon.kql",
+    "collected_at": "2026-06-05T03:17:31.529807+00:00"
+  },
+  {
+    "id": "cc297f18de4f",
+    "title": "Data connector required for this query - Windows Security Events via AMA or Security Events via Legacy Agent",
+    "description": "Use your Windows security log to find the users most at risk for lateral movement by finding those that have connected remotely to the most devices",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/hrtywhy/threat-hunting\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (30d)\n| where EventID == \"4624\"\n| where LogonType == 10\n| where SubjectDomainName == TargetDomainName\n//Summarize total logins, distinct devices and then list all the devices each account has logged onto\n//Account is dropped to lower case to make sure each account is only listed once, i.e Reprise99 and reprise99 are combined\n| summarize\n    ['Total logon count']=count(),\n    ['Distinct device logon count']=dcount(Computer),\n    ['List of devices']=make_set(Computer)\n    by tolower(Account)\n| sort by ['Distinct device logon count'] desc ",
+    "source_repo": "hrtywhy/threat-hunting",
+    "source_url": "https://github.com/hrtywhy/threat-hunting/blob/7eac4abcf4cd3c3e7fbd47cb8d1c9b66364efed7/Azure%20Sentinel%20Queries/Windows%20Security%20Event/SecEvents-FindLateralMovementUsers.kql",
+    "filename": "SecEvents-FindLateralMovementUsers.kql",
+    "collected_at": "2026-06-05T03:17:30.164201+00:00"
+  },
+  {
+    "id": "6f05f695c2fe",
+    "title": "Guloader 20240618 Process",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "defender"
+    ],
+    "content": "// Source: https://github.com/reversinglabs/reversinglabs-siem-rules\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet VBSNames = externaldata(VBSName:string)\n[\n    @\"https://raw.githubusercontent.com/reversinglabs/reversinglabs-siem-rules/master/Malware/GuLoader/20240618/KQL/guloader-20240618-vbs.txt\"\n];\nlet FileNames = VBSNames | summarize make_list(VBSName);\nSecurityEvent\n| where EventID == 4688\n| where Process == \"wscript.exe\" and CommandLine has_any (FileNames)\n| union \n(DeviceProcessEvents\n| where FileName == \"wscript.exe\" and ProcessCommandLine has_any (FileNames)\n),\n(SysmonParser\n| where EventID == 1\n| where Image contains \"wscript.exe\" and CommandLine has_any (FileNames))",
+    "source_repo": "reversinglabs/reversinglabs-siem-rules",
+    "source_url": "https://github.com/reversinglabs/reversinglabs-siem-rules/blob/23fc452b527f2f8e08c26c6dffc0f734e750a2be/Malware/GuLoader/20240618/KQL/guloader-20240618-process.kql",
+    "filename": "guloader-20240618-process.kql",
+    "collected_at": "2026-06-05T03:17:29.478999+00:00"
+  },
+  {
+    "id": "1ba6d408a251",
+    "title": "This query will tell you how much any EventID is costing you over a given time",
+    "description": "This query will tell you how much any EventID is costing you over a given time For this query, the 'rate' acts like a global floating point variable which is manually defined You can calculate the LAW cost and Sentinel cost separately, or both (effective cost per GB) by setting the rate variable The rate for your region can be found here: https://azure.microsoft.com/en-us/pricing/details/microsoft-sentinel/ This doesn't have to be over the last hour, you can adjust the TimeGenerated parameter to a week (7d), a day (1d), or even a month (30d) etc.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/EEN421/KQL-Queries\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet rate = 4.30;                                        //<-- Effective Cost per GB\nSecurityEvent\t\t             \t\t        //<-- Query the SecurityEvent table\n| where TimeGenerated > ago(1h)\t\t            \t//<-- Query the last hour\n| where EventID == 8002\t\t\t                //<-- Query for EventID 8002\n| summarize GB=sum(_BilledSize)/1000/1000/1000\t        //<-- Summarize billable volume in GB using the _BilledSize table column\n| extend cost = GB*rate                                 //<-- Multiply total GBs for the month by the effective rate (defined in first line of query)\n\n//You can change the last line in the above query to the following if you\u2019re a stickler for Gibibytes versus Gigabytes: \n| summarize GB=sum(_BilledSize)/1024/1024/1024\t\n\n+++++++++++++++++++++++++++++++++++++++++++++++++\n\nSecurityEvent\n| where TimeGenerated >ago(90d)\n| where EventID == \"5156\"\n| where _IsBillable == True\n| summarize Billable_GB=round(sum(_BilledSize / 1000 / 1000 / 1000),2) by Computer\n| extend TotalCost = round(Billable_GB * 2.74, 2)\n| extend TotalCost=strcat('$', TotalCost)\n| sort by Billable_GB desc\n| limit 10",
+    "source_repo": "EEN421/KQL-Queries",
+    "source_url": "https://github.com/EEN421/KQL-Queries/blob/e888f6a46ae610e4a5be542b9f6bd310908e97fb/Cost%20of%20EventID.kql",
+    "filename": "Cost of EventID.kql",
+    "collected_at": "2026-06-05T03:17:28.779904+00:00"
+  },
+  {
+    "id": "88c08a0ad9d9",
+    "title": "KQL Query for Failed RDP Attempts (Event ID 4625)",
+    "description": "This query identifies failed RDP logon attempts, extracts source IP and attempted account, and enriches the data with geographical information using the geo_info_from_ip_address() function. This will be used in your Azure Sentinel Workbook to visualize RDP brute-force attacks.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/kyhomelab/azure-sentinel-honeypot\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4625 // Event ID for failed logon attempts\n| extend IpAddress = tostring(parse_json(tostring(ParameterXml.sys.EventData.Data))['IpAddress'])\n| extend Account = tostring(parse_json(tostring(ParameterXml.sys.EventData.Data))['TargetUserName'])\n| where isnotempty(IpAddress) and isnotempty(Account)\n| summarize FailedCount = count() by IpAddress, Account, bin(TimeGenerated, 5m) // Summarize every 5 minutes\n| extend Geo = geo_info_from_ip_address(IpAddress)\n| project TimeGenerated, Account, IpAddress, FailedCount, Country=Geo.country, State=Geo.state, City=Geo.city\n| order by TimeGenerated desc",
+    "source_repo": "kyhomelab/azure-sentinel-honeypot",
+    "source_url": "https://github.com/kyhomelab/azure-sentinel-honeypot/blob/838b6ff86456df7349f32b09bcd2195111f97190/Sentinel/failed_rdp_attempts.kql",
+    "filename": "failed_rdp_attempts.kql",
+    "collected_at": "2026-06-05T03:17:28.121452+00:00"
+  },
+  {
+    "id": "cc8a990673f9",
+    "title": "Source: https://github.com/joebat10/azure-soc-home-lab",
+    "description": "Collected: 2026-05-28 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\n-- ============================================================\n-- FICHIER : queries/all-queries.kql\n-- Projet  : Home SOC Lab \u2014 Microsoft Sentinel\n-- ============================================================\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 1. Tous les \u00e9checs de connexion (base)\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSecurityEvent\n| where EventID == 4625\n| project TimeGenerated, Account, IpAddress, LogonType, WorkstationName\n| order by TimeGenerated desc\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 2. Top attaquants par IP\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSecurityEvent\n| where EventID == 4625\n| summarize Attempts = count() by IpAddress\n| order by Attempts desc\n| render barchart\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 3. Top comptes cibl\u00e9s\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSecurityEvent\n| where EventID == 4625\n| summarize Attempts = count() by TargetAccount\n| order by Attempts desc\n| take 10\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 4. D\u00e9tection Password Spray\n-- (1 IP cible plusieurs comptes diff\u00e9rents)\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSecurityEvent\n| where EventID == 4625\n| summarize\n    DistinctAccounts = dcount(Account),\n    TotalAttempts = count()\n    by IpAddress\n| where DistinctAccounts > 5\n| order by TotalAttempts desc\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 5. D\u00e9tection Brute Force\n-- (beaucoup de tentatives sur 1 compte)\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSecurityEvent\n| where EventID == 4625\n| summarize FailedAttempts = count() by IpAddress, bin(TimeGenerated, 5m)\n| where FailedAttempts > 10\n| order by FailedAttempts desc\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 6. Enrichissement GeoIP complet\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nlet GeoIPDB = _GetWatchlist(\"geoip\");\nSecurityEvent\n| where EventID == 4625\n| where IpAddress != \"-\"\n| evaluate ipv4_lookup(GeoIPDB, IpAddress, network)\n| summarize\n    Attacks = count(),\n    UniqueAccounts = dcount(Account),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated)\n    by country, city, IpAddress\n| order by Attacks desc\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 7. Stats par pays\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nlet GeoIPDB = _GetWatchlist(\"geoip\");\nSecurityEvent\n| where EventID == 4625\n| where IpAddress != \"-\"\n| evaluate ipv4_lookup(GeoIPDB, IpAddress, network)\n| summarize AttackCount = count() by country\n| order by AttackCount desc\n| take 15\n| render piechart\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 8. Timeline d'une IP sp\u00e9cifique\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nlet TargetIP = \"<remplacer par IP>\";\nlet GeoIPDB = _GetWatchlist(\"geoip\");\nSecurityEvent\n| where EventID == 4625\n| where IpAddress == TargetIP\n| evaluate ipv4_lookup(GeoIPDB, IpAddress, network)\n| project TimeGenerated, Account, IpAddress, country, city, LogonType\n| order by TimeGenerated asc\n\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n-- 9. Connexions r\u00e9ussies (Event 4624)\n-- (pour corr\u00e9ler avec les \u00e9checs)\n-- \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nSecurityEvent\n| where EventID == 4624\n| where LogonType in (3, 10)\n| project TimeGenerated, Account, IpAddress, LogonType\n| order by TimeGenerated desc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/5d68e5573d27432028813cb100e9d6c6ab37877e/queries/8ad2ad329b1a.kql",
+    "filename": "8ad2ad329b1a.kql",
+    "collected_at": "2026-06-05T03:17:27.419471+00:00"
+  },
+  {
+    "id": "9a4cf639ff0d",
+    "title": "Detects when unconstrained kerberos delegation is enabled on a computer object",
+    "description": "Detects when unconstrained kerberos delegation is enabled on a computer object",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Gyarbij/Artemis\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == \"4742\"\n| parse EventData with * 'NewUacValue\">' NewUacValue '</Data>' *\n| parse EventData with * 'TargetUserName\">' ComputerName '</Data>' *\n| parse EventData with * 'SubjectUserName\">' Actor '</Data>' *\n| where NewUacValue == \"0x2080\"\n| project TimeGenerated, Activity, ComputerName, Actor",
+    "source_repo": "Gyarbij/Artemis",
+    "source_url": "https://github.com/Gyarbij/Artemis/blob/4ef64a4c54532e0a1155265078a96e222c4abae5/Hunting/Active%20Directory/SecurityEvent-UnconstrainedDelegationEnabled.kql",
+    "filename": "SecurityEvent-UnconstrainedDelegationEnabled.kql",
+    "collected_at": "2026-06-05T03:17:26.651310+00:00"
+  },
+  {
+    "id": "13fb2b89ae0e",
+    "title": "UC-L3-MALWARE-01-Ransomware",
+    "description": "Detection: Ransomware Execution Detection Description: Detects ransomware execution through process creation and file activity MITRE ATT&CK: T1486 - Data Encrypted for Impact",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Robinzor/magma\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4688\n| where NewProcessName contains 'ransomware.exe'",
+    "source_repo": "Robinzor/magma",
+    "source_url": "https://github.com/Robinzor/magma/blob/b742d7fe3bf8c15582f205ca2480f0c57b232554/detections/malware/ransomware.kql",
+    "filename": "ransomware.kql",
+    "collected_at": "2026-06-05T03:17:25.963674+00:00"
+  },
+  {
+    "id": "a7bbc2a83d16",
+    "title": "Geoip Lookup",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/levnnaz/siem-home-lab\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet GeoIPDB_FULL = _GetWatchlist(\"geoip\");\nlet WindowsEvents = SecurityEvent\n    | where IpAddress == <attacker IP address>\n    | where EventID == 4625\n    | order by TimeGenerated desc\n    | evaluate ipv4_lookup(GeoIPDB_FULL, IpAddress, network);\nWindowsEvents\n",
+    "source_repo": "levnnaz/siem-home-lab",
+    "source_url": "https://github.com/levnnaz/siem-home-lab/blob/cc39a8d4c806c3086fec1013d3b555485d626d72/queries/geoip-lookup.kql",
+    "filename": "geoip-lookup.kql",
+    "collected_at": "2026-06-05T03:17:25.275106+00:00"
+  },
+  {
+    "id": "f474a54dcc62",
+    "title": "KQL query to detect IPsec MM SAs with long lifetime",
+    "description": "KQL query to detect IPsec MM SAs with long lifetime",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Azure/ausgovcaf-cloudsoe\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent \n| where EventID == 4650 or EventID == 4651\n| extend ed = parse_xml(EventData).EventData.Data\n| mv-apply ed on \n(\n    where ed['@Name'] == 'MMLifetime'\n    | project LifetimeSeconds = (ed['#text'] * 60)\n)\n| where LifetimeSeconds >= 14400\n| project TimeGenerated, Computer, Activity, LifetimeSeconds",
+    "source_repo": "Azure/ausgovcaf-cloudsoe",
+    "source_url": "https://github.com/Azure/ausgovcaf-cloudsoe/blob/a51ffc2c08875d71978e953c7cdb48f0c27a8a9b/kql/windows-ipsec-detect-mm-lifetime.kql",
+    "filename": "windows-ipsec-detect-mm-lifetime.kql",
+    "collected_at": "2026-06-05T03:17:23.880879+00:00"
+  },
+  {
+    "id": "32a07a94ad8d",
+    "title": "Alert when the 'Log on to' device list is changed for a user",
+    "description": "Alert when the 'Log on to' device list is changed for a user",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/petitess/kusto\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4738\n| where AccountType == \"User\"\n//Include domain accounts only (excluding local accounts)\n| where TargetDomainName == SubjectDomainName\n| extend ['Allowed Devices'] = case(isnotempty(UserWorkstations) and UserWorkstations != \"-\" and UserWorkstations != \"%%1793\", split(UserWorkstations, \",\"),\n    (isnotempty(UserWorkstations) and UserWorkstations == \"%%1793\"), strcat(\"User can log onto all devices\"),\n    \"unknown\")\n//Exclude other 4738 events where the device list isn't changed\n| where ['Allowed Devices'] != \"unknown\"\n| project TimeGenerated, Actor=SubjectAccount, User=TargetAccount, ['Allowed Devices']",
+    "source_repo": "petitess/kusto",
+    "source_url": "https://github.com/petitess/kusto/blob/71fd9d18d82e7e3ebb81df0cbbb9895c29a95853/Sentinel-Queries/Active%20Directory/SecurityEvent-LogonToDeviceListChanged.kql",
+    "filename": "SecurityEvent-LogonToDeviceListChanged.kql",
+    "collected_at": "2026-06-05T03:17:23.185240+00:00"
+  },
+  {
+    "id": "c574a411bab8",
+    "title": "Source: https://github.com/sivolko/kql-library",
+    "description": "Collected: 2026-05-13 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "azure",
+      "m365",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet aap = 2.30;\nunion isfuzzy=true withsource = tt *\n| where TimeGenerated > ago(31d)\n| where _IsBillable == True\n| where tt in\n(\n\"Perf\", \"Event\", \"DeviceEvents\", \"SecurityEvent\", \"DeviceNetworkEvents\",\n\"DeviceFileEvents\", \"DeviceProcessEvents\", \"DeviceFileCertificateInfo\", \"SecurityRegulatoryCompliance\",\n\"AADNonInteractiveUserSignInLogs\", \"AzureActivity\", \"DeviceRegistryEvents\", \"DeviceNetworkInfo\",\n\"ADCSV_CL\", \"AD_Metadata_CL\", \"DeviceImageLoadEvents\", \"Usage\", \"OfficeActivity\", \"Operation\",\n\"Heartbeat\", \"DeviceInfo\", \"DeviceLogonEvents\", \"SigninLogs\", \"DnsEvents\", \"SecurityBaseline\",\n\"UserPeerAnalytics\", \"AuditLogs\", \"SecurityRecommendation\", \"SecurityAlert\", \"UserAccessAnalytics\",\n\"SecurityIncident\", \"AADManagedIdentitySignInLogs\", \"ADDS_Metadata_CL\", \"SecureScores\",\n\"Update\", \"SecurityNestedRecommendation\", \"SecureScoreControls\", \"DnsInventory\", \"ProtectionStatus\",\n\"SecurityDetection\", \"AADServicePrincipalSignInLogs\", \"ComputerGroup\", \"UpdateSummary\", \"AD_Metadata1_CL\", \"SecurityBaselineSummary\"\n)\n| summarize\nTotalGBytes =round( sum(_BilledSize/(1024*1024*1024)),2),\nEstimatedCostUSD=round(aap * sum(_BilledSize/(1024*1024*1024)),2)\nby Solution=tt\n| sort by TotalGBytes desc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/5d68e5573d27432028813cb100e9d6c6ab37877e/queries/1e025c70c8a2.kql",
+    "filename": "1e025c70c8a2.kql",
+    "collected_at": "2026-06-05T03:17:22.491108+00:00"
+  },
+  {
+    "id": "ec27a1858785",
+    "title": "Data connector required for this query - Windows Security Events via AMA or Security Events via Legacy Agent",
+    "description": "Detects when a user with a privileged Azure AD role has had their on premises Active Directory password changed by someone other than themselves.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/EmreOzanMemis/AzureSentinel\n// Collected: 2026-06-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe=7d;\n//First find any users that hold privileged Azure AD roles\nIdentityInfo\n| where TimeGenerated > ago(21d)\n| where isnotempty(AssignedRoles)\n| where AssignedRoles != \"[]\"\n| summarize arg_max(TimeGenerated, *) by AccountUPN\n| project AccountUPN, AccountName, AccountSID\n//Join those users based on AccountSID to on premises Active Directory password reset events\n| join kind=inner (\n    SecurityEvent\n    | where TimeGenerated > ago(timeframe)\n    | where EventID == \"4724\"\n    | project\n        TimeGenerated,\n        Activity,\n        SubjectAccount,\n        TargetAccount,\n        TargetSid,\n        SubjectUserSid\n    )\n    on $left.AccountSID == $right.TargetSid\n| where SubjectUserSid != TargetSid\n//Summarize event data to make it easy to read\n| project ['Time of Password Reset']=TimeGenerated, Activity, Actor=SubjectAccount, ['Target UserPrincipalName']=AccountUPN,['Target AccountName']=TargetAccount",
+    "source_repo": "EmreOzanMemis/AzureSentinel",
+    "source_url": "https://github.com/EmreOzanMemis/AzureSentinel/blob/c04f3c94811e44003267420c1789965797e2c2ea/Sentinel-KQL-Sorgular%C4%B1/Active%20Directory/SecurityEvent-DetectPrivilegedAADAdminPasswordChange.kql",
+    "filename": "SecurityEvent-DetectPrivilegedAADAdminPasswordChange.kql",
+    "collected_at": "2026-06-05T03:17:21.815273+00:00"
+  },
+  {
     "id": "ef5c4bbf395f",
     "title": "Iconburst File Hash Iocs",
     "description": "KQL query collected from public GitHub repositories.",
