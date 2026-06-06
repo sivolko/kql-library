@@ -1,0 +1,8 @@
+// Source: https://github.com/Rakesh-b002/SOC-lab-azure-sentinel
+// Collected: 2026-06-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| summarize FailedAttempts = count() by IpAddress, bin(TimeGenerated, 5m)
+| where FailedAttempts > 10

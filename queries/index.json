@@ -1,5 +1,174 @@
 [
   {
+    "id": "c77dc4054b4e",
+    "title": "Excessive Windows Logon Failures To A Single Account",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/DancinDinoo/KQL\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\n  let endtime = 1d;\n  let starttime = 8d;\n  let lastdaycountlimit = ; // Failed login last day count\n  let 7daycountlimit = ; // Failed login seven day count\n  SecurityEvent\n  | where TimeGenerated >= ago(endtime) // Last Day activity\n  | where EventID == 4625 and AccountType =~ \"User\" // Failed logins to a user account\n  | where not(ipv4_is_private(IpAddress)) // Remove any private IPs\n  | where Account !starts_with \"MSOL\" // Removes default windows account for syncing passwords\n  | summarize OneDayStartTime = min(TimeGenerated), OneDayEndTime = max(TimeGenerated), LastDaySubStatusCodes = make_set(SubStatus), Computers = make_set(Computer), Workstations = make_set(WorkstationName), LastDayImpactedIPAddresses = make_set(IpAddress), LastDayTotalFailedLogonCount = count() by EventID, Account\n  | join kind=leftouter (\n      SecurityEvent\n      | where TimeGenerated between (ago(starttime) .. ago(endtime))\n      | where EventID == 4625 and AccountType =~ \"User\"\n      | where not(ipv4_is_private(IpAddress))\n      | summarize 7DayStartTime = min(TimeGenerated), 7DayEndTime = max(TimeGenerated), Last7DaysSubStatusCodes = make_set(SubStatus), Computers = make_set(Computer), Workstations = make_set(WorkstationName), 7DayImpactedIPAddresses = make_set(IpAddress), 7DayTotalFailedLogonCount = count() by EventID, Account\n  ) on Account\n  | extend 7DayAverageLogonCount = 7DayTotalFailedLogonCount / 7\n  | extend LastDayImpactedIPAddresses = array_length(LastDayImpactedIPAddresses)\n  | extend 7DaysImpactedIPAddresses= array_length(7DayImpactedIPAddresses)\n  | project EventID, Account, Computers, Workstations, LastDayImpactedIPAddresses, 7DayImpactedIPAddresses, LastDaySubStatusCodes, Last7DaysSubStatusCodes, LastDayTotalFailedLogonCount, 7DayTotalFailedLogonCount, 7DayAverageLogonCount\n  | where LastDayTotalFailedLogonCount > lastdaycountlimit or 7DayAverageLogonCount >= 7daycountlimit // Breach limits",
+    "source_repo": "DancinDinoo/KQL",
+    "source_url": "https://github.com/DancinDinoo/KQL/blob/a4180812a84694c253e26434d03ed607a9f9eac7/Windows%20Security%20Events/Excessive%20Windows%20Logon%20Failures%20to%20a%20Single%20Account.kql",
+    "filename": "Excessive Windows Logon Failures to a Single Account.kql",
+    "collected_at": "2026-06-06T03:14:35.399637+00:00"
+  },
+  {
+    "id": "e79f96ce2930",
+    "title": "Xdr 3 Sensitivelabel Leavingtenant",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nDataSecurityEvents\n| where Timestamp > ago(7d)\n| where isnotempty(SensitivityLabelId)\n| where ActionType in (\"FileUploadedToCloud\",\"FileSharedExternally\",\"FileSentInEmail\")\n| project Timestamp, AccountUpn, ActionType, ObjectId, SourceRelativeUrl, TargetFilePath,\n          ApplicationNames, Workload, SensitivityLabelId,\n          TargetUrlDomain, EmailSubject, NetworkMessageId\n| order by Timestamp desc",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/89133054826e5180e1f8820a690e7cf950b54f32/Use%20Cases%20Threat%20Hunting/Purview/XDR/XDR-3_SensitiveLabel_LeavingTenant.kql",
+    "filename": "XDR-3_SensitiveLabel_LeavingTenant.kql",
+    "collected_at": "2026-06-06T03:14:34.767536+00:00"
+  },
+  {
+    "id": "d0446964e43b",
+    "title": "Title: Use Of Remove-Item to Delete File - ScriptBlock",
+    "description": "Author: frack113 Date: 2022-01-15 Level: low Description: PowerShell Remove-Item  with -Path to delete a file or a folder with \"-Recurse\"The SecurityEvent table in Microsoft Sentinel contains Windows security event logs, which would include logs related to PowerShell script execution. Ensure that the Windows Security Events data connector is enabled in Sentinel to have access to this table. Tags: attack.defense-evasion, attack.t1070.004, detection.threat-hunting ==================================================================",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Crimson7research/C7SigmaTools\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where ScriptBlockText contains \"Remove-Item -Path \" or ScriptBlockText contains \"del -Path \" or ScriptBlockText contains \"erase -Path \" or ScriptBlockText contains \"rd -Path \" or ScriptBlockText contains \"ri -Path \" or ScriptBlockText contains \"rm -Path \" or ScriptBlockText contains \"rmdir -Path \"",
+    "source_repo": "Crimson7research/C7SigmaTools",
+    "source_url": "https://github.com/Crimson7research/C7SigmaTools/blob/27a4266ef5495b8b9c4059f3025a53da617493fb/KQL/rules-threat-hunting/Defense%20Evasion/T1070.004/Use_Of_Remove-Item_to_Delete_File_-_ScriptBlock.kql",
+    "filename": "Use_Of_Remove-Item_to_Delete_File_-_ScriptBlock.kql",
+    "collected_at": "2026-06-06T03:14:34.042152+00:00"
+  },
+  {
+    "id": "99d78bc4440e",
+    "title": "Securityevent Auditpolicymanipulation Using Auditpol",
+    "description": "| where Process =~ \"auditpol.exe\"",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/ep3p/Sentinel_KQL\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet suspicious_subcategories = dynamic([\n    \"Logoff\",                       \"0cce9216-69ae-11d9-bed3-505054503030\",\n    \"Account Lockout\",              \"0cce9217-69ae-11d9-bed3-505054503030\",\n    \"User Account Management\",      \"0cce9235-69ae-11d9-bed3-505054503030\",\n    \"Authorization Policy Change\",  \"0cce9231-69ae-11d9-bed3-505054503030\"\n]);\nSecurityEvent\n//| where Process =~ \"auditpol.exe\" \n| where (CommandLine has \"auditpol\" and CommandLine has @\"/clear\")\n    or (CommandLine has @\"/remove\" and CommandLine has_any (@\"/user\", @\"/allusers\"))\n    or (CommandLine has @\"/set\" and CommandLine has_any (\"success:disable\", \"failure:disable\"))// and  CommandLine has_any (suspicious_subcategories))\n| project TimeGenerated, Computer, Account, Activity, ParentProcessName, Process, CommandLine, SubjectLogonId",
+    "source_repo": "ep3p/Sentinel_KQL",
+    "source_url": "https://github.com/ep3p/Sentinel_KQL/blob/bc6f5d45e7a7d321906fd2b89098901aadcd53a1/Queries/Azure-Sentinel/Detections/MultipleDataSources/SecurityEvent-AuditPolicyManipulation_using_auditpol.kql",
+    "filename": "SecurityEvent-AuditPolicyManipulation_using_auditpol.kql",
+    "collected_at": "2026-06-06T03:14:33.269603+00:00"
+  },
+  {
+    "id": "f77ac8989c36",
+    "title": "Lateral Movement Attempt",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/mrblue223/Sentinel-Logic\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID in (4648, 4624) // Credential use and logon\n| where SubjectUserName != TargetUserName\n| summarize LateralMovementAttempts = count() \n    by SubjectUserName, TargetUserName, Computer\n| where LateralMovementAttempts > 5",
+    "source_repo": "mrblue223/Sentinel-Logic",
+    "source_url": "https://github.com/mrblue223/Sentinel-Logic/blob/edf0f1c7b14cc51c318e0fc36c41f7ac674cc8ee/most_used_attacks/Lateral_Movement_attempt.kql",
+    "filename": "Lateral_Movement_attempt.kql",
+    "collected_at": "2026-06-06T03:14:32.667601+00:00"
+  },
+  {
+    "id": "809e6c746d9f",
+    "title": "Brute Force",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Rakesh-b002/SOC-lab-azure-sentinel\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4625\n| summarize FailedAttempts = count() by IpAddress, bin(TimeGenerated, 5m)\n| where FailedAttempts > 10",
+    "source_repo": "Rakesh-b002/SOC-lab-azure-sentinel",
+    "source_url": "https://github.com/Rakesh-b002/SOC-lab-azure-sentinel/blob/a9c6eb54a07be5fd3705af73cd4842cd14be4797/queries/brute_force.kql",
+    "filename": "brute_force.kql",
+    "collected_at": "2026-06-06T03:14:31.944915+00:00"
+  },
+  {
+    "id": "b09cf1e18455",
+    "title": "Function Name: vimProcessCreateMicrosoftSecurityEvents",
+    "description": "Description: This ASIM parser supports filtering and normalizing Windows process create events (event 4688) collected using the Security Events connectors, utilizing either the Log Analytics agent or the Azure Monitor Agent (AMA) and stored in the SecurityEvent table to the ASIM Process Event normalized schema.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/LaurieRhodes/PUBLIC-adx-basic\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff//\n// Function Name: vimProcessCreateMicrosoftSecurityEvents\n// Description: This ASIM parser supports filtering and normalizing Windows process create events (event 4688) collected using the Security Events connectors, utilizing either the Log Analytics agent or the Azure Monitor Agent (AMA) and stored in the SecurityEvent table to the ASIM Process Event normalized schema.\n\n// Version: \n// Last Updated: \n//\n.create-or-alter function with (skipvalidation=true) vimProcessCreateMicrosoftSecurityEvents(    ['starttime']:datetime=datetime(null),\n    ['endtime']:datetime=datetime(null),\n    ['commandline_has_any']:dynamic=dynamic([]),\n    ['commandline_has_all']:dynamic=dynamic([]),\n    ['commandline_has_any_ip_prefix']:dynamic=dynamic([]),\n    ['actingprocess_has_any']:dynamic=dynamic([]),\n    ['targetprocess_has_any']:dynamic=dynamic([]),\n    ['parentprocess_has_any']:dynamic=dynamic([]),\n    ['targetusername_has']:string='*',\n    ['dvcipaddr_has_any_prefix']:dynamic=dynamic([]),\n    ['dvchostname_has_any']:dynamic=dynamic([]),\n    ['eventtype']:string='*',\n    ['disabled']:bool=false)\n{\nlet MandatoryLabelLookup = datatable (MandatoryLabel:string,MandatoryLabelRid:string, MandatoryLabelText:string, MandatoryLabelMeaning:string)\n   [\n     'S-1-16-0', '0x00000000', 'SECURITY_MANDATORY_UNTRUSTED_RID', 'Untrusted',\n     'S-1-16-4096', '0x00001000', 'SECURITY_MANDATORY_LOW_RID', 'Low integrity',\n     'S-1-16-8192', '0x00002000', 'SECURITY_MANDATORY_MEDIUM_RID', 'Medium integrity',\n     'S-1-16-8448', '0x00002100', 'SECURITY_MANDATORY_MEDIUM_PLUS_RID', 'Medium high integrity',\n     'S-1-16-12288', '0X00003000', 'SECURITY_MANDATORY_HIGH_RID', 'High integrity',\n     'S-1-16-16384', '0x00004000', 'SECURITY_MANDATORY_SYSTEM_RID', 'System integrity',\n     'S-1-16-20480', '0x00005000', 'SECURITY_MANDATORY_PROTECTED_PROCESS_RID', 'Protected process'\n   ];\n // Source: https://support.microsoft.com/topic/0fdcaf87-ee5e-8929-e54c-65e04235a634\n let KnownSIDs = datatable (sid:string, username:string, type:string)\n   [\n     'S-1-5-18', 'Local System', 'Simple',\n     'S-1-0-0', 'Nobody', 'Simple'\n   ];\n let UserTypeLookup = datatable (AccountType:string, ActorUserType:string)\n   [\n     'User', 'Regular',\n     'Machine', 'Machine'\n   ];\n let parser=(\n   starttime:datetime=datetime(null),\n   endtime:datetime=datetime(null),\n   commandline_has_any:dynamic=dynamic([]),\n   commandline_has_all:dynamic=dynamic([]),\n   commandline_has_any_ip_prefix:dynamic=dynamic([]),\n   actingprocess_has_any:dynamic=dynamic([]),\n   targetprocess_has_any:dynamic=dynamic([]),\n   parentprocess_has_any:dynamic=dynamic([]),\n   targetusername_has:string='*',\n   dvcipaddr_has_any_prefix:dynamic=dynamic([]),\n   dvchostname_has_any:dynamic=dynamic([]),\n   eventtype:string='*',\n   disabled:bool=false\n )\n {    SecurityEvent\n   // --------------------------------------------------------------------------------------\n   | where\n     (isnull(starttime) or TimeGenerated >= starttime )\n     and (isnull(endtime) or TimeGenerated <= endtime )\n     and not(disabled)\n   | where EventID == 4688\n   | where\n     (eventtype=='*' or eventtype=='ProcessCreated')\n     and (array_length(commandline_has_all)==0 or CommandLine has_all (commandline_has_all))\n     and (array_length(commandline_has_any)==0 or CommandLine has_any (commandline_has_any))\n     and (array_length(commandline_has_any_ip_prefix)==0 or has_any_ipv4_prefix(CommandLine, commandline_has_any_ip_prefix) )\n     and (array_length(actingprocess_has_any)==0 or ParentProcessName has_any (actingprocess_has_any))\n     and (array_length(targetprocess_has_any)==0 or NewProcessName has_any (targetprocess_has_any))\n     and (array_length(parentprocess_has_any)==0)\n     and (targetusername_has=='*' or TargetAccount has targetusername_has) // take into account mapping?\n     and (array_length(dvcipaddr_has_any_prefix)==0)\n     and (array_length(dvchostname_has_any)==0 or Computer has_any (dvchostname_has_any))\n   // --------------------------------------------------------------------------------------\n | extend\n   // Event\n     EventCount = int(1),\n     EventVendor = 'Microsoft',\n     EventProduct = 'Security Events',\n     EventSchemaVersion = '0.1.3',\n     EventSchema = 'ProcessEvent',\n     EventResult = 'Success',\n     EventStartTime = todatetime(TimeGenerated),\n     EventEndTime = todatetime(TimeGenerated),\n     EventType = 'ProcessCreated',\n     EventOriginalType = tostring(EventID),\n     DvcOs = 'Windows'\n | lookup KnownSIDs on $left.SubjectUserSid == $right.sid\n | extend\n     ActorUsername = iff (SubjectUserName == \"-\", username, SubjectAccount),\n     ActorUsernameType = iff(SubjectUserName == '-',type, 'Windows')\n | lookup KnownSIDs on $left.TargetUserSid == $right.sid\n | extend\n     TargetUsername = iff (TargetUserName == \"-\", username, TargetAccount),\n     TargetUsernameType = iff(TargetDomainName == '-',type, 'Windows')\n | lookup UserTypeLookup on AccountType\n | extend\n     ActorUserIdType = 'SID',\n     TargetUserIdType = 'SID',\n   // Processes\n     ActingProcessId = tostring(toint(ProcessId)),\n     TargetProcessId = tostring(toint(NewProcessId)),\n     TargetProcessCommandLine = CommandLine\n   | project-rename\n     DvcId = SourceComputerId,\n     DvcHostname = Computer,\n     ActingProcessName = ParentProcessName,\n     TargetProcessName = NewProcessName,\n     ActorDomainName = SubjectDomainName,\n     ActorUserId = SubjectUserSid,\n     ActorSessionId = SubjectLogonId,\n     TargetUserId =TargetUserSid,\n     TargetUserSessionId = TargetLogonId,\n     EventOriginalUid = EventOriginId,\n     TargetProcessTokenElevation = TokenElevationType\n  | lookup MandatoryLabelLookup on MandatoryLabel\n   // -- Aliases\n   | extend\n     User = TargetUsername,\n     Dvc = DvcHostname,\n     Process = TargetProcessName\n   // -- Remove potentially confusing\n   | project-keep Event*, Dvc*, Actor*, Target*, Acting*, User, Dvc, Process, CommandLine, TimeGenerated, Type, _ResourceId\n   | project-away\n       TargetDomainName,\n       TargetUserName,\n       TargetAccount,\n       EventID\n };\n  parser (\n   starttime=starttime,\n   endtime=endtime,\n   commandline_has_any=commandline_has_any,\n   commandline_has_all=commandline_has_all,\n   commandline_has_any_ip_prefix=commandline_has_any_ip_prefix,\n   actingprocess_has_any=actingprocess_has_any,\n   targetprocess_has_any=targetprocess_has_any,\n   parentprocess_has_any=parentprocess_has_any,\n   targetusername_has=targetusername_has,\n   dvcipaddr_has_any_prefix=dvcipaddr_has_any_prefix,\n   dvchostname_has_any=dvchostname_has_any,\n   eventtype=eventtype,\n   disabled=disabled\n )\n}",
+    "source_repo": "LaurieRhodes/PUBLIC-adx-basic",
+    "source_url": "https://github.com/LaurieRhodes/PUBLIC-adx-basic/blob/f3caf87f4eed4093d3ddbdd688e6fde74e71c48f/schema/ASIM/Parsers/ASimProcessEvent/vimProcessCreateMicrosoftSecurityEvents.kql",
+    "filename": "vimProcessCreateMicrosoftSecurityEvents.kql",
+    "collected_at": "2026-06-06T03:14:31.298947+00:00"
+  },
+  {
+    "id": "a75274622e8b",
+    "title": "description: RedLine has been seen adding exclusions to windows defender for evasion",
+    "description": "description: RedLine has been seen adding exclusions to windows defender for evasion",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "defender"
+    ],
+    "content": "// Source: https://github.com/reversinglabs/reversinglabs-siem-rules\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet DefenderExclusion = @'(?i)add\\-mppreference \\-ExclusionPath \"C:\\\\users\\\\.*\\\\(AppData\\\\Roaming|Downloads)\\\\.*.exe\"';\nSecurityEvent\n| where EventID == 4688\n| where CommandLine matches regex DefenderExclusion\n| union \n(SysmonParser\n| where EventID == 1\n| where CommandLine matches regex DefenderExclusion),\n(DeviceProcessEvents\n| where ProcessCommandLine matches regex DefenderExclusion)",
+    "source_repo": "reversinglabs/reversinglabs-siem-rules",
+    "source_url": "https://github.com/reversinglabs/reversinglabs-siem-rules/blob/23fc452b527f2f8e08c26c6dffc0f734e750a2be/Malware/RedLine/20230731/KQL/redline-process-defenderexclusion.kql",
+    "filename": "redline-process-defenderexclusion.kql",
+    "collected_at": "2026-06-06T03:14:30.653965+00:00"
+  },
+  {
+    "id": "f9e325be8f52",
+    "title": "KQL query to detect IPsec QM SAs with long lifetime",
+    "description": "KQL query to detect IPsec QM SAs with long lifetime",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/samtimur/ARMAzLandingZ\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent \n| where EventID == 5451\n| extend ed = parse_xml(EventData).EventData.Data\n| mv-apply ed on \n(\n    where ed['@Name'] == 'LifetimeSeconds'\n    | project LifetimeSeconds = ed['#text']\n)\n| where LifetimeSeconds > 14400\n| project TimeGenerated, Computer, Activity, LifetimeSeconds",
+    "source_repo": "samtimur/ARMAzLandingZ",
+    "source_url": "https://github.com/samtimur/ARMAzLandingZ/blob/e6df2cd83dea61bf8f7774a12b755769b817c64d/cloudsoe/kql/windows-ipsec-detect-qm-lifetime.kql",
+    "filename": "windows-ipsec-detect-qm-lifetime.kql",
+    "collected_at": "2026-06-06T03:14:30.036739+00:00"
+  },
+  {
+    "id": "bb4c44876db8",
+    "title": "Uses syslog messages created by Sophos Firewall and windows security events from network policy server logged in Azure.",
+    "description": "You have to modify the firewall ip address in line 19. You have to modify the \"ClientName\" in line 11 and 32 matching your NASIdentifier. If you are trying to resolve a user for a specific ip address, uncomment and modify the last line. created by R.iT GmbH - Tobias Nawrocki - 2023-08-25",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/R-iT-GmbH/CodeSnippet\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 6272\n| extend xmlData = parse_xml(EventData)\n| where ClientName == \"Sophos UTM\"\n| project TimeGenerated, SubjectUserName,\n          ConvertedMAC = tostring(replace_string(CallingStationID, \"-\", \":\")),\n          CallingStationID, CalledStationID, NASIdentifier\n| project TimeGenerated, SubjectUserName, ConvertedMAC, CallingStationID, CalledStationID, NASIdentifier\n| where \n\nSyslog \n| where Computer in (\"192.168.24.1\") and Facility == \"daemon\" \n| extend \n    Log_ID = extract(@'(log_id|messageid)=\"?(\\d+)\"?', 2, SyslogMessage), \n    Log_Type = extract(@'log_type=\"?([\\w\\s]+)\"?', 1, SyslogMessage), \n    Log_Component = extract(@'log_component=\"([\\w\\s]+)\"', 1, SyslogMessage), \n    Log_Subtype = extract(@'log_subtype=\"([\\w]+)\"', 1, SyslogMessage), \n    Status = extract(@'status=\"?(\\w+)\"?', 1, SyslogMessage), \n    Reported_IP = extract(@'reported_ip=\"?([\\w.]+)\"?', 1, SyslogMessage), \n    Src_MAC = toupper(extract(@'src_mac=\"?([\\w:]+)\"?', 1, SyslogMessage)) \n| where Log_Type == \"Event\" and Log_Component == \"DHCP Server\" \n| join kind=inner ( SecurityEvent \n    | where EventID == 6272 \n    | extend xmlData = parse_xml(EventData) \n    | where ClientName == \"Sophos UTM\" \n    | project TimeGenerated, SubjectUserName, Src_MAC = tostring(replace_string(CallingStationID, \"-\", \":\")), CallingStationID, CalledStationID, NASIdentifier \n    | project TimeGenerated, SubjectUserName, Src_MAC, CallingStationID, CalledStationID, NASIdentifier ) \n    on Src_MAC \n| project TimeGenerated, SubjectUserName, Reported_IP, Src_MAC\n//| where Reported_IP == \"192.168.77.24\"",
+    "source_repo": "R-iT-GmbH/CodeSnippet",
+    "source_url": "https://github.com/R-iT-GmbH/CodeSnippet/blob/0f81444611ef7d926c8a709e5e80759cc2eaea3f/AzureLogAnalytics/OnPrem-Logs/Get-UserByIPaddress-NPS-Sophos-Firewall.kql",
+    "filename": "Get-UserByIPaddress-NPS-Sophos-Firewall.kql",
+    "collected_at": "2026-06-06T03:14:29.412361+00:00"
+  },
+  {
+    "id": "94421fd64306",
+    "title": "Detect when the 'account is sensitive and cannot be delegated' flag on an account is changed",
+    "description": "Detect when the 'account is sensitive and cannot be delegated' flag on an account is changed",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Gyarbij/Artemis\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| project TimeGenerated, EventID, TargetAccount, SubjectAccount, UserAccountControl\n| where EventID == \"4738\"\n| where UserAccountControl has_any(\"2094\", \"2062\")\n| extend Activity = case\n    (UserAccountControl contains \"2094\", strcat(\"Account Sensitivity Enabled\"),\n     UserAccountControl contains \"2062\", strcat(\"Account Sensitivity Disabled\"),\n    \"Unknown\")\n| project TimeGenerated, Target=TargetAccount, Actor=SubjectAccount, Activity",
+    "source_repo": "Gyarbij/Artemis",
+    "source_url": "https://github.com/Gyarbij/Artemis/blob/4ef64a4c54532e0a1155265078a96e222c4abae5/Hunting/Active%20Directory/SecurityEvent-AccountSensitivityChanged.kql",
+    "filename": "SecurityEvent-AccountSensitivityChanged.kql",
+    "collected_at": "2026-06-06T03:14:28.783537+00:00"
+  },
+  {
+    "id": "f1d74fd4342c",
+    "title": "Top Attacker Ip",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/hVie1314/azure-sentinel-honeypot-soc-lab\n// Collected: 2026-06-06\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet GeoIPDB_FULL = _GetWatchlist(\"geoip\");\n\nunion (\nSecurityEvent\n| where EventID == 4625\n| project IpAddress\n),(\nSyslog\n| where SyslogMessage contains \"Failed password\"\n| extend IpAddress = extract(@\"\\\\d+\\\\.\\\\d+\\\\.\\\\d+\\\\.\\\\d+\",0,SyslogMessage)\n| project IpAddress\n)\n| evaluate ipv4_lookup(GeoIPDB_FULL, IpAddress, network)\n| where not(ipv4_is_private(IpAddress))\n| summarize Attacks=count()\nby IpAddress, countryname, cityname\n| top 10 by Attacks",
+    "source_repo": "hVie1314/azure-sentinel-honeypot-soc-lab",
+    "source_url": "https://github.com/hVie1314/azure-sentinel-honeypot-soc-lab/blob/cff9046a93889ebfd5cca70e8e0584bed5b22133/queries/top-attacker-ip.kql",
+    "filename": "top-attacker-ip.kql",
+    "collected_at": "2026-06-06T03:14:27.859321+00:00"
+  },
+  {
     "id": "b488c2d8b88a",
     "title": "Detect when a user connects to 3 or more unique devices via RDP over a 30 minute period",
     "description": "Detect when a user connects to 3 or more unique devices via RDP over a 30 minute period",

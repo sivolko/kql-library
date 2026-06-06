@@ -1,0 +1,14 @@
+// Source: https://github.com/reversinglabs/reversinglabs-siem-rules
+// Collected: 2026-06-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DefenderExclusion = @'(?i)add\-mppreference \-ExclusionPath "C:\\users\\.*\\(AppData\\Roaming|Downloads)\\.*.exe"';
+SecurityEvent
+| where EventID == 4688
+| where CommandLine matches regex DefenderExclusion
+| union 
+(SysmonParser
+| where EventID == 1
+| where CommandLine matches regex DefenderExclusion),
+(DeviceProcessEvents
+| where ProcessCommandLine matches regex DefenderExclusion)

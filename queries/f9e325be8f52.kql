@@ -1,0 +1,14 @@
+// Source: https://github.com/samtimur/ARMAzLandingZ
+// Collected: 2026-06-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent 
+| where EventID == 5451
+| extend ed = parse_xml(EventData).EventData.Data
+| mv-apply ed on 
+(
+    where ed['@Name'] == 'LifetimeSeconds'
+    | project LifetimeSeconds = ed['#text']
+)
+| where LifetimeSeconds > 14400
+| project TimeGenerated, Computer, Activity, LifetimeSeconds

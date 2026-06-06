@@ -1,0 +1,6 @@
+// Source: https://github.com/Crimson7research/C7SigmaTools
+// Collected: 2026-06-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where ScriptBlockText contains "Remove-Item -Path " or ScriptBlockText contains "del -Path " or ScriptBlockText contains "erase -Path " or ScriptBlockText contains "rd -Path " or ScriptBlockText contains "ri -Path " or ScriptBlockText contains "rm -Path " or ScriptBlockText contains "rmdir -Path "

@@ -1,0 +1,12 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-06-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+DataSecurityEvents
+| where Timestamp > ago(7d)
+| where isnotempty(SensitivityLabelId)
+| where ActionType in ("FileUploadedToCloud","FileSharedExternally","FileSentInEmail")
+| project Timestamp, AccountUpn, ActionType, ObjectId, SourceRelativeUrl, TargetFilePath,
+          ApplicationNames, Workload, SensitivityLabelId,
+          TargetUrlDomain, EmailSubject, NetworkMessageId
+| order by Timestamp desc

@@ -1,0 +1,10 @@
+// Source: https://github.com/mrblue223/Sentinel-Logic
+// Collected: 2026-06-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (4648, 4624) // Credential use and logon
+| where SubjectUserName != TargetUserName
+| summarize LateralMovementAttempts = count() 
+    by SubjectUserName, TargetUserName, Computer
+| where LateralMovementAttempts > 5
