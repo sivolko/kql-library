@@ -1,0 +1,53 @@
+// Source: https://github.com/kinomakino/reglasclientes
+// Collected: 2026-06-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventSourceName == "Microsoft-Windows-Sysmon"
+| extend EventDataXML = parse_xml(EventData)
+| extend 
+    RuleName = tostring(EventDataXML.EventData.Data[0]['#text']),
+    UtcTime = tostring(EventDataXML.EventData.Data[1]['#text']),
+    ProcessGuid = tostring(EventDataXML.EventData.Data[2]['#text']),
+    ProcessId_Sysmon = tostring(EventDataXML.EventData.Data[3]['#text']),
+    Image = tostring(EventDataXML.EventData.Data[4]['#text']),
+    FileVersion = tostring(EventDataXML.EventData.Data[5]['#text']),
+    Description = tostring(EventDataXML.EventData.Data[6]['#text']),
+    Product = tostring(EventDataXML.EventData.Data[7]['#text']),
+    Company = tostring(EventDataXML.EventData.Data[8]['#text']),
+    OriginalFileName = tostring(EventDataXML.EventData.Data[9]['#text']),
+    CommandLine = tostring(EventDataXML.EventData.Data[10]['#text']),
+    CurrentDirectory = tostring(EventDataXML.EventData.Data[11]['#text']),
+    User = tostring(EventDataXML.EventData.Data[12]['#text']),
+    LogonGuid = tostring(EventDataXML.EventData.Data[13]['#text']),
+    LogonId = tostring(EventDataXML.EventData.Data[14]['#text']),
+    TerminalSessionId = tostring(EventDataXML.EventData.Data[15]['#text']),
+    IntegrityLevel = tostring(EventDataXML.EventData.Data[16]['#text']),
+    Hashes = tostring(EventDataXML.EventData.Data[17]['#text']),
+    ParentProcessGuid = tostring(EventDataXML.EventData.Data[18]['#text']),
+    ParentProcessId_Sysmon = tostring(EventDataXML.EventData.Data[19]['#text']),
+    ParentImage = tostring(EventDataXML.EventData.Data[20]['#text']),
+    ParentCommandLine = tostring(EventDataXML.EventData.Data[21]['#text']),
+    ParentUser = tostring(EventDataXML.EventData.Data[22]['#text'])
+| extend
+    ProcessName = tostring(split(Image, '\\')[-1]),
+    ParentProcessName = tostring(split(ParentImage, '\\')[-1]),
+    MD5 = extract(@"MD5=([A-Fa-f0-9]{32})", 1, Hashes),
+    SHA256 = extract(@"SHA256=([A-Fa-f0-9]{64})", 1, Hashes),
+    SHA1 = extract(@"SHA1=([A-Fa-f0-9]{40})", 1, Hashes),
+    IMPHASH = extract(@"IMPHASH=([A-Fa-f0-9]{32})", 1, Hashes),
+    UserDomain = iff(User contains "\\", tostring(split(User, '\\')[0]), ""),
+    UserName = iff(User contains "\\", tostring(split(User, '\\')[1]), User),
+    IsSystemProcess = iff(Image startswith "C:\\Windows\\System32\\" or Image startswith "C:\\Windows\\SysWOW64\\", true, false),
+    IsSuspiciousPath = iff(Image has_any ("Temp", "tmp", "AppData\\Local\\Temp", "Users\\Public", "ProgramData", "\\Downloads\\", "\\Desktop\\"), true, false),
+    IsScriptingEngine = iff(ProcessName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe", "regsvr32.exe"), true, false)
+| project-away EventDataXML, EventData
+| project
+    TimeGenerated, Computer, EventID,
+    ProcessGuid, ProcessId_Sysmon, ProcessName, Image, CommandLine, CurrentDirectory,
+    ParentProcessGuid, ParentProcessId_Sysmon, ParentProcessName, ParentImage, ParentCommandLine,
+    User, UserDomain, UserName, LogonGuid, LogonId, TerminalSessionId, IntegrityLevel,
+    FileVersion, Description, Product, Company, OriginalFileName,
+    Hashes, MD5, SHA256, SHA1, IMPHASH,
+    IsSystemProcess, IsSuspiciousPath, IsScriptingEngine,
+    RuleName, UtcTime, ParentUser

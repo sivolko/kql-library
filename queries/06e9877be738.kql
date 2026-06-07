@@ -1,0 +1,11 @@
+// Source: https://github.com/Blackvectra/nextlayersec-guides
+// Collected: 2026-06-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 1d;
+DeviceProcessEvents
+| where Timestamp > ago(lookback)
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has_any ("-enc", "-EncodedCommand", "FromBase64String")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
+| sort by Timestamp desc

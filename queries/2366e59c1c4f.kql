@@ -1,0 +1,35 @@
+// Source: https://github.com/jonahchn/security-engineering
+// Collected: 2026-06-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent 
+| where EventID == 4768
+| extend d = parse_xml(EventData)
+| extend EventDataParsed = parse_json(tostring(d.EventData))
+| mv-expand DataItem = EventDataParsed.Data
+| extend 
+    Name = tostring(DataItem["@Name"]),
+    Value = tostring(DataItem["#text"])
+| summarize
+    User = anyif(Value, Name == "TargetUserName"),
+    CertIssuerName = anyif(Value, Name == "CertIssuerName"), 
+    CertSerialNumber = anyif(Value, Name == "CertSerialNumber"), 
+    CertThumbprint = anyif(Value, Name == "CertThumbprint"),
+    IpAddress = anyif(Value, Name == "IpAddress"),
+    Status = anyif(Value, Name == "Status"),
+    PreAuthType = anyif(Value, Name == "PreAuthType")
+    by TimeGenerated
+| where User !contains "$" //comment out to see machines
+| extend LogonType=case(isnotempty(CertSerialNumber), "SmartCard",
+                        PreAuthType== "2", "Password",
+                        ""),
+         Errors=case(Status=="0x0", "No Error",
+                    Status=="0x12", "Account credentials have been revoked",
+                    Status=="0x6", "The username does not exist",
+                    Status=="0x17", "The password has expired",
+                    Status=="0x3e", "The smart card certificate isn't trusted",
+                    Status=="0xe", "Encryption type not supported",
+                    Status=="0x19", "Additional pre-authentication required",
+                    Status=="0xc", "Requested start time is later than end time", 
+                    Status)
+| sort by TimeGenerated desc

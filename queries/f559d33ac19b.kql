@@ -1,0 +1,8 @@
+// Source: https://github.com/noakup/AzMonLogsAgent
+// Collected: 2026-06-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventSourceName == "Microsoft-Windows-Security-Auditing"
+| summarize EventCount = count() by EventID
+| sort by EventCount desc
