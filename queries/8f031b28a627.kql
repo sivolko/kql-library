@@ -1,0 +1,42 @@
+// Source: https://github.com/83avenger/azure-sentinel-defender-lab
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4624                          // Successful logon
+| where LogonType in (3, 10)                     // Network, RemoteInteractive
+| where AuthenticationPackageName == "NTLM"      // NTLM auth = PtH risk
+| where Account !endswith "$"                    // Exclude machine accounts
+// | where IpAddress !in (KnownAdminIPs)         // Uncomment when watchlist ready
+| summarize
+    TargetHosts   = dcount(Computer),
+    HostList      = make_set(Computer, 20),
+    LogonCount    = count(),
+    FirstSeen     = min(TimeGenerated),
+    LastSeen      = max(TimeGenerated)
+    by Account, IpAddress, bin(TimeGenerated, 1h)
+| where TargetHosts > 3                          // Threshold: >3 unique hosts = anomalous
+| extend
+    SpreadRate     = toreal(TargetHosts) / toreal(LogonCount),
+    ThreatType     = "LateralMovement",
+    Severity       = iff(TargetHosts > 10, "High", "Medium"),
+    MitreTactic    = "TA0008",
+    MitreTech      = "T1550.002",
+    AlertDetail    = strcat(Account, " authenticated to ", TargetHosts,
+                            " hosts via NTLM from ", IpAddress)
+| project
+    TimeGenerated,
+    Account,
+    IpAddress,
+    TargetHosts,
+    HostList,
+    LogonCount,
+    SpreadRate,
+    FirstSeen,
+    LastSeen,
+    Severity,
+    AlertDetail,
+    MitreTactic,
+    MitreTech
+| sort by TargetHosts desc

@@ -1,0 +1,149 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity_CL
+| where isnotempty(account_s)
+| project TimeGenerated, account_s, client_ip_s, model_evasionscore_s, model_id_s
+
+// =====================================================
+// AppLocker Telemetry Validation (Endpoint Control Events)
+// =====================================================
+SecurityEvent_CL
+| where TimeGenerated between (todatetime('2026-01-12T20:57:17.010024Z') .. todatetime('2026-01-12T20:58:17.010024Z'))
+| where Computer contains "soc-fw-rdp"
+| where EventSourceName_s contains "locker"
+| project TimeGenerated, Computer, AccountType_s, EventID_s, EventSourceName_s
+| order by TimeGenerated desc
+
+// =====================================================
+// Failed Logon Telemetry Check (4625 Events)
+// =====================================================
+SecurityEvent_CL
+| where Activity_s == "4625 - An account failed to log on."
+| where TimeGenerated > ago(1d)
+| summarize AttemptedLogins = count() by Account_s, EventID_s
+| where AttemptedLogins > NumberofLogins
+| sort by AttemptedLogins desc
+
+// =====================================================
+// Scheduled Rule Logic - Excessive Failed Logons
+// =====================================================
+SecurityEvent_CL
+| where EventID_s == "4625"
+| summarize FailedLogons = count() by Account_s
+| where FailedLogons >= 1000
+
+// =====================================================
+// Azure Control-Plane Telemetry - DELETE Operations
+// =====================================================
+AzureActivity
+| where TimeGenerated > ago(7d)
+| where CallerIpAddress in ("52.240.241.90", "20.44.10.211", "20.62.57.158")
+| where OperationNameValue contains "DELETE"
+| summarize Operations = count(), IPs = make_set(CallerIpAddress) by OperationNameValue
+
+// =====================================================
+// Email Investigation - Multi-Source Union Query
+// =====================================================
+union EmailEvents, EmailPostDeliveryEvents, EmailUrlInfo, MessageEvents, MessagePostDeliveryEvents, MessageUrlInfo, UrlClickEvents
+| where * has "michael"
+| project TimeGenerated, SenderFromAddress, RecipientEmailAddress, Subject
+
+// =====================================================
+// Sign-in Analysis - Identity and Location Tracking
+// =====================================================
+SigninLogs
+| project TimeGenerated, Identity, IPAddress, LocationDetails, UserPrincipalName, RiskState, TokenIssuerType
+| sort by TimeGenerated asc
+
+// =====================================================
+// Directory Changes - Entra ID Audit Logs
+// =====================================================
+AuditLogs 
+| where TargetResources contains "michael"
+| project TimeGenerated, OperationName, Category, LoggedByService, Result, ActivityDisplayName, TargetResources
+| sort by TimeGenerated asc
+
+// =====================================================
+// Failed Logon Attempts - Endpoint Detection
+// =====================================================
+DeviceLogonEvents
+| where TimeGenerated between (datetime(2026-01-30 16:45) .. datetime(2026-01-30 17:20))
+| where ActionType contains "failed"
+| project TimeGenerated, DeviceName, ActionType, AccountName, RemoteIP
+
+// =====================================================
+// Successful Remote Logons - Endpoint Detection
+// =====================================================
+DeviceLogonEvents
+| where TimeGenerated between (datetime(2026-01-30 16:45) .. datetime(2026-01-30 17:20))
+| where ActionType contains "success" and LogonType contains "remote"
+| project TimeGenerated, DeviceName, ActionType, AccountName, RemoteIP, AdditionalFields, LogonType
+
+// =====================================================
+// Mimikatz File Activity - File Events
+// =====================================================
+DeviceFileEvents
+| where FileName contains "mimikatz"
+| project TimeGenerated, RequestAccountName, ActionType, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
+
+// =====================================================
+// Mimikatz Process Execution - Process Events
+// =====================================================
+DeviceProcessEvents
+| where ProcessCommandLine contains "mimi" or InitiatingProcessCommandLine contains "mimi" or AdditionalFields contains "mimi"
+| sort by TimeGenerated desc
+
+// =====================================================
+// Atomic Red Team Activity - MITRE Technique T1059
+// =====================================================
+DeviceProcessEvents
+| where ProcessCommandLine contains "1059" and ProcessCommandLine contains "src"
+
+// =====================================================
+// Antivirus Detections - Mimikatz
+// =====================================================
+DeviceEvents
+| where ActionType startswith "antivirus"
+| where AdditionalFields contains "mimi"
+| project TimeGenerated, ActionType, FileName, FolderPath, AccountName, InitiatingProcessParentFileName, AdditionalFields
+
+// =====================================================
+// Multiple Malware Detections - Various Threats
+// =====================================================
+DeviceEvents
+| where ActionType startswith "antivirus"
+| sort by TimeGenerated desc
+| where AdditionalFields contains "PsDnsTxtExec" or AdditionalFields contains "kovter" or AdditionalFields contains "sacepos" or AdditionalFields contains "powessere"
+
+// =====================================================
+// PowerShell Network Activity - Suspicious Connections
+// =====================================================
+DeviceNetworkEvents
+| where InitiatingProcessFileName contains "powershell"
+| project TimeGenerated, DeviceName, LocalIP, RemoteIP, RemotePort, InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessAccountName, RemoteUrl, InitiatingProcessParentFileName, InitiatingProcessSHA256
+| sort by TimeGenerated asc
+
+// =====================================================
+// PowerShell Process Execution - Parent Process Analysis
+// =====================================================
+DeviceProcessEvents
+| where ProcessCommandLine contains "powershell" and InitiatingProcessParentFileName has_any ("cmd", "powershell", "explorer", "svchost")
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, InitiatingProcessSHA256
+| sort by TimeGenerated desc
+
+// =====================================================
+// Base64 Encoded PowerShell Commands - Decode and Analyze
+// =====================================================
+SecurityEvent
+| where TimeGenerated between (datetime(2026-01-14 20:00) .. datetime(2026-01-14 22:00))
+| where EventID == 4688
+| where CommandLine has "-encodedCommand"
+| extend EncodedString = extract(@"-encodedCommand\s+([A-Za-z0-9+/=]+)", 1, CommandLine)
+| extend DecodedRaw = base64_decode_tostring(EncodedString)
+| extend DecodedCommand = replace_string(DecodedRaw, "\u0000", "")
+| project TimeGenerated, Computer, DecodedCommand, CommandLine
+| where DecodedCommand != ""
+| order by TimeGenerated asc

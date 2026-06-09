@@ -1,0 +1,448 @@
+// Source: https://github.com/louisgiles/KQL
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ActorToCheck = "";
+let OperationType = "";
+let AlertTime = datetime(null);
+let EventWindow = 1h;
+let SigninLookback = 24h;
+let ActorHistoryWindow = 90d;
+//
+// --- Operation whitelist: only these are in scope. Everything else is noise. ---
+let WhitelistedOps = dynamic([
+    "Add-MailboxPermission", "Remove-MailboxPermission",
+    "Add-MailboxFolderPermission", "Set-MailboxFolderPermission", "Remove-MailboxFolderPermission",
+    "Set-Mailbox", "Set-MailboxCalendarConfiguration",
+    "New-InboxRule", "Set-InboxRule", "Remove-InboxRule",
+    "New-TransportRule", "Set-TransportRule", "Remove-TransportRule",
+    "New-ManagementRoleAssignment", "Remove-ManagementRoleAssignment"
+]);
+//
+// --- High-risk subset (for scoring) ---
+let HighRiskOps = dynamic([
+    "Add-MailboxPermission", "Set-Mailbox",
+    "New-InboxRule", "Set-InboxRule",
+    "New-TransportRule", "Set-TransportRule",
+    "Add-MailboxFolderPermission", "Set-MailboxFolderPermission"
+]);
+//
+// --- Privileged role list (target + delegee sensitivity) ---
+let PrivilegedRoles = dynamic([
+    "Global Administrator", "Privileged Role Administrator",
+    "Privileged Authentication Administrator", "Security Administrator",
+    "Exchange Administrator", "SharePoint Administrator",
+    "User Administrator", "Application Administrator",
+    "Cloud Application Administrator", "Intune Administrator",
+    "Conditional Access Administrator", "Helpdesk Administrator",
+    "Password Administrator", "Authentication Administrator",
+    "Directory Synchronization Accounts"
+]);
+//
+// ============================================================================
+// Privileged user baseline — from AuditLogs role-assignment events
+// ============================================================================
+let PrivilegedUsers = materialize(
+    AuditLogs
+    | where TimeGenerated >= ago(90d)
+    | where OperationName has_any ("Add member to role", "Add eligible member to role")
+    | extend
+        RoleName = tostring(TargetResources[0].displayName),
+        PrivUser = tolower(tostring(TargetResources[0].userPrincipalName))
+    | where RoleName in (PrivilegedRoles)
+    | where isnotempty(PrivUser)
+    | summarize AssignedPrivRoles = make_set(RoleName, 20) by PrivUser
+);
+//
+// ============================================================================
+// Actor historical baseline — strictly BEFORE AlertTime - EventWindow
+// ============================================================================
+let ActorHistory = materialize(
+    OfficeActivity
+    | where TimeGenerated between (AlertTime - ActorHistoryWindow .. AlertTime - EventWindow)
+    | where Operation in (WhitelistedOps)
+    | extend HistActor = tolower(tostring(UserId))
+    | where isnotempty(HistActor)
+    | summarize
+        HistoricalOpCount = count(),
+        DistinctTargetsHistorical = dcount(OfficeObjectId),
+        FirstSeenHistorical = min(TimeGenerated),
+        LastSeenHistorical = max(TimeGenerated)
+        by HistActor, Operation
+);
+//
+// ============================================================================
+// MFA tamper check — auth method changes for actor within 24h of AlertTime
+// ============================================================================
+let MfaTamperOps = dynamic([
+    "User registered security info", "User deleted security info",
+    "User changed default security info",
+    "Admin registered security info", "Admin deleted security info",
+    "Disable Strong Authentication", "Enable Strong Authentication"
+]);
+let ActorMfaTamper = materialize(
+    AuditLogs
+    | where TimeGenerated between (AlertTime - 24h .. AlertTime + 24h)
+    | where OperationName in (MfaTamperOps)
+    | extend TamperTarget = tolower(tostring(TargetResources[0].userPrincipalName))
+    | where isnotempty(TamperTarget)
+    | summarize
+        MfaTamperCount = count(),
+        MfaTamperOps = make_set(OperationName, 20),
+        MfaTamperLast = max(TimeGenerated)
+        by TamperTarget
+);
+//
+// ============================================================================
+// Identity enrichment — single lookup, projected three ways
+// ============================================================================
+let IdentityLookup = materialize(
+    IdentityInfo
+    | where TimeGenerated >= ago(90d)
+    | extend IdUPN = tolower(AccountUPN)
+    | summarize arg_max(TimeGenerated, JobTitle, AssignedRoles, Manager, RiskLevel, Department)
+        by IdUPN
+);
+let ActorIdentity = IdentityLookup
+    | project-rename ActorIdUPN = IdUPN, ActorJobTitle = JobTitle, ActorAssignedRoles = AssignedRoles,
+        ActorManager = Manager, ActorIdentityRisk = RiskLevel, ActorDepartment = Department
+    | project-away TimeGenerated;
+let TargetIdentity = IdentityLookup
+    | project-rename TargetIdUPN = IdUPN, TargetJobTitle = JobTitle, TargetAssignedRoles = AssignedRoles,
+        TargetManager = Manager, TargetIdentityRisk = RiskLevel, TargetDepartment = Department
+    | project-away TimeGenerated;
+let DelegeeIdentity = IdentityLookup
+    | project-rename DelegeeIdUPN = IdUPN, DelegeeJobTitle = JobTitle, DelegeeAssignedRoles = AssignedRoles,
+        DelegeeManager = Manager, DelegeeIdentityRisk = RiskLevel, DelegeeDepartment = Department
+    | project-away TimeGenerated;
+//
+// ============================================================================
+// Actor sign-in posture — within SigninLookback of AlertTime
+// ============================================================================
+let ActorSigninLatest = materialize(
+    SigninLogs
+    | where TimeGenerated between (AlertTime - SigninLookback .. AlertTime + SigninLookback)
+    | extend SigninActor = tolower(UserPrincipalName)
+    | extend DeviceParsed = parse_json(tostring(DeviceDetail))
+    | extend
+        _TrustType = tostring(DeviceParsed.trustType),
+        _IsManaged = tostring(DeviceParsed.isManaged),
+        _IsCompliant = tostring(DeviceParsed.isCompliant),
+        _DeviceOS = tostring(DeviceParsed.operatingSystem),
+        _DeviceDisplayName = tostring(DeviceParsed.displayName)
+    | extend _MfaMethod = tostring(parse_json(tostring(MfaDetail)).authMethod)
+    | summarize arg_max(TimeGenerated,
+        IPAddress, Location, ResultType, ResultDescription,
+        RiskLevelDuringSignIn, RiskDetail, RiskEventTypes,
+        ClientAppUsed, AuthenticationRequirement, ConditionalAccessStatus,
+        _TrustType, _IsManaged, _IsCompliant, _DeviceOS, _DeviceDisplayName, _MfaMethod)
+        by SigninActor
+    | project-rename
+        ActorSigninTime = TimeGenerated, ActorSigninIP = IPAddress,
+        ActorSigninLocation = Location, ActorSigninResult = ResultType,
+        ActorSigninResultDesc = ResultDescription,
+        ActorSigninRiskLevel = RiskLevelDuringSignIn, ActorSigninRiskDetail = RiskDetail,
+        ActorSigninRiskEvents = RiskEventTypes, ActorSigninClientApp = ClientAppUsed,
+        ActorSigninAuthReq = AuthenticationRequirement, ActorSigninCAStatus = ConditionalAccessStatus,
+        ActorSigninTrustType = _TrustType, ActorSigninIsManaged = _IsManaged,
+        ActorSigninIsCompliant = _IsCompliant, ActorSigninDeviceOS = _DeviceOS,
+        ActorSigninDeviceName = _DeviceDisplayName, ActorSigninMfaMethod = _MfaMethod
+);
+let ActorSigninStats = materialize(
+    SigninLogs
+    | where TimeGenerated between (AlertTime - SigninLookback .. AlertTime + SigninLookback)
+    | extend SigninActor = tolower(UserPrincipalName)
+    | summarize
+        ActorSigninCount = count(),
+        ActorFailureCount = countif(ResultType != 0),
+        ActorDistinctIPs = dcount(IPAddress),
+        ActorDistinctLocations = dcount(Location)
+        by SigninActor
+);
+//
+// --- IP familiarity baselines ---
+let OrgIPDays = materialize(
+    SigninLogs
+    | where TimeGenerated >= ago(SigninLookback)
+    | summarize DaysSeenInOrg = dcount(datetime_part("day", TimeGenerated)) by IPAddress
+);
+let UserIPDays = materialize(
+    SigninLogs
+    | where TimeGenerated >= ago(SigninLookback)
+    | extend _upn = tolower(UserPrincipalName)
+    | summarize DaysSeenUser = dcount(datetime_part("day", TimeGenerated)) by _upn, IPAddress
+);
+let UsersPerIP = materialize(
+    SigninLogs
+    | where TimeGenerated >= ago(SigninLookback)
+    | where ResultType == "0"
+    | summarize UsersWithIP = dcount(UserPrincipalName) by IPAddress
+);
+//
+// --- Tenant domains — for external delegee detection ---
+let TenantDomains = materialize(
+    IdentityInfo
+    | where TimeGenerated >= ago(30d)
+    | where isnotempty(AccountUPN)
+    | extend TenantDomain = tolower(tostring(split(AccountUPN, "@")[1]))
+    | where isnotempty(TenantDomain)
+    | summarize by TenantDomain
+);
+//
+// ============================================================================
+// MAIN PIPELINE
+// ============================================================================
+OfficeActivity
+| where TimeGenerated between (AlertTime - EventWindow .. AlertTime + EventWindow)
+| where Operation in (WhitelistedOps)
+| where isempty(OperationType) or Operation == OperationType
+| extend Actor = tolower(tostring(UserId))
+| where Actor contains ActorToCheck
+//
+// --- Parameter parsing ---
+| extend ParamsParsed = parse_json(tostring(Parameters))
+| mv-apply p = ParamsParsed on (
+    summarize ParamBag = make_bag(pack(tostring(p.Name), tostring(p.Value)))
+)
+| extend
+    Target = tolower(coalesce(tostring(OfficeObjectId), "")),
+    PAccessRights          = tostring(ParamBag.AccessRights),
+    PUser                  = tostring(ParamBag.User),
+    PTrustee               = tostring(ParamBag.Trustee),
+    PIdentity              = tostring(ParamBag.Identity),
+    PForwardingAddress     = tostring(ParamBag.ForwardingAddress),
+    PForwardingSmtpAddress = tostring(ParamBag.ForwardingSmtpAddress),
+    PDeliverToAndForward   = tostring(ParamBag.DeliverToMailboxAndForward),
+    PGrantSendOnBehalf     = tostring(ParamBag.GrantSendOnBehalfTo),
+    PRedirectTo            = tostring(ParamBag.RedirectTo),
+    PRuleName              = tostring(ParamBag.Name),
+    PForwardTo             = tostring(ParamBag.ForwardTo)
+//
+// --- Delegee extraction ---
+| extend DelegeeRaw = coalesce(
+    iff(isnotempty(PUser), PUser, ""),
+    iff(isnotempty(PTrustee), PTrustee, ""),
+    iff(isnotempty(PGrantSendOnBehalf), PGrantSendOnBehalf, ""),
+    iff(isnotempty(PForwardingAddress), PForwardingAddress, ""),
+    iff(isnotempty(PForwardingSmtpAddress), PForwardingSmtpAddress, ""),
+    iff(isnotempty(PRedirectTo), PRedirectTo, ""),
+    iff(isnotempty(PForwardTo), PForwardTo, "")
+)
+| extend Delegee = tolower(trim(@"[<>\s]", replace_regex(tostring(DelegeeRaw), @"(?i)smtp:", "")))
+| extend DelegeeDomain = tolower(tostring(split(Delegee, "@")[1]))
+//
+// --- Forwarding detection ---
+| extend HasForwarding = isnotempty(PForwardingAddress)
+    or isnotempty(PForwardingSmtpAddress)
+    or isnotempty(PRedirectTo)
+    or isnotempty(PForwardTo)
+    or tolower(PDeliverToAndForward) == "true"
+//
+// --- Human-readable parameter summary ---
+| extend ParameterSummary = strcat_array(array_concat(
+    iff(isnotempty(PAccessRights),          pack_array(strcat("AccessRights=", PAccessRights)), dynamic([])),
+    iff(isnotempty(PUser),                  pack_array(strcat("User=", PUser)), dynamic([])),
+    iff(isnotempty(PTrustee),               pack_array(strcat("Trustee=", PTrustee)), dynamic([])),
+    iff(isnotempty(PIdentity),              pack_array(strcat("Identity=", PIdentity)), dynamic([])),
+    iff(isnotempty(PForwardingAddress),     pack_array(strcat("ForwardingAddress=", PForwardingAddress)), dynamic([])),
+    iff(isnotempty(PForwardingSmtpAddress), pack_array(strcat("ForwardingSmtpAddress=", PForwardingSmtpAddress)), dynamic([])),
+    iff(isnotempty(PDeliverToAndForward),   pack_array(strcat("DeliverToMailboxAndForward=", PDeliverToAndForward)), dynamic([])),
+    iff(isnotempty(PGrantSendOnBehalf),     pack_array(strcat("GrantSendOnBehalfTo=", PGrantSendOnBehalf)), dynamic([])),
+    iff(isnotempty(PRedirectTo),            pack_array(strcat("RedirectTo=", PRedirectTo)), dynamic([])),
+    iff(isnotempty(PForwardTo),             pack_array(strcat("ForwardTo=", PForwardTo)), dynamic([])),
+    iff(isnotempty(PRuleName),              pack_array(strcat("RuleName=", PRuleName)), dynamic([]))
+), " | ")
+//
+// --- Action translation ---
+| extend ActionTranslation = case(
+    // Add-MailboxPermission
+    Operation == "Add-MailboxPermission" and isnotempty(PAccessRights),
+        strcat("Actor granted ", PAccessRights, " to ", Target, " for ", coalesce(Delegee, "unknown grantee"), "."),
+    Operation == "Add-MailboxPermission",
+        strcat("Actor granted mailbox permission on ", Target, " for ", coalesce(Delegee, "unknown grantee"), "."),
+    // Remove-MailboxPermission
+    Operation == "Remove-MailboxPermission",
+        strcat("Actor removed mailbox permission on ", Target, " from ", coalesce(Delegee, "unknown grantee"), "."),
+    // Set-Mailbox: forwarding set
+    Operation == "Set-Mailbox" and isnotempty(PForwardingSmtpAddress),
+        strcat("Actor set SMTP forwarding on ", Target, " to ", PForwardingSmtpAddress, "."),
+    Operation == "Set-Mailbox" and isnotempty(PForwardingAddress),
+        strcat("Actor set forwarding on ", Target, " to ", PForwardingAddress, "."),
+    // Set-Mailbox: forwarding cleared
+    Operation == "Set-Mailbox" and (isempty(PForwardingAddress) or PForwardingAddress == "") and tolower(PDeliverToAndForward) == "false",
+        strcat("Actor cleared forwarding configuration on ", Target, "."),
+    // Set-Mailbox: SendOnBehalf
+    Operation == "Set-Mailbox" and isnotempty(PGrantSendOnBehalf),
+        strcat("Actor granted SendOnBehalf to ", Target, " for ", PGrantSendOnBehalf, "."),
+    // Set-Mailbox: generic
+    Operation == "Set-Mailbox",
+        strcat("Actor modified mailbox configuration on ", Target, ". Parameters: ", ParameterSummary),
+    // New-InboxRule
+    Operation == "New-InboxRule" and isnotempty(PForwardTo),
+        strcat("Actor created inbox rule '", coalesce(PRuleName, "unnamed"), "' on ", Target, ". Rule forwards to ", PForwardTo, "."),
+    Operation == "New-InboxRule" and isnotempty(PRedirectTo),
+        strcat("Actor created inbox rule '", coalesce(PRuleName, "unnamed"), "' on ", Target, ". Rule redirects to ", PRedirectTo, "."),
+    Operation == "New-InboxRule",
+        strcat("Actor created inbox rule '", coalesce(PRuleName, "unnamed"), "' on ", Target, "."),
+    // Set-InboxRule
+    Operation == "Set-InboxRule",
+        strcat("Actor modified inbox rule '", coalesce(PRuleName, "unnamed"), "' on ", Target, "."),
+    // Remove-InboxRule
+    Operation == "Remove-InboxRule",
+        strcat("Actor removed inbox rule '", coalesce(PRuleName, "unnamed"), "' from ", Target, "."),
+    // Folder permissions
+    Operation == "Add-MailboxFolderPermission",
+        strcat("Actor granted folder permission on ", Target, " for ", coalesce(Delegee, "unknown grantee"), ". AccessRights=", coalesce(PAccessRights, "N/A"), "."),
+    Operation == "Set-MailboxFolderPermission",
+        strcat("Actor modified folder permission on ", Target, " for ", coalesce(Delegee, "unknown grantee"), "."),
+    Operation == "Remove-MailboxFolderPermission",
+        strcat("Actor removed folder permission on ", Target, " from ", coalesce(Delegee, "unknown grantee"), "."),
+    // Set-MailboxCalendarConfiguration
+    Operation == "Set-MailboxCalendarConfiguration",
+        strcat("Actor modified calendar configuration on ", Target, "."),
+    // Transport rules
+    Operation == "New-TransportRule",
+        strcat("Actor created transport rule. Parameters: ", ParameterSummary),
+    Operation == "Set-TransportRule",
+        strcat("Actor modified transport rule. Parameters: ", ParameterSummary),
+    Operation == "Remove-TransportRule",
+        strcat("Actor removed transport rule."),
+    // Management role assignments
+    Operation == "New-ManagementRoleAssignment",
+        strcat("Actor created management role assignment. Parameters: ", ParameterSummary),
+    Operation == "Remove-ManagementRoleAssignment",
+        strcat("Actor removed management role assignment."),
+    // Fallback
+    strcat("Actor executed ", Operation, " on ", Target, ". Parameters: ", ParameterSummary)
+)
+| project-rename EventTime = TimeGenerated
+//
+// --- Enrichment joins (all left-outer) ---
+| join kind=leftouter ActorIdentity on $left.Actor == $right.ActorIdUPN
+| join kind=leftouter TargetIdentity on $left.Target == $right.TargetIdUPN
+| join kind=leftouter DelegeeIdentity on $left.Delegee == $right.DelegeeIdUPN
+| join kind=leftouter (PrivilegedUsers | project-rename TargetPrivUser = PrivUser, TargetPrivRoles = AssignedPrivRoles)
+    on $left.Target == $right.TargetPrivUser
+| join kind=leftouter (PrivilegedUsers | project-rename DelegeePrivUser = PrivUser, DelegeePrivRoles = AssignedPrivRoles)
+    on $left.Delegee == $right.DelegeePrivUser
+| join kind=leftouter ActorHistory on $left.Actor == $right.HistActor, Operation
+| join kind=leftouter ActorSigninLatest on $left.Actor == $right.SigninActor
+| join kind=leftouter ActorSigninStats on $left.Actor == $right.SigninActor
+| join kind=leftouter ActorMfaTamper on $left.Actor == $right.TamperTarget
+| join kind=leftouter OrgIPDays on $left.ActorSigninIP == $right.IPAddress
+| join kind=leftouter UserIPDays on $left.Actor == $right._upn, $left.ActorSigninIP == $right.IPAddress
+| join kind=leftouter UsersPerIP on $left.ActorSigninIP == $right.IPAddress
+| join kind=leftouter TenantDomains on $left.DelegeeDomain == $right.TenantDomain
+//
+// --- Coalesce nulls ---
+| extend
+    ActorJobTitle = coalesce(ActorJobTitle, ""),
+    ActorDepartment = coalesce(ActorDepartment, ""),
+    ActorManager = coalesce(ActorManager, ""),
+    TargetJobTitle = coalesce(TargetJobTitle, ""),
+    TargetDepartment = coalesce(TargetDepartment, ""),
+    TargetManager = coalesce(TargetManager, ""),
+    DelegeeJobTitle = coalesce(DelegeeJobTitle, ""),
+    DelegeeDepartment = coalesce(DelegeeDepartment, ""),
+    DelegeeManager = coalesce(DelegeeManager, ""),
+    HistoricalOpCount = coalesce(HistoricalOpCount, tolong(0)),
+    DistinctTargetsHistorical = coalesce(DistinctTargetsHistorical, tolong(0)),
+    ActorSigninCount = coalesce(ActorSigninCount, tolong(0)),
+    ActorFailureCount = coalesce(ActorFailureCount, tolong(0)),
+    ActorDistinctIPs = coalesce(ActorDistinctIPs, tolong(0)),
+    ActorDistinctLocations = coalesce(ActorDistinctLocations, tolong(0)),
+    MfaTamperCount = coalesce(MfaTamperCount, tolong(0)),
+    DaysSeenInOrg = coalesce(DaysSeenInOrg, tolong(0)),
+    DaysSeenUser = coalesce(DaysSeenUser, tolong(0)),
+    UsersWithIP = coalesce(UsersWithIP, tolong(0)),
+    IsTargetPrivileged = isnotempty(TargetPrivRoles),
+    IsDelegeePrivileged = isnotempty(DelegeePrivRoles),
+    IsHighRiskOp = Operation in (HighRiskOps),
+    IsDelegeeExternal = isnotempty(Delegee) and isnotempty(DelegeeDomain) and isempty(TenantDomain),
+    IsForwardingExternal = HasForwarding and isnotempty(DelegeeDomain) and isempty(TenantDomain)
+//
+// ============================================================================
+// RISK SCORING ENGINE
+// ============================================================================
+| extend
+    _highRiskOp         = iff(IsHighRiskOp, 20, 0),
+    _targetPrivileged   = iff(IsTargetPrivileged, 20, 0),
+    _delegeePrivileged  = iff(IsDelegeePrivileged, 20, 0),
+    _delegeeExternal    = iff(IsDelegeeExternal, 25, 0),
+    _actorFirstTimeOp   = iff(HistoricalOpCount == 0, 25, 0),
+    _actorLowFreqOp     = iff(HistoricalOpCount > 0 and HistoricalOpCount <= 2, 10, 0),
+    _actorSigninRisk    = iff(ActorSigninRiskLevel in ("medium", "high")
+                              or (isnotempty(ActorSigninRiskDetail) and ActorSigninRiskDetail != "none"), 20, 0),
+    _actorUntrustedDev  = iff(isnotempty(ActorSigninTrustType)
+                              and ActorSigninTrustType !in ("Azure AD joined", "Hybrid Azure AD joined"), 10, 0),
+    _actorNoMfa         = iff(isempty(ActorSigninMfaMethod)
+                              or ActorSigninAuthReq !has "multiFactor", 15, 0),
+    _actorMfaTampered   = iff(MfaTamperCount > 0, 25, 0),
+    _forwardingExternal = iff(IsForwardingExternal, 25, 0)
+| extend
+    RiskScore = _highRiskOp + _targetPrivileged + _delegeePrivileged
+        + _delegeeExternal + _actorFirstTimeOp + _actorLowFreqOp
+        + _actorSigninRisk + _actorUntrustedDev + _actorNoMfa
+        + _actorMfaTampered + _forwardingExternal
+| extend
+    RiskFlags = strcat_array(array_concat(
+        iff(_highRiskOp > 0,         pack_array("HIGH_RISK_OP"), dynamic([])),
+        iff(_targetPrivileged > 0,   pack_array("TARGET_PRIVILEGED"), dynamic([])),
+        iff(_delegeePrivileged > 0,  pack_array("DELEGEE_PRIVILEGED"), dynamic([])),
+        iff(_delegeeExternal > 0,    pack_array("DELEGEE_EXTERNAL"), dynamic([])),
+        iff(_actorFirstTimeOp > 0,   pack_array("ACTOR_FIRST_TIME_OP"), dynamic([])),
+        iff(_actorLowFreqOp > 0,     pack_array("ACTOR_LOW_FREQ_OP"), dynamic([])),
+        iff(_actorSigninRisk > 0,    pack_array("ACTOR_SIGNIN_RISK"), dynamic([])),
+        iff(_actorUntrustedDev > 0,  pack_array("ACTOR_UNTRUSTED_DEVICE"), dynamic([])),
+        iff(_actorNoMfa > 0,         pack_array("ACTOR_NO_MFA"), dynamic([])),
+        iff(_actorMfaTampered > 0,   pack_array("ACTOR_MFA_TAMPERED"), dynamic([])),
+        iff(_forwardingExternal > 0, pack_array("FORWARDING_EXTERNAL"), dynamic([]))
+    ), " | ")
+| extend
+    TriageVerdict = case(
+        RiskScore >= 70, "🔴 HIGH-RISK",
+        RiskScore >= 45, "🟠 MEDIUM-RISK",
+        RiskScore >= 20, "🟡 LOW-RISK",
+        "🟢 LIKELY BENIGN"
+    )
+//
+// ============================================================================
+// OUTPUT
+// ============================================================================
+| project-reorder
+    TriageVerdict, RiskScore, RiskFlags, EventTime, Operation, ResultStatus,
+    ActionTranslation,
+    // Actor block
+    Actor, ClientIP, ActorJobTitle, ActorDepartment, ActorManager,
+    // Target block
+    Target, OfficeObjectId, OfficeWorkload, TargetJobTitle, TargetDepartment, TargetManager,
+    TargetPrivRoles, IsTargetPrivileged,
+    // Delegee block
+    Delegee, DelegeeDomain, IsDelegeeExternal, DelegeeJobTitle, DelegeeDepartment, DelegeeManager,
+    DelegeePrivRoles, IsDelegeePrivileged,
+    // Operation details
+    HasForwarding, IsForwardingExternal, IsHighRiskOp, ParameterSummary,
+    // Historical frequency
+    HistoricalOpCount, DistinctTargetsHistorical, FirstSeenHistorical, LastSeenHistorical,
+    // Sign-in posture
+    ActorSigninTime, ActorSigninIP, ActorSigninLocation,
+    DaysSeenInOrg, DaysSeenUser, UsersWithIP,
+    ActorSigninTrustType, ActorSigninIsManaged, ActorSigninIsCompliant,
+    ActorSigninDeviceName, ActorSigninDeviceOS,
+    ActorSigninMfaMethod, ActorSigninAuthReq, ActorSigninCAStatus,
+    ActorSigninRiskLevel, ActorSigninRiskDetail, ActorSigninRiskEvents,
+    ActorSigninResult, ActorSigninResultDesc, ActorSigninClientApp,
+    ActorSigninCount, ActorFailureCount, ActorDistinctIPs, ActorDistinctLocations,
+    // MFA tamper
+    MfaTamperCount, MfaTamperOps, MfaTamperLast
+| project-away
+    TenantId, SourceSystem, Type,
+    ParamBag, ParamsParsed, Parameters, DelegeeRaw,
+    ActorIdUPN, TargetIdUPN, DelegeeIdUPN,
+    TargetPrivUser, DelegeePrivUser,
+    HistActor, SigninActor, SigninActor1, TamperTarget,
+    IPAddress, IPAddress1, _upn, TenantDomain,
+    _highRiskOp, _targetPrivileged, _delegeePrivileged, _delegeeExternal,
+    _actorFirstTimeOp, _actorLowFreqOp, _actorSigninRisk, _actorUntrustedDev,
+    _actorNoMfa, _actorMfaTampered, _forwardingExternal
+| sort by EventTime desc

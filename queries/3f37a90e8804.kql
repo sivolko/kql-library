@@ -1,0 +1,11 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (4625, 4648) // Failed logons and explicit credential use
+| summarize 
+    FailedLogons = countif(EventID == 4625),
+    SuccessfulLogons = countif(EventID == 4624)
+    by TargetAccount
+| top 10 by FailedLogons desc

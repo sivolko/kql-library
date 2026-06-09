@@ -1,0 +1,88 @@
+// Source: https://github.com/azdabat/Minimum-Truth-Detection-Framework-ADX-Validated-Composite-Rules
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DeviceNetworkEvents = DeviceNetworkEvents | extend Timestamp = TimeGenerated;
+let DeviceEvents = DeviceEvents | extend Timestamp = TimeGenerated;
+let DeviceProcessEvents = DeviceProcessEvents | extend Timestamp = TimeGenerated;
+
+let Lookback = 24hr;
+
+// ---- Tunables
+let BeaconingThreshold = 80;         // volume threshold in window
+let MaxBeaconSpan = 30m;             // "tight" span for that volume
+let MinScoreToSurface = 50;
+
+let RpcProviders = dynamic([
+  "alchemy.com","infura.io","quicknode.com","moralis.io","chainstack.com","ankr.com","getblock.io",
+  "etherscan.io","solana.com"
+]);
+
+let DevHints = dynamic(["dev","blockchain","chain","web3","crypto","wallet","node","vault","metamask"]);
+let SuspiciousProcs = dynamic(["powershell.exe","pwsh.exe","cmd.exe","wscript.exe","cscript.exe","mshta.exe","rundll32.exe","regsvr32.exe"]);
+
+// ---- Stage 1: Filter RPC provider traffic
+DeviceNetworkEvents
+| where Timestamp >= ago(Lookback)
+| where ActionType == "ConnectionSuccess"
+| where isnotempty(RemoteUrl)
+| where RemoteUrl has_any (RpcProviders)
+| extend RpcHost = tostring(parse_url(RemoteUrl).Host)
+| where isnotempty(RpcHost)
+
+// ---- Stage 2: Aggregate by (host, process, rpc host)
+| summarize
+    FirstSeen = min(Timestamp),
+    LastSeen  = max(Timestamp),
+    EventCount = count(),
+    TimeSpanSec = datetime_diff("second", max(Timestamp), min(Timestamp)),
+    SampleCmd   = any(InitiatingProcessCommandLine),
+    Proc = any(InitiatingProcessFileName),
+    Parents = make_set(InitiatingProcessParentFileName, 10)
+  by DeviceName, InitiatingProcessFileName, RpcHost
+
+// ---- Stage 3: Convergence tests
+| extend
+    IsBeaconLike = iif(EventCount >= BeaconingThreshold and TimeSpanSec <= toint(MaxBeaconSpan/1s), 1, 0),
+    IsDevHost = iif(tolower(DeviceName) has_any (DevHints) or tostring(Parents) has_any (DevHints), 1, 0),
+    IsSuspiciousProcess = iif(tolower(InitiatingProcessFileName) in~ (SuspiciousProcs), 1, 0)
+
+// ---- Stage 4: Scoring (cumulative outcomes)
+| extend RiskScore =
+      0
+    + iif(IsDevHost == 0, 35, 0)                // non-dev host increases concern
+    + iif(IsBeaconLike == 1, 40, 0)             // beacon shape is strong
+    + iif(IsSuspiciousProcess == 1, 25, 0)      // suspicious origin is strong
+
+| where RiskScore >= MinScoreToSurface
+| extend Severity = case(
+    RiskScore >= 80, "CRITICAL",
+    RiskScore >= 60, "HIGH",
+    "MEDIUM"
+)
+| extend HuntingDirectives = pack_array(
+    strcat("[SUMMARY] Host=", DeviceName, " | RPC=", RpcHost, " | Proc=", InitiatingProcessFileName),
+    strcat("[SCORE] ", tostring(RiskScore), " | Sev=", Severity,
+           " | BeaconLike=", tostring(IsBeaconLike),
+           " | SuspProc=", tostring(IsSuspiciousProcess),
+           " | DevHint=", tostring(IsDevHost)),
+    strcat("[EVIDENCE] Count=", tostring(EventCount), " | SpanSec=", tostring(TimeSpanSec), " | SampleCmd=", tostring(SampleCmd)),
+    "[NEXT] Validate host role (dev/web3 vs general user). If non-dev: pivot into persistence (TaskCache/RunKeys/Services) and check for downloader/LOLBins.",
+    "[CONTAIN] If unauthorized beaconing is confirmed: isolate host, acquire memory, block domains where feasible, rotate credentials, scope for same Proc+RPC across estate."
+)
+| project
+    Timestamp = LastSeen,
+    Severity,
+    RiskScore,
+    DeviceName,
+    RpcHost,
+    EventCount,
+    TimeSpanSec,
+    InitiatingProcessFileName,
+    Parents,
+    SampleCmd,
+    IsDevHost,
+    IsBeaconLike,
+    IsSuspiciousProcess,
+    HuntingDirectives
+| order by RiskScore desc, LastSeen desc

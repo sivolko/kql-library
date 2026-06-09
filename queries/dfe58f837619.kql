@@ -1,0 +1,7 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4739
+| summarize count() by DomainPolicyChanged

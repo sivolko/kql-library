@@ -1,0 +1,20 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DevEvents = 
+DeviceEvents
+| extend DevTime = bin(Timestamp, 1s)
+| where ActionType == "NamedPipeEvent"
+| where tolower(parse_json(AdditionalFields).PipeName) contains @"RemCom"
+| where isnotempty(RemoteIP)
+| extend InitiatorIP = RemoteIP
+| summarize by DeviceId, InitiatorIP, DevTime;
+// 
+DeviceEvents
+| extend DevTime2 = bin(Timestamp, 1s)
+| where ActionType =~ @"ServiceInstalled"
+| join kind=inner ( DevEvents ) on DeviceId
+| where abs(datetime_diff('second', DevTime, DevTime2)) <= 3
+| extend ServiceName = FileName
+| project DevTime2, DeviceName, ServiceName, InitiatingProcessAccountName, InitiatorIP

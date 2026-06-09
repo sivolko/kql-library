@@ -1,0 +1,9 @@
+// Source: https://github.com/ibondarenko1/azure-sentinel-detection-engineering
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(1h)
+| where OperationNameValue endswith "/write"
+| where ActivityStatusValue == "Success"
+| project TimeGenerated, Caller, OperationNameValue, ResourceProviderValue, ResourceId, ActivityStatusValue

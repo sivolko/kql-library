@@ -1,0 +1,8 @@
+// Source: https://github.com/3ltrashpanda/sentinel-log-analytics-collections
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "PowerShellCommand"
+| where AdditionalFields has_any ("Export-DnsServerZone", "Get-DnsServerZone")
+| where InitiatingProcessCommandLine != @"""MonitoringHost.exe"" -Embedding"

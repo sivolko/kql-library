@@ -1,0 +1,8 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.SECURITYCOPILOT/CAPACITIES/WRITE"
+| where ActivityStatusValue == "Success"
+| project Caller, CallerIpAddress, ResourceGroup

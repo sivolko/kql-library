@@ -1,0 +1,215 @@
+// Source: https://github.com/jasonnorman66994-dot/sovereign-command-center-ghost-walk
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TimeWindow = 30m;
+let MFAFatigueThreshold = 10;
+let ImpossibleTravelWindow = 15m;
+
+// ============================================================================
+// DETECTION 1: MFA Fatigue Pattern
+// ============================================================================
+let MFAFatigue = SigninLogs
+| where TimeGenerated > ago(TimeWindow)
+| where ResultType == "500121"  // MFA denied - user didn't respond to prompt
+| summarize 
+    mfa_fatigue_count = count(),
+    mfa_first_seen = min(TimeGenerated),
+    mfa_last_seen = max(TimeGenerated)
+    by UserPrincipalName, bin(TimeGenerated, 5m)
+| where mfa_fatigue_count > MFAFatigueThreshold
+| project UserPrincipalName, mfa_fatigue_count, mfa_first_seen, mfa_last_seen;
+
+// ============================================================================
+// DETECTION 2: Impossible Travel
+// ============================================================================
+let ImpossibleTravel = IdentityInfo
+| join kind=inner (
+    SigninLogs
+    | where TimeGenerated > ago(TimeWindow)
+) on AccountObjectId
+| evaluate microsoftsecurity_impossibletravel(
+    TimeGenerated, 
+    IPAddress, 
+    UserPrincipalName, 
+    ImpossibleTravelWindow
+)
+| where IsImpossibleTravel == true
+| project UserPrincipalName, impossible_travel_detected = true, travel_distance_km, travel_speed_kmh;
+
+// ============================================================================
+// DETECTION 3: OAuth Abuse (Risky Scopes)
+// ============================================================================
+let OAuthAbuse = CloudAppEvents
+| where TimeGenerated > ago(TimeWindow)
+| where ActionType == "ConsentToApp"
+| where tostring(AdditionalDetails.Scopes) has_any ("Mail.ReadWrite", "offline_access", "Files.ReadWrite.All", "Mail.Send")
+| project 
+    UserPrincipalName,
+    oauth_app_detected = true,
+    oauth_app = tostring(AdditionalDetails.AppName),
+    oauth_scopes = AdditionalDetails.Scopes,
+    oauth_timestamp = TimeGenerated;
+
+// ============================================================================
+// DETECTION 4: Legacy Protocol Usage
+// ============================================================================
+let LegacyProtocol = SigninLogs
+| where TimeGenerated > ago(TimeWindow)
+| where ClientAppUsed in ("IMAP4", "POP3", "SMTP", "IMAP", "POP", "EWS")
+| project 
+    UserPrincipalName,
+    legacy_protocol_used = true,
+    legacy_protocol = ClientAppUsed,
+    legacy_timestamp = TimeGenerated;
+
+// ============================================================================
+// DETECTION 5: Token Replay / AiTM Indicators
+// ============================================================================
+let TokenReplay = SigninLogs
+| where TimeGenerated > ago(TimeWindow)
+| where RiskDetail == "TokenReplay" or Risk in (100, 99, 98)  // Risk level 100 = token replay
+| project 
+    UserPrincipalName,
+    token_replay_detected = true,
+    token_replay_risk_detail = RiskDetail,
+    token_replay_risk_level = Risk,
+    token_replay_timestamp = TimeGenerated;
+
+// ============================================================================
+// DETECTION 6: Defender for Endpoint Device Alerts
+// ============================================================================
+let DeviceAlerts = DeviceEvents
+| where TimeGenerated > ago(TimeWindow)
+| where ActionType in (
+    "MalwareDetected", 
+    "SuspiciousProcess", 
+    "CredentialTheft", 
+    "TokenTheft",
+    "ChildProcessCreated",
+    "NetworkConnectionCreated"
+)
+| summarize 
+    device_alert_count = count(),
+    device_alert_types = make_set(ActionType),
+    device_last_alert = max(TimeGenerated)
+    by DeviceId, DeviceName, InitiatingProcessAccountName
+| extend UserPrincipalName = tostring(InitiatingProcessAccountName)
+| where device_alert_count > 0
+| project 
+    UserPrincipalName,
+    device_id = DeviceId,
+    device_name = DeviceName,
+    device_alert = true,
+    device_alert_types,
+    device_alert_count;
+
+// ============================================================================
+// CORRELATION: JOIN ALL SIGNALS
+// ============================================================================
+let Correlated = MFAFatigue
+| join kind=leftouter ImpossibleTravel on UserPrincipalName
+| join kind=leftouter OAuthAbuse on UserPrincipalName
+| join kind=leftouter LegacyProtocol on UserPrincipalName
+| join kind=leftouter TokenReplay on UserPrincipalName
+| join kind=leftouter DeviceAlerts on UserPrincipalName
+| join kind=inner (
+    SigninLogs
+    | where TimeGenerated > ago(TimeWindow)
+    | where ResultType == 0  // Successful login after fatigue pattern
+) on UserPrincipalName
+| extend
+    // === ALERT METADATA ===
+    alert_type = "identity_endpoint_compromise",
+    severity = "critical",
+    timestamp_utc = TimeGenerated,
+    
+    // === USER INFORMATION ===
+    user_email = UserPrincipalName,
+    user_id = tostring(UserId),
+    display_name = tostring(UserDisplayName),
+    department = tostring(Department),
+    role = tostring(JobTitle),
+    is_privileged_user = iff(UserPrincipalName has_prefix "admin" or UserPrincipalName has_prefix "svc", true, false),
+    
+    // === EVENT DETAILS ===
+    event_type = "multi_event_identity_endpoint_threat",
+    event_description = strcat(
+        "Correlated identity + endpoint threat: ",
+        iff(isnotempty(mfa_fatigue_count), strcat(mfa_fatigue_count, " MFA prompts + "), ""),
+        iff(isnotempty(oauth_app_detected), "OAuth scope abuse + ", ""),
+        iff(isnotempty(legacy_protocol_used), "legacy protocol + ", ""),
+        iff(isnotempty(impossible_travel_detected), "impossible travel + ", ""),
+        iff(isnotempty(token_replay_detected), "token replay + ", ""),
+        iff(isnotempty(device_alert), strcat(device_alert_count, " device alerts"), "")
+    ),
+    source_ip = IPAddress,
+    asn = tostring(NetworkLocationDetails.Asn),
+    geo_location = tostring(Location),
+    client_app = tostring(ClientAppUsed),
+    auth_method = tostring(AuthenticationRequirement),
+    risk_level = "high",
+    
+    // === RISK DETECTIONS ARRAY ===
+    risk_detections = pack_array(
+        iff(mfa_fatigue_count > MFAFatigueThreshold, strcat("MFA Fatigue - ", mfa_fatigue_count, " prompts"), ""),
+        iff(isnotempty(oauth_app_detected), strcat("OAuth Abuse - ", oauth_app), ""),
+        iff(isnotempty(legacy_protocol_used), strcat("Legacy Protocol - ", legacy_protocol), ""),
+        iff(isnotempty(impossible_travel_detected), "Impossible Travel Detected", ""),
+        iff(isnotempty(token_replay_detected), "Token Replay / AiTM Pattern", ""),
+        iff(isnotempty(device_alert), strcat("Device Alerts - ", tostring(device_alert_types)), "")
+    ),
+    
+    // === TECHNICAL INDICATORS ===
+    mfa_fatigue_count = coalesce(mfa_fatigue_count, 0),
+    legacy_protocol_used = coalesce(legacy_protocol_used, false),
+    oauth_app_detected = coalesce(oauth_app_detected, false),
+    oauth_app_scopes = coalesce(oauth_app_scopes, dynamic([])),
+    hidden_rules_detected = false,
+    impossible_travel_detected = coalesce(impossible_travel_detected, false),
+    token_replay_detected = coalesce(token_replay_detected, false),
+    device_alert = coalesce(device_alert, false),
+    device_alert_types = coalesce(device_alert_types, dynamic([])),
+    
+    // === CORRELATION / SESSION ===
+    correlation_id = tostring(new_guid()),
+    session_id = tostring(SessionId),
+    
+    // === RECOMMENDED ACTIONS ===
+    recommended_actions = pack_array(
+        "Revoke all active sessions",
+        "Block the account immediately",
+        "Reset password and MFA bindings",
+        "Review OAuth app grants and revoke risky ones",
+        "Check for hidden inbox rules and forwarding",
+        "Quarantine/investigate endpoint device",
+        "Review activity in past 48 hours",
+        "Enable conditional access policies"
+    ),
+    
+    // === INVESTIGATION LINKS ===
+    signin_logs_url = strcat("https://entra.microsoft.com/#view/Microsoft_AAD_IAM/UsersSignIns/userId/", UserId),
+    oauth_apps_url = "https://entra.microsoft.com/#view/Microsoft_AAD_IAM/Apps",
+    inbox_rules_url = "https://admin.exchange.microsoft.com/#/mailboxes",
+    sentinel_query_url = "https://portal.azure.com/#blade/Microsoft_Azure_Sentinel/Logs",
+    user_profile_url = strcat("https://entra.microsoft.com/#view/Microsoft_AAD_UsersProfile/userId/", UserId),
+    
+    // === ASSIGNMENT ===
+    analyst_on_call = "SOC_TEAM",
+    team_name = "Security Operations Center",
+    
+    // === METADATA ===
+    pipeline_version = "2.1.0",
+    source_system = "Sentinel",
+    environment = "production"
+    
+| project 
+    TimeGenerated,
+    UserPrincipalName,
+    IPAddress,
+    customDetails = pack_all();
+
+// ============================================================================
+// OUTPUT: Return correlated alert for SOAR playbook consumption
+// ============================================================================
+Correlated

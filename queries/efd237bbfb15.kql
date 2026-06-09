@@ -1,0 +1,28 @@
+// Source: https://github.com/ibondarenko1/m365-security-operations
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+union withsource=SourceTable
+    EmailEvents,
+    EmailUrlInfo,
+    EmailAttachmentInfo,
+    EmailPostDeliveryEvents,
+    AlertInfo,
+    AlertEvidence,
+    BehaviorEntities,
+    BehaviorInfo,
+    UrlClickEvents,
+    MessageEvents,
+    MessageUrlInfo,
+    DeviceEvents,
+    DeviceLogonEvents,
+    DeviceProcessEvents,
+    DeviceNetworkEvents,
+    DeviceFileEvents,
+    DeviceRegistryEvents,
+    IdentityLogonEvents,
+    IdentityQueryEvents,
+    CloudAppEvents
+| where Timestamp > ago(30d)
+| summarize Count = count() by SourceTable
+| order by Count desc

@@ -1,0 +1,10 @@
+// Source: https://github.com/GauravSingh-CyberSecurity/Azure-Cloud-Detection-using-Sentinel-main
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent                             
+ | where EventID == 4698
+ | parse EventData with * '<Data Name="SubjectUserName">' User '</Data>' *
+| parse EventData with * '<Data Name="TaskName">' NameofSceuduledTask '</Data>' *
+ | parse EventData with * '<Data Name="ClientProcessId">' ClientProcessID '</Data>' *
+ | project Computer, TimeGenerated, ClientProcessID, NameofSceuduledTask, User

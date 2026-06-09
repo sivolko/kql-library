@@ -1,0 +1,18 @@
+// Source: https://github.com/flattte/libKQL
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+let target_group = dynamic([
+//emails here
+]);
+//target devices need to be updated
+let target_devices = dynamic([
+//devices here
+]);
+DeviceEvents
+| where ActionType in (
+    "SensitiveFileRead"
+)
+| where InitiatingProcessAccountUpn in (target_group)
+    or DeviceName in (target_devices)
+| project TimeGenerated, InitiatingProcessAccountUpn, DeviceName, FolderPath, FileName

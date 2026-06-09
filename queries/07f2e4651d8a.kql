@@ -1,0 +1,27 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (4728, 4729, 4732, 4733, 4756, 4757)
+| where TargetUserName in ("Domain Admins", "Enterprise Admins", "Schema Admins", "Group Policy Creator Owners", "Domain Controllers", "Read-only Domain Controllers", "Replicator", "Server Operators")
+| project
+    TimeGenerated,
+    Computer,
+    EventID,
+    EventData,
+    TargetUserName,
+    MemberName,
+    SubjectUserName,
+    SubjectDomainName,
+    Activity = case(
+        EventID == 4728 or EventID == 4732 or EventID == 4756, "Added to Group",
+        EventID == 4729 or EventID == 4733 or EventID == 4757, "Removed from Group",
+        "Other"
+    ),
+    TargetDomainName,
+    AdditionalFields = parse_xml(EventData)
+| extend Member = tostring(AdditionalFields.EventData.Data[1]["#text"])
+| extend MemberUserName = extract(@"CN=([^,]+)", 1, MemberName)
+| project TimeGenerated, Activity, SensitiveGroup= TargetUserName, MemberSID = Member, MemberUserName, ActingUser = SubjectUserName, Computer
+| sort by TimeGenerated desc

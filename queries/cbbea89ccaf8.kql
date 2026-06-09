@@ -1,0 +1,17 @@
+// Source: https://github.com/troytrojan01/ot-cybersecurity-with-sentinel
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DeviceVendor =~ "Forescout" and DeviceProduct =~ "eyeSegment"
+| extend SrcZone = DeviceCustomString1,
+         DstZone = DeviceCustomString2,
+         Action = DeviceCustomString4
+| where SrcZone != "n/a" and DstZone != "n/a"
+| summarize EventCount = count(),
+            UniqueSrcIPs = dcount(SourceIP),
+            UniqueDstIPs = dcount(DestinationIP),
+            Actions = make_set(Action)
+          by SrcZone, DstZone
+| order by EventCount desc

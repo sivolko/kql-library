@@ -1,0 +1,9 @@
+// Source: https://github.com/WhalerMike/uiao
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(7d)
+| where Operation == "MailItemsAccessed"
+| summarize Count = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+| extend Status = iff(Count > 0, "Operational", "NOT DETECTED — Action Required")

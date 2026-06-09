@@ -1,0 +1,10 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-06-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation == "New-RoleGroup"
+| where RecordType == "ExchangeAdmin"
+| parse Parameters with * 'Name","Value":"' RoleName '"' *
+| parse Parameters with * 'Roles","Value":"' PermissionsAdded '"' *
+| project TimeGenerated, Actor=UserId, RoleName, PermissionsAdded
