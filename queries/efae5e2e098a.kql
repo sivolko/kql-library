@@ -1,0 +1,19 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-06-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let PIMRoles = dynamic(["Global Administrator", "Privileged Authentication Administrator", "Privileged Role Administrator", "Security Administrator"]);
+let AdminAccounts = AuditLogs
+   | where TimeGenerated > ago (14d)
+   | where OperationName == "Add member to role completed (PIM activation)"
+   | where TargetResources[0].displayName has_any (PIMRoles)
+   | extend AdminAccount = tostring((InitiatedBy.user).userPrincipalName)
+   | distinct tostring(AdminAccount);
+SigninLogs
+| where TimeGenerated > ago (14d)
+| where ResultType != "0"
+| where UserPrincipalName in (AdminAccounts)
+| mv-expand todynamic(AuthenticationDetails)
+| extend MFAResult = tostring((AuthenticationDetails).authenticationStepResultDetail)
+| where MFAResult startswith "MFA denied"
+| project TimeGenerated, UserPrincipalName, MFAResult, IPAddress

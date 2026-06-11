@@ -1,0 +1,10 @@
+// Source: https://github.com/GhattasFarah/Sentinel-Queries
+// Collected: 2026-06-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe = 2h;
+let threshold = 10; //threshold of 10 failed MFA attempts
+SigninLogs
+| where TimeGenerated >= ago(timeframe) and ResultDescription has "MFA"
+| summarize applicationCount = dcount(AppDisplayName) by UserPrincipalName, IPAddress
+| where applicationCount >= threshold

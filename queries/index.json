@@ -1,5 +1,185 @@
 [
   {
+    "id": "0b317548d190",
+    "title": "Detects if a user had 10 failed MFA attempts into an app within a 2h time period to detect MFA bombing",
+    "description": "Detects if a user had 10 failed MFA attempts into an app within a 2h time period to detect MFA bombing",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/GhattasFarah/Sentinel-Queries\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe = 2h;\nlet threshold = 10; //threshold of 10 failed MFA attempts\nSigninLogs\n| where TimeGenerated >= ago(timeframe) and ResultDescription has \"MFA\"\n| summarize applicationCount = dcount(AppDisplayName) by UserPrincipalName, IPAddress\n| where applicationCount >= threshold",
+    "source_repo": "GhattasFarah/Sentinel-Queries",
+    "source_url": "https://github.com/GhattasFarah/Sentinel-Queries/blob/53072f2f1d78cd8b991770b336d90d726b2e4a77/failedMFA's.kql",
+    "filename": "failedMFA's.kql",
+    "collected_at": "2026-06-11T03:15:22.683893+00:00"
+  },
+  {
+    "id": "213df82b15d2",
+    "title": "Sign In Anomaly",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/CyberShiv-AI/ai-cyber-threat-detections\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where ConditionalAccessStatus == \"failure\"\n| summarize FailedAttempts = count() by UserPrincipalName, bin(TimeGenerated, 1h)\n| where FailedAttempts > 5\n",
+    "source_repo": "CyberShiv-AI/ai-cyber-threat-detections",
+    "source_url": "https://github.com/CyberShiv-AI/ai-cyber-threat-detections/blob/e3de6c326a2cb7dc674612e58e520baff96a23aa/kql/sign-in-anomaly.kql",
+    "filename": "sign-in-anomaly.kql",
+    "collected_at": "2026-06-11T03:15:21.877639+00:00"
+  },
+  {
+    "id": "0af605081e8f",
+    "title": "Month by month breakdown of when your Azure AD guests last signed in",
+    "description": "Month by month breakdown of when your Azure AD guests last signed in",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago (360d)\n| where UserType == \"Guest\" or UserPrincipalName contains \"#ext#\"\n| where ResultType == 0\n| summarize arg_max(TimeGenerated, *) by UserPrincipalName\n| project TimeGenerated, UserPrincipalName\n| summarize InactiveUsers=make_set(UserPrincipalName) by startofmonth(TimeGenerated)",
+    "source_repo": "obsida-uk/Azure-BlueTeam-Toolkit",
+    "source_url": "https://github.com/obsida-uk/Azure-BlueTeam-Toolkit/blob/715003d731662549883c8c478a0f98aed0fc5784/Sentinel/Azure-Entra-ID/SummarizeGuestInactivity.kql",
+    "filename": "SummarizeGuestInactivity.kql",
+    "collected_at": "2026-06-11T03:15:21.229998+00:00"
+  },
+  {
+    "id": "04e34f823308",
+    "title": "Mfa %",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/MSJosh/TTTTUB\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(30d) and ResultType == 0 // Filter logs from the last 30 days where the result type is 0 (successful sign-ins)\n| mv-expand AuthFields=parse_json(AuthenticationDetails) // Expand the AuthenticationDetails JSON array into multiple records\n| extend AuthenticationMethod = tostring(AuthFields.authenticationMethod) // Extract the authentication method from the expanded records\n| where AuthenticationMethod !in~ (\"Password\",\"Previously satisfied\",\"\") // Filter out records where the authentication method is \"Password\", \"Previously satisfied\", or empty\n| summarize // Summarize the data by user, counting the total MFA attempts, phone MFA attempts, other MFA attempts, listing the methods used, and finding the most recent phone MFA attempt\n    TotalMFACount = count(), \n    PhonetxtMFACount = countif(AuthenticationMethod =~ 'Text message' or AuthenticationMethod startswith \"Phone call\"), \n    MobileApp = countif(AuthenticationMethod =~ 'Mobile app'),\n    WHfB = countif(AuthenticationMethod =~ 'Windows Hello for Business'),\n    NonMSFTApp = countif(AuthenticationMethod =~ 'Companion mobile app notification'),\n    Passkey = countif(AuthenticationMethod =~ 'passkey'),\n    Phonepush = countif(AuthenticationMethod =~ 'Passwordless phone sign-in'),\n    Oauth = countif(AuthenticationMethod =~ 'OATH verification code'),\n    OtherMFACount = countif(AuthenticationMethod !~ 'Other'), \n    MethodsUsed = make_set(AuthenticationMethod), \n    MostRecentPhoneMFA = maxif(TimeGenerated, AuthenticationMethod =~ 'Text message' or AuthenticationMethod startswith \"Phone call\") \n    by UserPrincipalName\n| where PhonetxtMFACount > 0 // Calculate the percentage of phone MFA attempts out of total MFA attempts\n| extend PhoneMFAPercent = toreal(PhonetxtMFACount) / toreal(TotalMFACount) // Calculate the percentage of phone MFA attempts out of total MFA attempts\n| order by PhonetxtMFACount desc // Sort by the largest amount of phone MFA attempts",
+    "source_repo": "MSJosh/TTTTUB",
+    "source_url": "https://github.com/MSJosh/TTTTUB/blob/3c7b9d70dabaa6cd77fa246341e214aaa15cfdfa/MFA%20Bypass/MFA%20%25.kql",
+    "filename": "MFA %.kql",
+    "collected_at": "2026-06-11T03:15:20.571668+00:00"
+  },
+  {
+    "id": "d70b00253b06",
+    "title": "Generates an alert if first factor authentication is successful from a known malicious IP address",
+    "description": "Generates an alert if first factor authentication is successful from a known malicious IP address",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/ugurkocde/kql_search_submissions\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(1h)\n| where ResultDescription == \"Sign-in was blocked because it came from an IP address with malicious activity\"\n| extend [\"Password Result Detail\"] = tostring(parse_json(AuthenticationDetails)[0].authenticationStepResultDetail), [\"MFA Result Detail\"] = tostring(parse_json(AuthenticationDetails)[1].authenticationStepResultDetail)\n| where ['Password Result Detail']  has_any (\"Correct password\", \"First factor requirement satisfied by claim in the token\")\n| project\n    TimeGenerated,\n    UserPrincipalName,\n    UserDisplayName,\n    IPAddress,\n    Location,\n    ResultType,\n    ResultDescription,\n    AppDisplayName,\n    ['Password Result Detail'],\n    ['MFA Result Detail'],\n    UserAgent ",
+    "source_repo": "ugurkocde/kql_search_submissions",
+    "source_url": "https://github.com/ugurkocde/kql_search_submissions/blob/b0f92a4f4827243baf27f1915fb32db72b855b64/Password%20Success%20from%20Malicious%20IP.kql",
+    "filename": "Password Success from Malicious IP.kql",
+    "collected_at": "2026-06-11T03:15:19.926722+00:00"
+  },
+  {
+    "id": "743dc76c2628",
+    "title": "=========================================================",
+    "description": "RULE-01 | AD-Kerberoasting-RC4-Bulk Description : Bulk RC4-encrypted TGS requests from a single user \u2014 the Kerberoasting signature.  Any domain user can request a TGS for any SPN; RC4 (0x17) is preferred by attackers because it yields mode-13100 hashcat hashes. Severity    : High  \u2192 Critical when \u226510 SPNs or DA-member Frequency   : Every 30 minutes, look-back 30 minutes MITRE       : T1558.003 \u2014 Kerberoasting",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet LookBack         = 30m;\nlet MinSPNsThreshold = 5;      // \u22655 different service accounts = alert\n\n// --- Build a DC list dynamically from known KDC issuers ---\nlet KnownDCs = SecurityEvent\n    | where TimeGenerated > ago(7d)\n    | where EventID == 4768                        // AS-REQ: only DCs issue these\n    | summarize by Computer\n    | project Computer = toupper(Computer);\n\n// --- Main query ---\nlet KerberoastCandidates = SecurityEvent\n    | where TimeGenerated > ago(LookBack)\n    | where EventID == 4769                        // TGS-REP\n    | where TicketEncryptionType == \"0x17\"         // RC4-HMAC \u2014 Kerberoastable\n    | where ServiceName !endswith \"$\"              // Exclude machine accounts\n    | where ServiceName !in (\"krbtgt\", \"kadmin/changepw\")\n    | where TargetUserName !endswith \"$\"           // Exclude computer requesters\n    | extend\n        RequestingUser    = tolower(TargetUserName),\n        RequestingDomain  = tolower(TargetDomainName),\n        ServiceSPN        = ServiceName,\n        SourceIP          = IpAddress\n    | summarize\n        SPNsRequested       = dcount(ServiceSPN),\n        SPNList             = make_set(ServiceSPN, 30),\n        TotalRequests       = count(),\n        SourceIPs           = make_set(IpAddress, 5),\n        EarliestRequest     = min(TimeGenerated),\n        LatestRequest       = max(TimeGenerated)\n        by RequestingUser, RequestingDomain, Computer\n    | where SPNsRequested >= MinSPNsThreshold;\n\n// --- Enrich with SigninLogs risky sign-in context (join on user UPN) ---\nlet RiskySignIns = SigninLogs\n    | where TimeGenerated > ago(1h)\n    | where RiskLevelDuringSignIn in (\"medium\", \"high\")\n        or RiskState == \"confirmedCompromised\"\n    | summarize RiskySignIn = any(1) by UserPrincipalName = tolower(UserPrincipalName);\n\nKerberoastCandidates\n| extend UserUPN = strcat(RequestingUser, \"@\", RequestingDomain)\n| join kind=leftouter (RiskySignIns) on $left.UserUPN == $right.UserPrincipalName\n| extend\n    Severity = case(\n        SPNsRequested >= 10 or RiskySignIn == 1, \"Critical\",\n        SPNsRequested >= 5,                       \"High\",\n        \"Medium\"\n    ),\n    AttackWindow_sec = datetime_diff(\"second\", LatestRequest, EarliestRequest),\n    RequestsPerMin   = round(todouble(TotalRequests) / max_of(1.0, todouble(datetime_diff(\"minute\", LatestRequest, EarliestRequest))), 1)\n| extend WhySuspicious = strcat(\n    iff(SPNsRequested >= 10,    \"BulkRC4_>=10SPNs; \", \"\"),\n    iff(SPNsRequested >= 5,     \"BulkRC4_>=5SPNs; \",  \"\"),\n    iff(RiskySignIn == 1,       \"RiskySignIn_Correlated; \", \"\"),\n    iff(RequestsPerMin > 5.0,   \"HighRate_\", \"\"), iff(RequestsPerMin > 5.0, tostring(RequestsPerMin), \"\"), iff(RequestsPerMin > 5.0, \"req/min; \", \"\")\n)\n| project\n    TimeGenerated         = LatestRequest,\n    Severity,\n    WhySuspicious,\n    RequestingUser,\n    RequestingDomain,\n    Computer,\n    SPNsRequested,\n    TotalRequests,\n    RequestsPerMin,\n    AttackWindow_sec,\n    SPNList,\n    SourceIPs\n| order by SPNsRequested desc",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/a14d7f1e99f83d82447611e500be8f254df206cb/Use%20Cases%20Threat%20Hunting/ADSecurityEvents/AnalyticRules/RULE-01_AD-Kerberoasting-RC4-Bulk.kql",
+    "filename": "RULE-01_AD-Kerberoasting-RC4-Bulk.kql",
+    "collected_at": "2026-06-11T03:15:19.294158+00:00"
+  },
+  {
+    "id": "31261058baf1",
+    "title": "Signinlogs   Get List Of All Signin Risk",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/chadmcox/Entra_ID\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(14d) \n| where AADTenantId == ResourceTenantId\n| where RiskLevelDuringSignIn in (\"high\",\"medium\",\"low\") \n| extend mfaUsed = tostring(MfaDetail.authMethod)\n| project AppDisplayName, UserPrincipalName, RiskLevelAggregated, RiskLevelDuringSignIn, RiskState, RiskDetail, RiskEventTypes_V2, mfaUsed, MfaDetail,ConditionalAccessStatus, AuthenticationRequirement, Category, ResultType, ResultDescription",
+    "source_repo": "chadmcox/Entra_ID",
+    "source_url": "https://github.com/chadmcox/Entra_ID/blob/a069bd5140c17bf3c1cc8082eee152c7e9845610/KQL/Identity%20Protection%20Queries/SigninLogs%20-%20Get%20list%20of%20all%20signin%20risk.kql",
+    "filename": "SigninLogs - Get list of all signin risk.kql",
+    "collected_at": "2026-06-11T03:15:18.660134+00:00"
+  },
+  {
+    "id": "b400bf4182d4",
+    "title": "Failed MFA authentication against the Standalone experience.",
+    "description": "Failed MFA authentication against the Standalone experience.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/rod-trent/Security-Copilot\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs \n| where TimeGenerated >= ago(24h) \n| where AppDisplayName == \"Medeina Portal\" \n| where ResultType == \"50074\" \n| extend city = LocationDetails.city \n| extend state = LocationDetails.state \n| extend region = LocationDetails.countryOrRegion \n| extend latitude = parse_json(tostring(LocationDetails.geoCoordinates)).latitude \n| extend longitude = parse_json(tostring(LocationDetails.geoCoordinates)).longitude \n| project UserDisplayName, UserPrincipalName, UserType, city, state, region, latitude, longitude, AADTenantId",
+    "source_repo": "rod-trent/Security-Copilot",
+    "source_url": "https://github.com/rod-trent/Security-Copilot/blob/bf520065c9319fe0c6b9aa3be330616ae471c556/Other/Queries/Failed_MFA.kql",
+    "filename": "Failed_MFA.kql",
+    "collected_at": "2026-06-11T03:15:18.015856+00:00"
+  },
+  {
+    "id": "5ee02d114608",
+    "title": "Name: Impossible Travel for AI App Sign-ins",
+    "description": "Purpose: Identify AI app sign-ins from different countries in an unrealistically short time window for the same user. Data Source(s): SigninLogs Tuning: Use after excluding known VPN or cloud-proxy exit points.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/CyberAutomationX/SecureAzCloud-Scripts\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet Lookback = 14d;\nlet AIApps = dynamic([\"openai\", \"chatgpt\", \"claude\", \"anthropic\", \"gemini\", \"copilot\", \"copilot studio\", \"azure ai\", \"azure openai\", \"cognitive services\", \"ai foundry\", \"perplexity\", \"mistral\"]);\nSigninLogs\n| where TimeGenerated > ago(Lookback)\n| extend AppComposite = tolower(strcat(coalesce(AppDisplayName, \"\"), \" \", coalesce(ResourceDisplayName, \"\"))),\n         User = tostring(UserPrincipalName),\n         Country = coalesce(tostring(LocationDetails.countryOrRegion), tostring(Location))\n| where AppComposite has_any (AIApps)\n| where ResultType == 0\n| where isnotempty(User) and isnotempty(Country)\n| sort by User asc, TimeGenerated asc\n| serialize PrevUser = prev(User), PrevTime = prev(TimeGenerated), PrevCountry = prev(Country), PrevIP = prev(IPAddress)\n| where User == PrevUser\n| where Country != PrevCountry\n| extend HoursBetween = datetime_diff(\"hour\", TimeGenerated, PrevTime)\n| where HoursBetween between (0 .. 8)\n| project TimeGenerated, User, AppDisplayName, ResourceDisplayName, IPAddress, Country, PrevTime, PrevIP, PrevCountry, HoursBetween, UserAgent, AuthenticationRequirement, ConditionalAccessStatus\n| sort by TimeGenerated desc",
+    "source_repo": "CyberAutomationX/SecureAzCloud-Scripts",
+    "source_url": "https://github.com/CyberAutomationX/SecureAzCloud-Scripts/blob/2017bbfc06e811d36732e5d8b602e1eee2f09f2c/KQL/Impossible%20Travel%20for%20AI%20App%20Sign-ins.kql",
+    "filename": "Impossible Travel for AI App Sign-ins.kql",
+    "collected_at": "2026-06-11T03:15:17.356693+00:00"
+  },
+  {
+    "id": "971c47e63a6c",
+    "title": "MITRE ATT&CK: T1078 - Valid Accounts",
+    "description": "MITRE ATT&CK: T1078 - Valid Accounts Tuning notes: Exclude trusted VPN egress, managed identity providers, known travel patterns, and service accounts with global infrastructure.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/THESunnyNguyen/kql-hunting-queries\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 1d;\nlet maxHoursBetweenCountries = 8.0;\nSigninLogs\n| where TimeGenerated >= ago(lookback)\n| where ResultType == 0\n| extend City = tostring(LocationDetails.city)\n| extend Country = tostring(LocationDetails.countryOrRegion)\n| where isnotempty(UserPrincipalName) and isnotempty(IPAddress) and isnotempty(Country)\n| project TimeGenerated, UserPrincipalName, IPAddress, AppDisplayName, City, Country, ClientAppUsed, UserAgent\n| sort by UserPrincipalName asc, TimeGenerated asc\n| serialize\n| extend PreviousTime = prev(TimeGenerated)\n| extend PreviousUser = prev(UserPrincipalName)\n| extend PreviousIPAddress = prev(IPAddress)\n| extend PreviousCity = prev(City)\n| extend PreviousCountry = prev(Country)\n| where UserPrincipalName == PreviousUser and Country != PreviousCountry\n| extend HoursBetween = datetime_diff(\"second\", TimeGenerated, PreviousTime) / 3600.0\n| where HoursBetween between (0.01 .. maxHoursBetweenCountries)\n| project TimeGenerated, UserPrincipalName, IPAddress, Country, City, PreviousTime, PreviousIPAddress, PreviousCountry, PreviousCity, HoursBetween, AppDisplayName, ClientAppUsed, UserAgent\n",
+    "source_repo": "THESunnyNguyen/kql-hunting-queries",
+    "source_url": "https://github.com/THESunnyNguyen/kql-hunting-queries/blob/70ce9d167a368c5f3c2b7312cf3e73a3595b2926/queries/SigninLogs/impossible-travel-signin-heuristic.kql",
+    "filename": "impossible-travel-signin-heuristic.kql",
+    "collected_at": "2026-06-11T03:15:16.717255+00:00"
+  },
+  {
+    "id": "c5a45a4f86da",
+    "title": "Signinlogs   List Users That Have Successfully Remediated Risk",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/chadmcox/Azure_Active_Directory\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs | where TimeGenerated > ago(14d) | where RiskState == \"remediated\" | where ResultType in (0) | where AppDisplayName <> \"Microsoft Authentication Broker\" | project TimeGenerated,ResultType, ResultDescription,AppDisplayName, UserPrincipalName,UserType, RiskLevelAggregated, RiskLevelDuringSignIn, RiskState, RiskDetail, RiskEventTypes_V2, ConditionalAccessStatus, AuthenticationRequirement,AADTenantId,ResourceTenantId",
+    "source_repo": "chadmcox/Azure_Active_Directory",
+    "source_url": "https://github.com/chadmcox/Azure_Active_Directory/blob/6abbc153dae306de0a8ff595da0fcde8330c0dcc/Log%20Analytics/Identity%20Protection%20Queries/SigninLogs%20-%20List%20users%20that%20have%20successfully%20remediated%20risk.kql",
+    "filename": "SigninLogs - List users that have successfully remediated risk.kql",
+    "collected_at": "2026-06-11T03:15:16.083143+00:00"
+  },
+  {
+    "id": "efae5e2e098a",
+    "title": "Generates list of Privileged Accounts based on previous PIM Activiations",
+    "description": "Useful to detect MFA failures for privileged accounts",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/MorganCPatz/KQL-Queries\n// Collected: 2026-06-11\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet PIMRoles = dynamic([\"Global Administrator\", \"Privileged Authentication Administrator\", \"Privileged Role Administrator\", \"Security Administrator\"]);\nlet AdminAccounts = AuditLogs\n   | where TimeGenerated > ago (14d)\n   | where OperationName == \"Add member to role completed (PIM activation)\"\n   | where TargetResources[0].displayName has_any (PIMRoles)\n   | extend AdminAccount = tostring((InitiatedBy.user).userPrincipalName)\n   | distinct tostring(AdminAccount);\nSigninLogs\n| where TimeGenerated > ago (14d)\n| where ResultType != \"0\"\n| where UserPrincipalName in (AdminAccounts)\n| mv-expand todynamic(AuthenticationDetails)\n| extend MFAResult = tostring((AuthenticationDetails).authenticationStepResultDetail)\n| where MFAResult startswith \"MFA denied\"\n| project TimeGenerated, UserPrincipalName, MFAResult, IPAddress",
+    "source_repo": "MorganCPatz/KQL-Queries",
+    "source_url": "https://github.com/MorganCPatz/KQL-Queries/blob/e087c2740b4cd4b9aecd228de4bf86ab809d7e8f/Sentinel/SigninLogs-PrivAccountMFAFailures.kql",
+    "filename": "SigninLogs-PrivAccountMFAFailures.kql",
+    "collected_at": "2026-06-11T03:15:15.229019+00:00"
+  },
+  {
     "id": "d12728015094",
     "title": "Source: https://github.com/sivolko/kql-library",
     "description": "Collected: 2026-05-31 KQL Library - https://github.com/sivolko/kql-library",
