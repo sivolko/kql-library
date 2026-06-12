@@ -1,5 +1,125 @@
 [
   {
+    "id": "5f2e1d3f628b",
+    "title": "This query detects successful risky sign-ins followed by MFA registration",
+    "description": "Helps identify potential adversaries trying to achieve persistence through security info registration",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/ugurkocde/kql_search_submissions\n// Collected: 2026-06-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet Threshold = 1440;\nlet signinEvents = \n    SigninLogs\n    | where TimeGenerated >= ago(1d)\n    | where ResultType == 0\n    | where RiskLevelDuringSignIn in (\"high\",\"medium\",\"low\")   // Risky sign-ins only\n    | extend \n    PWResult = tostring(parse_json(AuthenticationDetails)[0].authenticationStepResultDetail), \n    MFAResult = tostring(parse_json(AuthenticationDetails)[1].authenticationStepResultDetail)\n    | project SignInTime = TimeGenerated, UserId = tolower(UserPrincipalName), RiskLevelDuringSignIn, SignInIPAddress = IPAddress, SignInLocation = Location, PWResult, MFAResult;\nlet authRegEvents = \n    AuditLogs\n    | where TimeGenerated >= ago(1d)\n    | where OperationName contains \"User registered security info\"\n    | where Result == \"success\"\n    | extend TargetUser = tostring(parse_json(TargetResources)[0].userPrincipalName)\n    | extend AuthRegIPAddress = parse_json(tostring(InitiatedBy.user)).ipAddress\n    | project AuthRegTime = TimeGenerated, UserId = tolower(TargetUser), OperationName, AuthRegResult = Result, AuthRegIPAddress;\nsigninEvents\n| join kind=inner authRegEvents on UserId \n| where AuthRegTime > SignInTime\n| extend [\"Minutes between actions\"] = datetime_diff('minute', AuthRegTime, SignInTime)\n| where [\"Minutes between actions\"] <= Threshold ",
+    "source_repo": "ugurkocde/kql_search_submissions",
+    "source_url": "https://github.com/ugurkocde/kql_search_submissions/blob/b0f92a4f4827243baf27f1915fb32db72b855b64/Risky%20Sign%20in%20Followed%20by%20MFA%20Registration.kql",
+    "filename": "Risky Sign in Followed by MFA Registration.kql",
+    "collected_at": "2026-06-12T03:17:52.364710+00:00"
+  },
+  {
+    "id": "9556c9827bd7",
+    "title": "Useful for verifying credential usage and strong authentication across privileged accounts.",
+    "description": "Supports ICAM Pillar: \"Track Usage > Credential Usage\" Category: Privileged Identity & Credential Management (PIM) This query audits credential usage by expanding `AuthenticationDetails` from interactive sign-ins in Entra ID. Key Characteristics:",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/Cyberlorians/KQL\n// Collected: 2026-06-12\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff// Objective: Audits interactive Entra sign-ins by privileged users (SigninLogs), showing which authentication method was used (e.g., FIDO2, OTP, password).\n// Useful for verifying credential usage and strong authentication across privileged accounts.\n//\n// Supports ICAM Pillar: \"Track Usage > Credential Usage\"\n// Category: Privileged Identity & Credential Management (PIM)\n//\n// This query audits credential usage by expanding `AuthenticationDetails`\n// from interactive sign-ins in Entra ID.\n//\n// Key Characteristics:\n// - Tracks the authentication method used per sign-in (e.g., Password, FIDO2, OTP, etc.)\n// - Filters to specific privileged users (if provided)\n// - Removes non-contributive entries like \"Previously satisfied\"\n// - Useful for verifying strong auth (e.g., phishing-resistant methods) in daily use\n// ----- Part 0: Dynamic Targeting (Entra Sign-ins) -----\nlet TargetUPNs = dynamic([]);  // e.g., [\"admin@domain.com\", \"svc_jdoe@domain.com\"]\nlet ExcludeSyncAccounts = true;         // Set to false to include all accounts\n// ----- Part 1: Filter Interactive Sign-ins and Expand Credential Use -----\nSigninLogs //Interactive user sign-ins are sign-ins that require the user to supply an authentication factor\n| where TimeGenerated > ago(30d)\n| mv-expand todynamic(AuthenticationDetails)\n| extend\n    AuthMethod = tostring(AuthenticationDetails.authenticationMethod),\n    IsSyncAccount = UserPrincipalName has \"Sync\"\n| where AuthMethod <> \"Previously satisfied\"\n| where array_length(TargetUPNs) == 0 or UserPrincipalName in (TargetUPNs)\n| where ExcludeSyncAccounts == false or IsSyncAccount == false\n// ----- Part 2: Return Most Recent Credential Use Per UPN + Method -----\n| summarize arg_max(TimeGenerated, Category, AppDisplayName) by UserPrincipalName, AuthMethod\n// ----- Part 3: Final Output -----\n| project TimeGenerated, UserPrincipalName, AuthMethod, Category, AppDisplayName\n| sort by TimeGenerated desc\n| take 50",
+    "source_repo": "Cyberlorians/KQL",
+    "source_url": "https://github.com/Cyberlorians/KQL/blob/cd68909313472ee9539ac16f468a3d1113572991/Entra/SigninLogs/Credential%20Usage%20-%20AuthenticationDetails.kql",
+    "filename": "Credential Usage - AuthenticationDetails.kql",
+    "collected_at": "2026-06-12T03:17:51.746611+00:00"
+  },
+  {
+    "id": "08e0e1cdbb1e",
+    "title": "Detecteolos",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/dCloser/SentinelAnalyticRules\n// Collected: 2026-06-12\n// KQL Library - https://github.com/sivolko/kql-library\n\n# Play Script : This detects Unpatched Windows 10 and 11 Clients connecting to Entra\n\nunion isfuzzy=true SigninLogs, AADNonInteractiveUserSignInLogs\n| where ResultType != 0 and ResultDescription == \"Other\"\n| where ResultType == \"500061\"\n| distinct Category, Identity",
+    "source_repo": "dCloser/SentinelAnalyticRules",
+    "source_url": "https://github.com/dCloser/SentinelAnalyticRules/blob/3fa74b841fb4abf5e683d2fe131d9d849e0bfef6/DetectEOLOS.kql",
+    "filename": "DetectEOLOS.kql",
+    "collected_at": "2026-06-12T03:17:51.119391+00:00"
+  },
+  {
+    "id": "e3e07b5eb038",
+    "title": "Failed Logon",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/MSJosh/documentation\n// Collected: 2026-06-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet LearningPeriod = 14d; // Define the learning period duration\nlet BinTime = 1h; // Define the binning time interval\nlet RunTime = 1h; // Define the runtime duration\nlet StartTime = now(); // Define the start time\nlet sensitivity = 2; // Define the sensitivity for anomaly detection\nlet baseline = 3; // Define baseline based on failed sign-ins\n\nlet aadFunc = (tableName:string) {\n    table(tableName)\n    | where TimeGenerated between (ago(LearningPeriod) .. StartTime) // Filter data within the learning period\n    | where ResultType != 0 // Exclude successful logins\n    | make-series FailedLogins = count() on TimeGenerated from ago(LearningPeriod) to StartTime step BinTime by UserPrincipalName, ResultType // Create a time series of failed logins\n    | extend (Anomalies, Score, Baseline) = series_decompose_anomalies(FailedLogins, sensitivity, -1, 'linefit') // Detect anomalies\n    | mv-expand FailedLogins to typeof(double), TimeGenerated to typeof(datetime), Anomalies to typeof(double), Score to typeof(double), Baseline to typeof(long) // Expand the series\n    | where TimeGenerated >= ago(RunTime) // Filter data within the runtime\n    | where Anomalies > 0 and Baseline > 0 // Focus on positive anomalies\n    | join kind=inner (\n        table(tableName)\n        | where TimeGenerated between (StartTime - RunTime .. StartTime) // Filter data within the runtime\n        | where ResultType != 0 // Exclude successful logins\n        | summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), IPAddresses = make_set(IPAddress, 100), Locations = make_set(LocationDetails, 20), Devices = make_set(DeviceDetail, 20) by UserPrincipalName, UserId, AppDisplayName // Summarize additional details\n    ) on UserPrincipalName // Join on UserPrincipalName\n    | project-away UserPrincipalName1 // Remove unnecessary column\n    | extend Name = tostring(split(UserPrincipalName, '@', 0)), UPNSuffix = tostring(split(UserPrincipalName, '@', 1)) // Extract name and UPN suffix\n    | extend IPAddressFirst = tostring(IPAddresses) // Extract the first IP address\n};\n\nlet aadSignin = aadFunc(\"SigninLogs\"); // Invoke the function for SigninLogs\nlet aadNonInt = aadFunc(\"AADNonInteractiveUserSignInLogs\"); // Invoke the function for AADNonInteractiveUserSignInLogs\nunion isfuzzy=true aadSignin, aadNonInt // Perform a fuzzy union of the results\n| where TimeGenerated >= ago(1h) // Filter results to show only the past hour\n| where Baseline >= baseline // Filter results based on baseline",
+    "source_repo": "MSJosh/documentation",
+    "source_url": "https://github.com/MSJosh/documentation/blob/dba173274dc6aa5c9114265b3718e7c7294de2c7/Sentinel/Misc.%20KQL/Failed%20Logon.kql",
+    "filename": "Failed Logon.kql",
+    "collected_at": "2026-06-12T03:17:50.509025+00:00"
+  },
+  {
+    "id": "e99d9dc4dc07",
+    "title": "Officehome Session Hijacking",
+    "description": "https://www.microsoft.com/en-us/security/blog/2023/06/08/detecting-and-mitigating-a-multi-stage-aitm-phishing-and-bec-campaign/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/DancinDinoo/KQL\n// Collected: 2026-06-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where ResultType == \"0\" // Successful logins\n| where ResourceDisplayName == \"OfficeHome\" // Commonly abused portal\n| extend DeviceId = tostring(DeviceDetail.deviceId) | extend Browser = tostring(DeviceDetail.browser) | extend OS = tostring(DeviceDetail.operatingSystem) // Device Properties\n| summarize IPCount = dcount(IPAddress), SigninIPs = make_list(IPAddress), FirstSeen = min(CreatedDateTime), LastSeen = max(CreatedDateTime), Devices = make_set(DeviceId), Browsers = make_set(Browser), OperatingSystems = make_set(OS) by UserPrincipalName, ResourceDisplayName, Time = bin(CreatedDateTime, 15m)\n| where IPCount > 1\n\n// Detects two signins from different IPs within a 15 minute window to the OfficeHome portal\n// https://www.microsoft.com/en-us/security/blog/2023/06/08/detecting-and-mitigating-a-multi-stage-aitm-phishing-and-bec-campaign/",
+    "source_repo": "DancinDinoo/KQL",
+    "source_url": "https://github.com/DancinDinoo/KQL/blob/a4180812a84694c253e26434d03ed607a9f9eac7/Entra%20ID/SigninLogs/OfficeHome%20Session%20Hijacking.kql",
+    "filename": "OfficeHome Session Hijacking.kql",
+    "collected_at": "2026-06-12T03:17:49.873351+00:00"
+  },
+  {
+    "id": "af783c371566",
+    "title": "Finduserswhosigninfrommaliciousips",
+    "description": "Parse the IP information from Security Alerts and find other users who have successfully signed on from the same IP addresses",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit\n// Collected: 2026-06-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityAlert\n| where ProviderName in (\"MCAS\", \"IPC\")\n| extend x = todynamic(Entities)\n| mv-expand x\n| parse-where x with * '\"Address\":\"' MaliciousIP '\"' *\n//Exclude any corporate or trusted IP addresses\n| where MaliciousIP != \"10.10.10.10\"\n| project AlertTime=TimeGenerated, MaliciousIP, CompromisedEntity\n| join kind=inner\n    (\n    SigninLogs\n    | where ResultType in (\"0\",\"53003\",\"50158\")\n    )\n    on $left.MaliciousIP == $right.IPAddress\n| where CompromisedEntity != UserPrincipalName\n| distinct UserPrincipalName, AppDisplayName, IPAddress, UserAgent, ResultType, ResultDescription",
+    "source_repo": "obsida-uk/Azure-BlueTeam-Toolkit",
+    "source_url": "https://github.com/obsida-uk/Azure-BlueTeam-Toolkit/blob/715003d731662549883c8c478a0f98aed0fc5784/Sentinel/General/FindUsersWhoSigninfromMaliciousIPs.kql",
+    "filename": "FindUsersWhoSigninfromMaliciousIPs.kql",
+    "collected_at": "2026-06-12T03:17:49.244886+00:00"
+  },
+  {
+    "id": "2718876ecbc9",
+    "title": "Query to find users who have access to an application but haven't signed in for 90 days",
+    "description": "Query to find users who have access to an application but haven't signed in for 90 days",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit\n// Collected: 2026-06-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet signins=\nSigninLogs\n| where TimeGenerated > ago (90d)\n| where AppDisplayName has \"Application Name\"\n| project TimeGenerated, UserPrincipalName, AppDisplayName;\nIdentityInfo\n| where TimeGenerated > ago (21d)\n| summarize arg_max(TimeGenerated, *) by AccountUPN\n| extend UserPrincipalName = AccountUPN\n| where GroupMembership contains \"Group that gives access to Application\"\n| join kind=leftanti signins on UserPrincipalName\n| project UserPrincipalName",
+    "source_repo": "obsida-uk/Azure-BlueTeam-Toolkit",
+    "source_url": "https://github.com/obsida-uk/Azure-BlueTeam-Toolkit/blob/715003d731662549883c8c478a0f98aed0fc5784/Sentinel/Azure-Entra-ID/ApplicationAccessReview.kql",
+    "filename": "ApplicationAccessReview.kql",
+    "collected_at": "2026-06-12T03:17:48.636417+00:00"
+  },
+  {
+    "id": "bc42b079516c",
+    "title": "Guesttenantreport",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/madhuperera/Microsoft_Sentinel\n// Collected: 2026-06-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet EntraIDTenantList = _GetWatchlist(\"entraidtenantlist\")\n| project TenantID=tostring(TenantID), OrganizationName, DefaultDomainName, TenantRegionScope, TenantRegionSubScope;\nlet outboundActivity = SigninLogs\n| where TimeGenerated > ago(90d)\n| where UserId != \"00000000-0000-0000-0000-000000000000\"\n| where ResourceIdentity != ''\n| extend status = case(Status.errorCode == 0, \"Success\", \"Failure\")\n| where status == \"Success\"\n| where HomeTenantId != ''\n| where ResourceTenantId != AADTenantId;\noutboundActivity\n| join kind=leftouter EntraIDTenantList on $left.ResourceTenantId == $right.TenantID",
+    "source_repo": "madhuperera/Microsoft_Sentinel",
+    "source_url": "https://github.com/madhuperera/Microsoft_Sentinel/blob/721d95d8b2b5d7599ffc804d84ca30475871a662/KQL/Guests/GuestTenantReport.kql",
+    "filename": "GuestTenantReport.kql",
+    "collected_at": "2026-06-12T03:17:48.018718+00:00"
+  },
+  {
     "id": "0b317548d190",
     "title": "Detects if a user had 10 failed MFA attempts into an app within a 2h time period to detect MFA bombing",
     "description": "Detects if a user had 10 failed MFA attempts into an app within a 2h time period to detect MFA bombing",

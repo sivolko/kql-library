@@ -1,0 +1,16 @@
+// Source: https://github.com/madhuperera/Microsoft_Sentinel
+// Collected: 2026-06-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let EntraIDTenantList = _GetWatchlist("entraidtenantlist")
+| project TenantID=tostring(TenantID), OrganizationName, DefaultDomainName, TenantRegionScope, TenantRegionSubScope;
+let outboundActivity = SigninLogs
+| where TimeGenerated > ago(90d)
+| where UserId != "00000000-0000-0000-0000-000000000000"
+| where ResourceIdentity != ''
+| extend status = case(Status.errorCode == 0, "Success", "Failure")
+| where status == "Success"
+| where HomeTenantId != ''
+| where ResourceTenantId != AADTenantId;
+outboundActivity
+| join kind=leftouter EntraIDTenantList on $left.ResourceTenantId == $right.TenantID

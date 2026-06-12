@@ -1,0 +1,10 @@
+// Source: https://github.com/dCloser/SentinelAnalyticRules
+// Collected: 2026-06-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+# Play Script : This detects Unpatched Windows 10 and 11 Clients connecting to Entra
+
+union isfuzzy=true SigninLogs, AADNonInteractiveUserSignInLogs
+| where ResultType != 0 and ResultDescription == "Other"
+| where ResultType == "500061"
+| distinct Category, Identity
