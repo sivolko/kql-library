@@ -1,0 +1,36 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-06-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago(90d)
+| where ActivityDisplayName in (
+    "Set domain authentication",
+    "Set federation settings on domain",
+    "Set DirSyncEnabled flag",
+    "Set Company Information",
+    "Set federation settings",
+    "Update domain",
+    "Verify domain")
+| extend InitiatedByUPN  = tostring(InitiatedBy.user.userPrincipalName)
+| extend InitiatedByApp  = tostring(InitiatedBy.app.displayName)
+| extend Actor           = iff(isnotempty(InitiatedByUPN), InitiatedByUPN, InitiatedByApp)
+| extend TargetDomain    = tostring(TargetResources[0].displayName)
+| extend TargetId        = tostring(TargetResources[0].id)
+| mv-expand Prop = TargetResources[0].modifiedProperties
+| extend PropName        = tostring(Prop.displayName)
+| extend OldValue        = tostring(Prop.oldValue)
+| extend NewValue        = tostring(Prop.newValue)
+| where Result == "success"
+| project
+    TimeGenerated,
+    Actor,
+    ActivityDisplayName,
+    TargetDomain,
+    TargetId,
+    PropName,
+    OldValue,
+    NewValue,
+    LoggedByService,
+    CorrelationId
+| order by TimeGenerated desc

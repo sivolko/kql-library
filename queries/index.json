@@ -1,5 +1,80 @@
 [
   {
+    "id": "6b3d5a95cdbd",
+    "title": "Traitorware Oauth App Detection",
+    "description": "Pulls data from a storage account with the fields listed, you will need to change this depending on what columns your data has. Based on this https://huntresslabs.github.io/rogueapps/ & https://www.huntress.com/blog/never-just-one-termite-6-months-of-researching-oauth-application-attacks",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/DancinDinoo/KQL\n// Collected: 2026-06-13\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet maliciousoauthapps = externaldata (AppName: string, AppID: string, Publisher: string, Description: string, Tags: dynamic, Permissions: dynamic, References: dynamic) [h@''] with (ignorefirstrecord=true);\nlet AppName = maliciousoauthapps | distinct AppName;\nAuditLogs\n  | where Category == \"ApplicationManagement\"\n  | where OperationName in(\"Consent to application\", \"Add application\")\n  | extend ConsentedAppID = tostring(TargetResources[0].id) | extend ConsentedAppName = tostring(TargetResources[0].displayName)\n  | where ConsentedAppName in~ (AppName) | lookup maliciousoauthapps on $left.ConsentedAppName == $right.AppName\n\n// Pulls data from a storage account with the fields listed, you will need to change this depending on what columns your data has. Based on this https://huntresslabs.github.io/rogueapps/ & https://www.huntress.com/blog/never-just-one-termite-6-months-of-researching-oauth-application-attacks",
+    "source_repo": "DancinDinoo/KQL",
+    "source_url": "https://github.com/DancinDinoo/KQL/blob/a4180812a84694c253e26434d03ed607a9f9eac7/Entra%20ID/AuditLogs/Traitorware%20OAuth%20App%20Detection.kql",
+    "filename": "Traitorware OAuth App Detection.kql",
+    "collected_at": "2026-06-13T03:15:55.205093+00:00"
+  },
+  {
+    "id": "44cc6185dc1b",
+    "title": "Auditlogs Useractivities",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries\n// Collected: 2026-06-13\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet AccountUPN = \"test@kqlquery.com\";\nlet SearchWindow = 48h; //Customizable h = hours, d = days\nAuditLogs\n| where TimeGenerated > ago(SearchWindow)\n| extend InitiatingUser = parse_json(InitiatedBy.user)\n| extend InitatingUPN = parse_json(InitiatingUser).userPrincipalName\n| where InitatingUPN == AccountUPN\n| project-reorder TimeGenerated, InitatingUPN, OperationName, ResultDescription, ActivityDisplayName, Resource, Result",
+    "source_repo": "TheHiddenOwl/Defender-Advanced-Hunting-Queries",
+    "source_url": "https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries/blob/84a677fe3382f0ff7f42b45015c008a42712d807/DFIR/AuditLogs-UserActivities.kql",
+    "filename": "AuditLogs-UserActivities.kql",
+    "collected_at": "2026-06-13T03:15:54.259967+00:00"
+  },
+  {
+    "id": "89ebcf57fc16",
+    "title": "Password Change/Reset Events",
+    "description": "Description: Monitors password change and reset events across your tenant",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/ITProfessorCloud/Microsoft-Sentinel\n// Collected: 2026-06-13\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated >= ago(30d)\n| where OperationName in~ (\"Change user password\", \"Reset user password\")\n| project TimeGenerated, OperationName, InitiatedBy = tostring(InitiatedBy.user.userPrincipalName), TargetUser = tostring(TargetResources[0].userPrincipalName)\n| summarize LastPasswordChange = max(TimeGenerated) by TargetUser",
+    "source_repo": "ITProfessorCloud/Microsoft-Sentinel",
+    "source_url": "https://github.com/ITProfessorCloud/Microsoft-Sentinel/blob/9324be21ed04b54e6633acf2fa441e363a7fc5e4/KQL/AuditLogs/02PasswordChangeEvents.kql",
+    "filename": "02PasswordChangeEvents.kql",
+    "collected_at": "2026-06-13T03:15:53.345769+00:00"
+  },
+  {
+    "id": "02dd0ba61315",
+    "title": "=========================================================================",
+    "description": "HQ-010: Domain Federation / Authentication Configuration Changes ========================================================================= Description : Modifying a domain's authentication type (Managed \u2192 Federated) is the cornerstone of the \"Golden SAML\" and AADInternals federation abuse attacks. Attackers with Global Admin privilege can federate a domain with a rogue IDP and forge SAML tokens for any user without knowing their passwords. Any change here is extremely high-fidelity. MITRE ATT&CK: TA0003 Persistence",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-06-13\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago(90d)\n| where ActivityDisplayName in (\n    \"Set domain authentication\",\n    \"Set federation settings on domain\",\n    \"Set DirSyncEnabled flag\",\n    \"Set Company Information\",\n    \"Set federation settings\",\n    \"Update domain\",\n    \"Verify domain\")\n| extend InitiatedByUPN  = tostring(InitiatedBy.user.userPrincipalName)\n| extend InitiatedByApp  = tostring(InitiatedBy.app.displayName)\n| extend Actor           = iff(isnotempty(InitiatedByUPN), InitiatedByUPN, InitiatedByApp)\n| extend TargetDomain    = tostring(TargetResources[0].displayName)\n| extend TargetId        = tostring(TargetResources[0].id)\n| mv-expand Prop = TargetResources[0].modifiedProperties\n| extend PropName        = tostring(Prop.displayName)\n| extend OldValue        = tostring(Prop.oldValue)\n| extend NewValue        = tostring(Prop.newValue)\n| where Result == \"success\"\n| project\n    TimeGenerated,\n    Actor,\n    ActivityDisplayName,\n    TargetDomain,\n    TargetId,\n    PropName,\n    OldValue,\n    NewValue,\n    LoggedByService,\n    CorrelationId\n| order by TimeGenerated desc",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/900d41d35a068c5db8226f6b78b94e4897746df1/Use%20Cases%20Threat%20Hunting/AuditLogs-EntraID/HuntingQueries/HQ-010-FederationConfig-Changes.kql",
+    "filename": "HQ-010-FederationConfig-Changes.kql",
+    "collected_at": "2026-06-13T03:15:52.634388+00:00"
+  },
+  {
+    "id": "cca6880c459d",
+    "title": "Entra Passkey Addition Threat Detection",
+    "description": "https://www.linkedin.com/posts/activity-7184406157707390977-6N3C/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-06-13\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where ActivityDisplayName == \"Add Passkey (device-bound) security key\"\n| where Result == \"success\"\n| extend AccountUPN = TargetResources[0].userPrincipalName\n| extend AAGUID = AdditionalDetails[1].value\n| extend WebAuthnInfo = AdditionalDetails[0].value\n| project TimeGenerated, AccountUPN, ActivityDisplayName, AAGUID, WebAuthnInfo\n\n// MITRE ATT&CK Mapping\n\n// Based on the operations and objectives of the KQL code, the following MITRE ATT&CK techniques are relevant:\n\n// T1078 - Valid Accounts:\n// Description: Adversaries may use valid accounts to maintain access to victim systems.\n// Relevance: Adding a passkey could be part of an adversary\u2019s attempt to maintain access using legitimate credentials.\n// T1556.004 - Unsecured Credentials: Web Session Cookie:\n// Description: Adversaries may steal or forge web session cookies to gain access to web applications.\n// Relevance: The extraction of WebAuthn information could be related to securing or exploiting web session credentials.\n// T1556 - Modify Authentication Process:\n// Description: Adversaries may modify authentication mechanisms to bypass security controls.\n// Relevance: Adding a new passkey could be an attempt to modify the authentication process.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/50d8a95980b76b40f9291d3515d27cc4a4c4685c/Sentinel/Entra%20Passkey%20Addition%20Threat%20Detection.kql",
+    "filename": "Entra Passkey Addition Threat Detection.kql",
+    "collected_at": "2026-06-13T03:15:51.486378+00:00"
+  },
+  {
     "id": "5f2e1d3f628b",
     "title": "This query detects successful risky sign-ins followed by MFA registration",
     "description": "Helps identify potential adversaries trying to achieve persistence through security info registration",

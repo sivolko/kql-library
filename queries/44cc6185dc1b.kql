@@ -1,0 +1,12 @@
+// Source: https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries
+// Collected: 2026-06-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let AccountUPN = "test@kqlquery.com";
+let SearchWindow = 48h; //Customizable h = hours, d = days
+AuditLogs
+| where TimeGenerated > ago(SearchWindow)
+| extend InitiatingUser = parse_json(InitiatedBy.user)
+| extend InitatingUPN = parse_json(InitiatingUser).userPrincipalName
+| where InitatingUPN == AccountUPN
+| project-reorder TimeGenerated, InitatingUPN, OperationName, ResultDescription, ActivityDisplayName, Resource, Result

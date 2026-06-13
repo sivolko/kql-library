@@ -1,0 +1,9 @@
+// Source: https://github.com/ITProfessorCloud/Microsoft-Sentinel
+// Collected: 2026-06-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated >= ago(30d)
+| where OperationName in~ ("Change user password", "Reset user password")
+| project TimeGenerated, OperationName, InitiatedBy = tostring(InitiatedBy.user.userPrincipalName), TargetUser = tostring(TargetResources[0].userPrincipalName)
+| summarize LastPasswordChange = max(TimeGenerated) by TargetUser
