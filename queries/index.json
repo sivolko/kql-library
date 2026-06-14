@@ -1,5 +1,65 @@
 [
   {
+    "id": "4e6705722fc6",
+    "title": "Query1",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/jsa2/AADLegacyFork\n// Collected: 2026-06-14\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet details = dynamic({\"Name\": \"\", \"Type\": \"*\"});\nlet data =\n    union AADNonInteractiveUserSignInLogs, SigninLogs \n    | extend StatusNonInteractive = parse_json(Status_string) \n    | extend StatusInteractive = Status_dynamic\n    | extend errorCodeInterActive = toint(StatusInteractive.errorCode)\n    | extend errorCodeNonInterActive = toint(StatusNonInteractive.errorCode)\n    | extend SigninStatus = case(\n        errorCodeNonInterActive == 0, \"Success\",\n        errorCodeInterActive != 0, \"Failure\",      \n        isempty(errorCodeNonInterActive), \"Success\", \"Failure\"\n        ) \n    | extend ClientAppUsed = iff(isempty(ClientAppUsed) == true, \"Unknown\", ClientAppUsed)  \n    | extend CaDetail = iff(isempty(ConditionalAccessPolicies_dynamic) == true, parse_json(ConditionalAccessPolicies_string), ConditionalAccessPolicies_dynamic)\n    | extend DeviceDetail = iff(isempty(DeviceDetail_dynamic) == true, parse_json(DeviceDetail_string), DeviceDetail_dynamic)\n    | extend LocationDetail = iff(isempty(LocationDetails_dynamic) == true, parse_json(LocationDetails_string), LocationDetails_dynamic)\n    | extend StatusDetail = iff(isempty(Status_dynamic) == true, parse_json(Status_string), Status_dynamic)\n    | where SigninStatus == '*' or '*' == '*' or '*' == 'All Sign-ins'    \n    | extend Reason = tostring(StatusDetail.failureReason)\n    | extend ClientAppUsed = iff(isempty(ClientAppUsed) == true, \"Unknown\", ClientAppUsed)  \n    | extend isLegacyAuth = case(ClientAppUsed contains \"Browser\", \"No\", ClientAppUsed contains \"Mobile Apps and Desktop clients\", \"No\", ClientAppUsed contains \"Exchange ActiveSync\", \"Yes\", ClientAppUsed contains \"Unknown\", \"Unknown\", \"Yes\") \n    | where isLegacyAuth == \"Yes\"\n    | where AppDisplayName in ('*') or '*' in ('*')\n    | where details.Type == '*' or (details.Type == 'App' and AppDisplayName == details.Name) or (details.Type == 'Protocol' and AppDisplayName == details.ParentId and ClientAppUsed == details.Name);\ndata\n| top 200 by TimeGenerated desc\n| extend TimeFromNow = now() - TimeGenerated\n| extend TimeAgo = strcat(case(TimeFromNow < 2m, strcat(toint(TimeFromNow / 1m), ' seconds'), TimeFromNow < 2h, strcat(toint(TimeFromNow / 1m), ' minutes'), TimeFromNow < 2d, strcat(toint(TimeFromNow / 1h), ' hours'), strcat(toint(TimeFromNow / 1d), ' days')), ' ago')\n| project User = UserDisplayName, ['Sign-in Status'] = strcat(iff(SigninStatus == 'Success', '\u2714\ufe0f', '\u274c'), ' ', SigninStatus), ['Source'] = Type, ['Sign-in Time'] = TimeAgo, App = AppDisplayName, ['Error code'] = StatusDetail.errorCode, ['Result type'] = ResultType, ['Result signature'] = ResultSignature, ['Result description'] = ResultDescription, ['Conditional access policies'] = CaDetail, ['Conditional access status'] = ConditionalAccessStatus, ['Operating system'] = DeviceDetail.operatingSystem, Browser = DeviceDetail.browser, ['Country or region'] = LocationDetail.countryOrRegion, ['State'] = LocationDetail.state, ['City'] = LocationDetail.city, ['Time generated'] = TimeGenerated, StatusDetail, ['User principal name'] = UserPrincipalName",
+    "source_repo": "jsa2/AADLegacyFork",
+    "source_url": "https://github.com/jsa2/AADLegacyFork/blob/6decfa8dd12177e3f46c715dcbfe7749fe8ec9a8/kqlexamples/query1.kql",
+    "filename": "query1.kql",
+    "collected_at": "2026-06-14T03:18:16.611706+00:00"
+  },
+  {
+    "id": "f2e0879c8126",
+    "title": "=============================================================================",
+    "description": "Hunt: Reconnaissance Breadth Scoring Threats:  Suspicious Mailbox Activities (Living off the Land), Cloud Identity Abuse MITRE:    TA0007 Discovery Companion to Article 03: Hunting at Machine Speed https://socautomators.substack.com/p/hunting-at-machine-speed-kql-on-the ============================================================================= Hypothesis: An attacker enumerating resources will touch a wider breadth of",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/mikepalitto/socautomators\n// Collected: 2026-06-14\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet baseline_period = 90d;\nlet recent_period = 7d;\nlet baseline_stats = SigninLogs\n    | where TimeGenerated between (ago(baseline_period) .. ago(recent_period))\n    | where ResultType == 0\n    | summarize DailyResourceCount = dcount(ResourceDisplayName)\n        by UserPrincipalName, bin(TimeGenerated, 1d)\n    | summarize\n        BaselineAvg = avg(DailyResourceCount),\n        BaselineStdDev = stdev(DailyResourceCount)\n        by UserPrincipalName\n    | where BaselineAvg > 0;\nlet recent_activity = SigninLogs\n    | where TimeGenerated > ago(recent_period)\n    | where ResultType == 0\n    | summarize RecentDailyResources = dcount(ResourceDisplayName)\n        by UserPrincipalName, bin(TimeGenerated, 1d);\nrecent_activity\n| join kind=inner baseline_stats on UserPrincipalName\n| where RecentDailyResources > BaselineAvg + (3 * BaselineStdDev)\n| project\n    UserPrincipalName,\n    Day = TimeGenerated,\n    RecentDailyResources,\n    BaselineAvg = round(BaselineAvg, 1),\n    BaselineStdDev = round(BaselineStdDev, 1),\n    DeviationFactor = round((RecentDailyResources - BaselineAvg) / BaselineStdDev, 1)\n| sort by DeviationFactor desc",
+    "source_repo": "mikepalitto/socautomators",
+    "source_url": "https://github.com/mikepalitto/socautomators/blob/7d49f390ba213471fab7b320b69fce01c305e9b1/series/agentic-soc/03-threat-hunting/02-recon-breadth-scoring.kql",
+    "filename": "02-recon-breadth-scoring.kql",
+    "collected_at": "2026-06-14T03:18:15.996243+00:00"
+  },
+  {
+    "id": "27b74fa7b676",
+    "title": "Signin Ropc",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/hchiphong/KQL\n// Collected: 2026-06-14\n// KQL Library - https://github.com/sivolko/kql-library\n\n# https://redcanary.com/blog/threat-detection/bav2ropc/\n# Description: Get users use legacy ROPC\nSigninLogs\n| where TimeGenerated >ago(90d)\n| where   AuthenticationProtocol == 'ropc'\n| distinct UserPrincipalName",
+    "source_repo": "hchiphong/KQL",
+    "source_url": "https://github.com/hchiphong/KQL/blob/8236c304ac0e6af87a56e63b89d39ea7388e82ad/SignIn_ROPC.kql",
+    "filename": "SignIn_ROPC.kql",
+    "collected_at": "2026-06-14T03:18:15.388538+00:00"
+  },
+  {
+    "id": "ea7d9f9ed598",
+    "title": "Signingapsinclnoninteractive",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/jsa2/kql\n// Collected: 2026-06-14\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet dateInDays = 7d;\nlet mass = materialize (union SigninLogs, AADNonInteractiveUserSignInLogs\n| where tostring(AuthenticationDetails) !has \"First factor requirement satisfied by claim in the token\"\n| where NetworkLocationDetails !has \"trustedNamedLocation\"\n| where ConditionalAccessStatus == \"success\"\n| extend Status = iff(isempty(Status_dynamic), parse_json(Status_string), Status_dynamic)\n| where Status.additionalDetails != \"MFA requirement satisfied by claim in the token\" and Status.additionalDetails != \"MFA requirement skipped due to remembered device\" and Status.additionalDetails != \"MFA completed in Azure AD\"\n| where AuthenticationRequirement has \"singleFactorAuthentication\"\n| where TimeGenerated > now() - dateInDays);\nlet mass2 = mass\n| extend DeviceDetail = iff(isempty(DeviceDetail_dynamic), parse_json(DeviceDetail_string), DeviceDetail_dynamic)\n| extend identifier = iff(isempty(DeviceDetail.browser), UserAgent, DeviceDetail.operatingSystem)\n| extend trueId = case(identifier contains \"ios\", \"ios\", identifier contains \"Android\", \"Android\", identifier);\nlet rs = materialize(mass2\n| extend ConditionalAccessPolicies = iff(isempty(ConditionalAccessPolicies_dynamic), parse_json(ConditionalAccessPolicies_string), ConditionalAccessPolicies_dynamic)\n| extend ID = strcat(trueId, '-',AppDisplayName)\n| extend CaDetail = ConditionalAccessPolicies\n|mv-expand CaDetail);\nlet stage2 = rs\n| summarize correlation = make_set(strcat(CaDetail.result, '-',CorrelationId), 5) by ID, ClientAppUsed;\nlet stage3 = rs\n| extend pols = strcat(CaDetail.result, \"-\",CaDetail.displayName, \"-\", CaDetail.enforcedGrantControls)\n| summarize make_set(pols) by ID;\nlet stage4 =  rs\n| summarize make_set(UserDisplayName) by ID\n| extend usersCount = array_length(set_UserDisplayName)\n| project-away set_UserDisplayName;\n stage2 \n| join kind=inner  stage3 on ID\n| project ID, correlation, set_pols\n| join kind=innerunique  stage4 on ID\n| project ID, usersCount, correlation, set_pols\n| extend fullBypass = case(tostring(set_pols) has \"Success\",\"False\",tostring(set_pols) has \"Failed\", \"False\", \"True\")\n//",
+    "source_repo": "jsa2/kql",
+    "source_url": "https://github.com/jsa2/kql/blob/0dd9de8bcf4cff0d38ea7e579311d5d0bca647f5/AAD/gaps/signIngapsInclNonInteractive.kql",
+    "filename": "signIngapsInclNonInteractive.kql",
+    "collected_at": "2026-06-14T03:18:14.759022+00:00"
+  },
+  {
     "id": "6b3d5a95cdbd",
     "title": "Traitorware Oauth App Detection",
     "description": "Pulls data from a storage account with the fields listed, you will need to change this depending on what columns your data has. Based on this https://huntresslabs.github.io/rogueapps/ & https://www.huntress.com/blog/never-just-one-termite-6-months-of-researching-oauth-application-attacks",

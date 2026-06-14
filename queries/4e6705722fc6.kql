@@ -1,0 +1,33 @@
+// Source: https://github.com/jsa2/AADLegacyFork
+// Collected: 2026-06-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let details = dynamic({"Name": "", "Type": "*"});
+let data =
+    union AADNonInteractiveUserSignInLogs, SigninLogs 
+    | extend StatusNonInteractive = parse_json(Status_string) 
+    | extend StatusInteractive = Status_dynamic
+    | extend errorCodeInterActive = toint(StatusInteractive.errorCode)
+    | extend errorCodeNonInterActive = toint(StatusNonInteractive.errorCode)
+    | extend SigninStatus = case(
+        errorCodeNonInterActive == 0, "Success",
+        errorCodeInterActive != 0, "Failure",      
+        isempty(errorCodeNonInterActive), "Success", "Failure"
+        ) 
+    | extend ClientAppUsed = iff(isempty(ClientAppUsed) == true, "Unknown", ClientAppUsed)  
+    | extend CaDetail = iff(isempty(ConditionalAccessPolicies_dynamic) == true, parse_json(ConditionalAccessPolicies_string), ConditionalAccessPolicies_dynamic)
+    | extend DeviceDetail = iff(isempty(DeviceDetail_dynamic) == true, parse_json(DeviceDetail_string), DeviceDetail_dynamic)
+    | extend LocationDetail = iff(isempty(LocationDetails_dynamic) == true, parse_json(LocationDetails_string), LocationDetails_dynamic)
+    | extend StatusDetail = iff(isempty(Status_dynamic) == true, parse_json(Status_string), Status_dynamic)
+    | where SigninStatus == '*' or '*' == '*' or '*' == 'All Sign-ins'    
+    | extend Reason = tostring(StatusDetail.failureReason)
+    | extend ClientAppUsed = iff(isempty(ClientAppUsed) == true, "Unknown", ClientAppUsed)  
+    | extend isLegacyAuth = case(ClientAppUsed contains "Browser", "No", ClientAppUsed contains "Mobile Apps and Desktop clients", "No", ClientAppUsed contains "Exchange ActiveSync", "Yes", ClientAppUsed contains "Unknown", "Unknown", "Yes") 
+    | where isLegacyAuth == "Yes"
+    | where AppDisplayName in ('*') or '*' in ('*')
+    | where details.Type == '*' or (details.Type == 'App' and AppDisplayName == details.Name) or (details.Type == 'Protocol' and AppDisplayName == details.ParentId and ClientAppUsed == details.Name);
+data
+| top 200 by TimeGenerated desc
+| extend TimeFromNow = now() - TimeGenerated
+| extend TimeAgo = strcat(case(TimeFromNow < 2m, strcat(toint(TimeFromNow / 1m), ' seconds'), TimeFromNow < 2h, strcat(toint(TimeFromNow / 1m), ' minutes'), TimeFromNow < 2d, strcat(toint(TimeFromNow / 1h), ' hours'), strcat(toint(TimeFromNow / 1d), ' days')), ' ago')
+| project User = UserDisplayName, ['Sign-in Status'] = strcat(iff(SigninStatus == 'Success', '✔️', '❌'), ' ', SigninStatus), ['Source'] = Type, ['Sign-in Time'] = TimeAgo, App = AppDisplayName, ['Error code'] = StatusDetail.errorCode, ['Result type'] = ResultType, ['Result signature'] = ResultSignature, ['Result description'] = ResultDescription, ['Conditional access policies'] = CaDetail, ['Conditional access status'] = ConditionalAccessStatus, ['Operating system'] = DeviceDetail.operatingSystem, Browser = DeviceDetail.browser, ['Country or region'] = LocationDetail.countryOrRegion, ['State'] = LocationDetail.state, ['City'] = LocationDetail.city, ['Time generated'] = TimeGenerated, StatusDetail, ['User principal name'] = UserPrincipalName

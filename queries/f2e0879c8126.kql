@@ -1,0 +1,32 @@
+// Source: https://github.com/mikepalitto/socautomators
+// Collected: 2026-06-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let baseline_period = 90d;
+let recent_period = 7d;
+let baseline_stats = SigninLogs
+    | where TimeGenerated between (ago(baseline_period) .. ago(recent_period))
+    | where ResultType == 0
+    | summarize DailyResourceCount = dcount(ResourceDisplayName)
+        by UserPrincipalName, bin(TimeGenerated, 1d)
+    | summarize
+        BaselineAvg = avg(DailyResourceCount),
+        BaselineStdDev = stdev(DailyResourceCount)
+        by UserPrincipalName
+    | where BaselineAvg > 0;
+let recent_activity = SigninLogs
+    | where TimeGenerated > ago(recent_period)
+    | where ResultType == 0
+    | summarize RecentDailyResources = dcount(ResourceDisplayName)
+        by UserPrincipalName, bin(TimeGenerated, 1d);
+recent_activity
+| join kind=inner baseline_stats on UserPrincipalName
+| where RecentDailyResources > BaselineAvg + (3 * BaselineStdDev)
+| project
+    UserPrincipalName,
+    Day = TimeGenerated,
+    RecentDailyResources,
+    BaselineAvg = round(BaselineAvg, 1),
+    BaselineStdDev = round(BaselineStdDev, 1),
+    DeviationFactor = round((RecentDailyResources - BaselineAvg) / BaselineStdDev, 1)
+| sort by DeviationFactor desc
