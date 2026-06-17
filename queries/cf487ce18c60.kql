@@ -1,0 +1,9 @@
+// Source: https://github.com/Shriya-Commits/Microsoft-Sentinel-Threat-Detection
+// Collected: 2026-06-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4688
+| where CommandLine has "-ep bypass"
+| project TimeGenerated, Computer, Account, NewProcessName, CommandLine
+| sort by TimeGenerated desc

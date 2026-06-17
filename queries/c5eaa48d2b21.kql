@@ -1,0 +1,66 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-06-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookBack  = 15m;
+let TGTWindow = 5m;
+
+// Known DCs
+let KnownDCNames = SecurityEvent
+    | where TimeGenerated > ago(3d)
+    | where EventID == 4768
+    | summarize by DC = toupper(Computer);
+
+// Step 1: DC machine account authenticates to a NON-DC
+let CoercionLogons = SecurityEvent
+    | where TimeGenerated > ago(LookBack)
+    | where EventID == 4624
+    | where LogonType == 3
+    | where AuthenticationPackageName =~ "Kerberos"
+    | where SubjectUserName endswith "$"             // Machine account logon
+    | where toupper(SubjectUserName) in~ (           // Logged-on account IS a known DC
+        KnownDCNames | extend v = strcat(DC, "$") | project v
+      )
+    | where not(toupper(Computer) in~ (KnownDCNames)) // But target host is NOT a DC
+    | extend
+        CoercedDC      = SubjectUserName,
+        CoercionTarget = Computer,
+        CoercionTime   = TimeGenerated;
+
+// Step 2: krbtgt TGS request from the coerced DC machine account
+//         (Rubeus monitor + dump sequence)
+let TGTDumpSignal = SecurityEvent
+    | where TimeGenerated > ago(LookBack)
+    | where EventID == 4769
+    | where ServiceName =~ "krbtgt"
+    | where TargetUserName endswith "$"
+    | where toupper(TargetUserName) in~ (
+        KnownDCNames | extend v = strcat(DC, "$") | project v
+      )
+    | project TGTTime = TimeGenerated,
+              TGTAccount = TargetUserName,
+              TGTHost    = Computer;
+
+// Correlate
+CoercionLogons
+| join kind=leftouter (TGTDumpSignal)
+    on $left.CoercedDC == $right.TGTAccount
+| where isempty(TGTTime) or TGTTime between (CoercionTime .. CoercionTime + TGTWindow)
+| extend
+    HasTGTDump  = isnotempty(TGTTime),
+    Severity    = iff(isnotempty(TGTTime), "Critical", "High"),
+    WhySuspicious = strcat(
+        "PrinterBug_Coercion_DC_Auth_To_NonDC; ",
+        "CoercedDC: ", CoercedDC, "; ",
+        "CoercionTarget: ", CoercionTarget, "; ",
+        iff(HasTGTDump, "TGT_Dump_Attempt_Detected; ", "No_TGT_Dump_Yet; ")
+    )
+| project
+    TimeGenerated    = CoercionTime,
+    Severity,
+    WhySuspicious,
+    CoercedDC,
+    CoercionTarget,
+    HasTGTDump,
+    TGTTime
+| order by TimeGenerated desc

@@ -1,0 +1,64 @@
+// Source: https://github.com/MBCloudTeck/NTLM-Must-Die
+// Collected: 2026-06-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TimeRange = 7d;
+let NTLMEvents = SecurityEvent
+| where TimeGenerated > ago(TimeRange)
+| where EventID in (4624, 4776)
+| extend PackageName = tostring(parse_json(EventData).PackageName)
+| where PackageName contains "NTLM" or EventID == 4776
+| extend 
+    NTLMVersion = case(
+        PackageName contains "NTLM V1", "NTLMv1",
+        PackageName contains "NTLM V2", "NTLMv2",
+        "Unknown"
+    ),
+    SourceSystem = tostring(parse_json(EventData).WorkstationName),
+    AccountName = coalesce(tostring(parse_json(EventData).TargetUserName), Account);
+//
+// Overall Statistics
+let OverallStats = NTLMEvents
+| summarize 
+    TotalNTLMAuthentications = count(),
+    NTLMv1Authentications = countif(NTLMVersion == "NTLMv1"),
+    NTLMv2Authentications = countif(NTLMVersion == "NTLMv2"),
+    AffectedSystems = dcount(Computer),
+    SourceSystems = dcount(SourceSystem),
+    AffectedAccounts = dcount(AccountName)
+| extend 
+    NTLMv1Percentage = round(100.0 * NTLMv1Authentications / TotalNTLMAuthentications, 2),
+    OverallRisk = case(
+        NTLMv1Authentications > 0, "CRITICAL - NTLMv1 detected",
+        TotalNTLMAuthentications > 10000, "HIGH - Heavy NTLM usage",
+        TotalNTLMAuthentications > 1000, "MEDIUM - Moderate NTLM usage",
+        "LOW - Limited NTLM usage"
+    );
+//
+// Top Offenders
+let TopSources = NTLMEvents
+| summarize Count = count() by SourceSystem
+| top 10 by Count
+| project SourceSystem, AuthCount = Count;
+//
+let TopAccounts = NTLMEvents
+| summarize Count = count() by AccountName
+| top 10 by Count
+| project AccountName, AuthCount = Count;
+//
+// Combine Results
+print ReportType = "NTLM Usage Executive Summary"
+| extend ReportPeriod = strcat(TimeRange)
+| join kind=inner (OverallStats) on $left.ReportType == $right.ReportType
+| project 
+    ReportType,
+    ReportPeriod,
+    TotalNTLMAuthentications,
+    NTLMv1Authentications,
+    NTLMv2Authentications,
+    NTLMv1Percentage,
+    AffectedSystems,
+    SourceSystems,
+    AffectedAccounts,
+    OverallRisk,
+    Recommendations = "1. Immediately disable NTLMv1 if detected. 2. Identify and remediate top NTLM sources. 3. Configure Kerberos for service accounts. 4. Monitor trends weekly."

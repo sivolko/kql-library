@@ -1,0 +1,13 @@
+// Source: https://github.com/javierDAW/detection-diary
+// Collected: 2026-06-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+let actorIPs = dynamic(["45.77.149.152","209.182.225.136","38.60.157.139","162.33.177.101","45.76.26.42","144.208.127.155","38.54.88.201","38.54.107.167","66.42.99.200"]);
+let lookback = datetime(2026-05-07);
+Syslog
+| where TimeGenerated > lookback
+| where Facility has_any ("local0","local1","daemon","auth","authpriv") or SyslogMessage has_any ("iked","IKE","vpnd","VPN")
+| where SyslogMessage has_any ("VPNExtFeatures", "not a Check Point peer", "IkeSAFromState", "vendorid=0")
+    or SyslogMessage has_any (actorIPs)
+| project TimeGenerated, Computer, HostIP, Facility, SeverityLevel, SyslogMessage
+| order by TimeGenerated asc
