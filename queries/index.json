@@ -1,5 +1,21 @@
 [
   {
+    "id": "760e9552872a",
+    "title": "Sucpicious Logins Combined With Impossible Travel Detection",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity",
+      "threat-intel"
+    ],
+    "content": "// Source: https://github.com/Rajaravi99/Threat_Detection_logic\n// Collected: 2026-06-19\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe = 2h;\nlet maxTimeDiff = 30m;\nlet suspiciousIPs = (ThreatIntelligenceIndicator\n    | where TimeGenerated > ago(30d)\n    | where Active == true and ExpirationDateTime > now()\n    | summarize by NetworkIP);\nlet successfulSignins = (SigninLogs\n    | where TimeGenerated >= ago(timeframe)\n    | where ResultType == \"0\" // Only successful sign-ins\n    | project TimeGenerated, UserPrincipalName, IPAddress, Location);\n// Join 1: Correlate Successful Sign-ins with Threat Intel IPs\nsuccessfulSignins\n    | join kind=inner hint.strategy=broadcast suspiciousIPs on $left.IPAddress == $right.NetworkIP\n    | project TimeGenerated, UserPrincipalName, IPAddress, Location\n// Join 2: Correlate with another sign-in from a different location within 30 minutes\n    | join kind=inner hint.strategy=broadcast (\nSigninLogs\n    | where TimeGenerated >= ago(timeframe)\n    | where ResultType == \"0\"\n    | project PrevTimeGenerated = TimeGenerated, PrevUser = UserPrincipalName, PrevIP = IPAddress, PrevLocation = Location\n) on $left.UserPrincipalName == $right.PrevUser\n    | where IPAddress != PrevIP and Location != PrevLocation\n    | where abs(datetime_diff(\"minute\", TimeGenerated, PrevTimeGenerated)) <= maxTimeDiff\n    | project TimeGenerated, UserPrincipalName, MaliciousIP = IPAddress, MaliciousLocation = Location, PreviousLoginTime = PrevTimeGenerated, PreviousLocation = PrevLocation\n\n\n// Explaination of how this works\n// suspiciousIPs (Table 1): Scrapes the ThreatIntelligenceIndicator table for active.\n// unexpired indicators.First join: Filters for successful sign-ins that originate from malicious IPs (NetworkIP).\n// Second join: Takes that compromised user and looks for any other successful login the same user made within a 30-minute window.\n// Final Filters: Ensures the two logins happened from different IPs and locations (impossible travel behavior) and aggregates the timeline",
+    "source_repo": "Rajaravi99/Threat_Detection_logic",
+    "source_url": "https://github.com/Rajaravi99/Threat_Detection_logic/blob/28da9f9d6dbaa059f771fcb2abb44832c85650bc/Sentinel_detections/Sucpicious%20Logins%20combined%20with%20impossible%20travel%20detection.kql",
+    "filename": "Sucpicious Logins combined with impossible travel detection.kql",
+    "collected_at": "2026-06-19T03:18:41.343959+00:00"
+  },
+  {
     "id": "5482799c2e77",
     "title": "Securityevent Rdp Rareconnection",
     "description": "KQL query collected from public GitHub repositories.",
