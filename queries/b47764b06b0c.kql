@@ -1,0 +1,20 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "CreateRemoteThreadApiCall" or ActionType == "NtAllocateVirtualMemoryApiCall"
+| extend ParsedFields = parse_json(AdditionalFields)
+| where isnotempty(ParsedFields.CallStack)
+| mv-expand Frame = ParsedFields.CallStack
+| extend RA = tolong(Frame.ReturnAddress)
+| extend ModuleName = tostring(Frame.Module)
+| where isempty(ModuleName) or ModuleName == "UNKNOWN"
+| summarize
+    SuspiciousFrameCount = count(),
+    UnresolvedRAs = make_set(RA, 20),
+    Processes = make_set(InitiatingProcessFileName, 5)
+    by DeviceId, DeviceName, bin(Timestamp, 1h)
+| where SuspiciousFrameCount >= 2
+| project Timestamp, DeviceName, SuspiciousFrameCount, UnresolvedRAs, Processes
+| order by SuspiciousFrameCount desc

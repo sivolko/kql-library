@@ -1,0 +1,36 @@
+// Source: https://github.com/kaywoz/bluestuff
+// Collected: 2026-06-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let UPNtoAccountName=
+IdentityInfo
+| where AccountUpn in~ ("user@domain.com", "user2@domain.com") // change this multi-placeholder.
+//| extend SearchForAccount = AccountName
+| distinct AccountName
+| extend AccountName = tolower(AccountName)
+| extend AccountName = iff((isempty(AccountName)), "No valid user", AccountName)
+;
+//UPNtoAccountName
+let DeviceToAccountName=
+DeviceLogonEvents
+| join kind=inner UPNtoAccountName on AccountName
+| where ActionType has "LogonSuccess"
+| where LogonType has "Interactive"
+| summarize max(Timestamp) by DeviceName, DeviceId, AccountName
+//| project Timestamp,DeviceId, DeviceName, AccountName
+| extend Timestamp = max_Timestamp
+;
+//DeviceToAccountName
+let DeviceToEvents=
+DeviceEvents
+| join kind=inner DeviceToAccountName on DeviceId
+| where AdditionalFields contains "Description\":\"Defender" or AdditionalFields contains "ThreatName\":\"Behavior"
+| extend d = parse_json(AdditionalFields)
+| extend TimestampDetection = Timestamp
+| mv-apply d on (project Detection = tostring(d.Description))
+;
+union UPNtoAccountName, DeviceToAccountName, DeviceToEvents
+| sort by Timestamp
+| where isnotempty(DeviceName)
+| distinct Timestamp, DeviceId, AccountName, DeviceName, Detection
+| extend Detection = iff((isempty(Detection)), "No Detection", Detection)

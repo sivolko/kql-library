@@ -1,5 +1,174 @@
 [
   {
+    "id": "c170ec8d59e2",
+    "title": "============================================================",
+    "description": "Hunt: Suspicious PowerShell Commandlet Execution MITRE: T1059.001 | T1482 | T1069 | T1087 | T1003 | T1021 | T1053 Uses DeviceEvents ActionType=PowerShellCommand for cmdlet-level ============================================================",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/ITProfessorCloud/Microsoft-Sentinel\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet LookbackPeriod = 7d;\nlet Phase_ADRecon = dynamic([\n    \"Get-ADUser\",\"Get-ADComputer\",\"Get-ADGroup\",\"Get-ADGroupMember\",\n    \"Get-ADDomain\",\"Get-ADDomainController\",\"Get-ADOrganizationalUnit\",\n    \"Get-ADForest\",\"Get-ADTrust\",\"Get-ADUserResultantPasswordPolicy\",\n    \"Get-ADFineGrainedPasswordPolicy\",\"Get-ADDefaultDomainPasswordPolicy\",\n    \"Get-DomainUser\",\"Get-DomainComputer\",\"Get-DomainGroup\",\"Get-DomainController\",\n    \"Get-DomainTrust\",\"Get-DomainPolicy\",\"Get-DomainGroupMember\",\"Get-DomainGPO\",\n    \"Get-DomainOU\",\"Get-DomainSID\",\"Get-DomainObjectAcl\",\"Get-ObjectAcl\",\n    \"Get-DomainDFSShare\",\"Get-DomainGPOLocalGroup\",\"Invoke-ACLScanner\",\n    \"Get-NetUser\",\"Get-NetComputer\",\"Get-NetGroup\",\"Get-NetDomain\",\n    \"Get-NetForestTrust\",\"Get-NetForest\",\"Get-NetLocalGroup\",\n    \"Get-ForestTrust\",\"Get-LocalUser\",\"Get-LocalGroup\",\"Get-LocalGroupMember\"\n]);\nlet Phase_NetworkRecon = dynamic([\n    \"Invoke-Portscan\",\"Invoke-ReverseDnsLookup\",\n    \"Get-NetIPAddress\",\"Get-NetRoute\",\"Get-NetTCPConnection\",\n    \"Get-NetAdapter\",\"Get-NetFirewallRule\",\"Get-NetShare\",\n    \"Resolve-DnsName\"\n]);\nlet Phase_CredHarvest = dynamic([\n    \"Invoke-Mimikatz\",\"Invoke-NinjaCopy\",\"Invoke-CredentialInjection\",\n    \"Invoke-LSADump\",\"Invoke-SAMDump\",\"Out-Minidump\",\n    \"Get-CachedGPPPassword\",\"Get-GPPPassword\",\"Get-DecryptedCpassword\",\n    \"Get-Keystrokes\",\"Get-TimedScreenshot\",\"Get-ClipboardContents\",\n    \"ConvertFrom-SecureString\",\"Get-VaultCredential\",\"Get-Credential\"\n]);\nlet Phase_LateralMovement = dynamic([\n    \"New-PSSession\",\"Enter-PSSession\",\"Invoke-Command\",\n    \"Invoke-WmiMethod\",\"Get-WmiObject\",\"Invoke-CimMethod\",\"New-CimSession\",\n    \"Invoke-DCOM\",\"Invoke-TokenManipulation\",\"Invoke-RunAs\",\n    \"Invoke-PsExec\",\"Invoke-SMBClient\"\n]);\nlet Phase_Persistence = dynamic([\n    \"Register-ScheduledTask\",\"New-ScheduledTask\",\"Set-ScheduledTask\",\n    \"New-ItemProperty\",\"Set-ItemProperty\",\n    \"Set-WmiInstance\",\"New-CimInstance\",\n    \"Register-CimIndicationEvent\"\n]);\nlet Phase_DefenceEvasion = dynamic([\n    \"Add-MpPreference\",\"Set-MpPreference\",\n    \"Disable-WindowsOptionalFeature\",\"Uninstall-WindowsFeature\",\n    \"Set-ExecutionPolicy\",\"Bypass-UAC\",\"Invoke-BypassUAC\",\n    \"Invoke-EventVwrBypass\",\"Invoke-EnvBypass\"\n]);\nlet Phase_Exfil = dynamic([\n    \"Invoke-Exfil\",\"Out-Minidump\",\n    \"Compress-Archive\",\"Send-MailMessage\",\n    \"Invoke-DNSQuery\",\"Invoke-PowerShellTCP\",\"Start-Socket\"\n]);\nlet AllSuspiciousCmdlets = array_concat(\n    Phase_ADRecon, Phase_NetworkRecon, Phase_CredHarvest,\n    Phase_LateralMovement, Phase_Persistence, Phase_DefenceEvasion, Phase_Exfil\n);\nDeviceEvents\n| where Timestamp > ago(LookbackPeriod)\n| where ActionType == \"PowerShellCommand\"\n| extend Commandlet = tostring(parse_json(AdditionalFields).Command)\n| where Commandlet has_any (AllSuspiciousCmdlets)\n| extend AttackPhase = case(\n    Commandlet has_any (Phase_ADRecon),         \"AD Reconnaissance\",\n    Commandlet has_any (Phase_NetworkRecon),    \"Network Reconnaissance\",\n    Commandlet has_any (Phase_CredHarvest),     \"Credential Harvesting\",\n    Commandlet has_any (Phase_LateralMovement), \"Lateral Movement\",\n    Commandlet has_any (Phase_Persistence),     \"Persistence\",\n    Commandlet has_any (Phase_DefenceEvasion),  \"Defence Evasion\",\n    Commandlet has_any (Phase_Exfil),           \"Exfiltration / C2\",\n    \"Unknown\"\n)\n| extend Severity = case(\n    AttackPhase in (\"Credential Harvesting\", \"Lateral Movement\", \"Exfiltration / C2\"), \"High\",\n    AttackPhase in (\"Persistence\", \"Defence Evasion\"),                                 \"High\",\n    AttackPhase == \"AD Reconnaissance\",                                                \"Medium\",\n    \"Low\"\n)\n| extend\n    Username    = tostring(split(InitiatingProcessAccountUpn, '@')[0]),\n    UPNSuffix   = tostring(split(InitiatingProcessAccountUpn, '@')[1]),\n    DvcHostname = tostring(split(DeviceName, '.')[0]),\n    DvcDomain   = tostring(strcat_array(array_slice(split(DeviceName, '.'), 1, -1), '.'))\n| project\n    Timestamp,\n    DeviceName,\n    DvcHostname,\n    DvcDomain,\n    Username,\n    UPNSuffix,\n    AttackPhase,\n    Severity,\n    Commandlet,\n    InitiatingProcessFileName,\n    InitiatingProcessFolderPath,\n    InitiatingProcessCommandLine,\n    LocalIP,\n    InitiatingProcessId\n| order by Severity asc, Timestamp desc",
+    "source_repo": "ITProfessorCloud/Microsoft-Sentinel",
+    "source_url": "https://github.com/ITProfessorCloud/Microsoft-Sentinel/blob/d9b8a32522e1b7724d810241704d6db65c4f8431/KQL/PowerShell-Abuse/07-Suspicious-PowerShell-Cmdlets.kql",
+    "filename": "07-Suspicious-PowerShell-Cmdlets.kql",
+    "collected_at": "2026-06-20T03:16:00.437875+00:00"
+  },
+  {
+    "id": "37b01af0fcfe",
+    "title": "https://github.com/Nightmare-Eclipse/RedSun",
+    "description": "Uses a Defender detection to escalate to system. Note I couldn't get this exploit in MDE. It will fail to request a batch oplock on the update file. The binary/code supplied in repo uses an EICAR signature but a threatactor could subs this for anything so long as defender is triggered. Code will back out if real time monitoring is not enabled.",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/jkerai1/KQL-Queries\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceEvents\n| where ActionType contains \"NamedPipeEvent\"\n| where parse_json(AdditionalFields)[\"RemoteClientsAccess\"] == 'AcceptRemote'\n//| where parse_json(AdditionalFields)[\"PipeName\"] == @'\\Device\\NamedPipe\\REDSUN' //Low Fidelity Named Pipe (Line 518 in Code) Name can be changed but included here\n| where parse_json(AdditionalFields)[\"DesiredAccess\"] == '1704351' //Technically Access Mask can be modified\n| where InitiatingProcessAccountName != @\"system\" and InitiatingProcessAccountName != \"network service\" and AccountSid != @\"S-1-5-18\"//PoC is from unprivileged User\n| where parse_json(AdditionalFields)[\"FileOperation\"] == 'File created'\n| where InitiatingProcessVersionInfoCompanyName != @\"Microsoft Corporation\" //File created that created the namedpipe is the RedSun.exe binary (filename can be renamed)",
+    "source_repo": "jkerai1/KQL-Queries",
+    "source_url": "https://github.com/jkerai1/KQL-Queries/blob/0715193bfce173c8fefd35da2a8e508890333b38/Defender/Defender%20-RedSun%20Detection%20-%20NamedPipe%20Detection.kql",
+    "filename": "Defender -RedSun Detection - NamedPipe Detection.kql",
+    "collected_at": "2026-06-20T03:15:59.797569+00:00"
+  },
+  {
+    "id": "f7facb190dc8",
+    "title": "Firewallinboundconnectionblocked",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/kehaitcfyn/DefenderXDR\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceEvents\n| where Timestamp > ago(30d)\n| where ActionType == @\"FirewallInboundConnectionBlocked\"\n| summarize TargetDevice=dcount(DeviceName), TargetPort=dcount(LocalPort) by RemoteIP\n| where TargetDevice > 20\n| where TargetPort > 10\n| sort by TargetDevice, TargetPort desc ",
+    "source_repo": "kehaitcfyn/DefenderXDR",
+    "source_url": "https://github.com/kehaitcfyn/DefenderXDR/blob/dc418e9ea24bb5ecba08e7c5b8de2d6fcd6df4cb/PublicScan/FirewallInboundConnectionBlocked.KQL",
+    "filename": "FirewallInboundConnectionBlocked.KQL",
+    "collected_at": "2026-06-20T03:15:59.066618+00:00"
+  },
+  {
+    "id": "b47764b06b0c",
+    "title": "Source: https://github.com/sivolko/kql-library",
+    "description": "Collected: 2026-05-30 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceEvents\n| where ActionType == \"CreateRemoteThreadApiCall\" or ActionType == \"NtAllocateVirtualMemoryApiCall\"\n| extend ParsedFields = parse_json(AdditionalFields)\n| where isnotempty(ParsedFields.CallStack)\n| mv-expand Frame = ParsedFields.CallStack\n| extend RA = tolong(Frame.ReturnAddress)\n| extend ModuleName = tostring(Frame.Module)\n| where isempty(ModuleName) or ModuleName == \"UNKNOWN\"\n| summarize\n    SuspiciousFrameCount = count(),\n    UnresolvedRAs = make_set(RA, 20),\n    Processes = make_set(InitiatingProcessFileName, 5)\n    by DeviceId, DeviceName, bin(Timestamp, 1h)\n| where SuspiciousFrameCount >= 2\n| project Timestamp, DeviceName, SuspiciousFrameCount, UnresolvedRAs, Processes\n| order by SuspiciousFrameCount desc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/9e1a2c4c5dc27b08a62be6a78b64af67c85e0d56/queries/ac31e9c735f8.kql",
+    "filename": "ac31e9c735f8.kql",
+    "collected_at": "2026-06-20T03:15:58.439405+00:00"
+  },
+  {
+    "id": "f848db993f57",
+    "title": "Source: https://github.com/dragnet-dev/haul-rules-kql",
+    "description": "Collected: 2026-05-23 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceEvents\n| where ((FolderPath endswith \".aspx\" or FolderPath endswith \".asp\" or FolderPath endswith \".php\" or FolderPath endswith \".jsp\" or FolderPath endswith \".jspx\"))\n    and (FolderPath has_any (\"\\inetpub\\wwwroot\\\", \"\\htdocs\\\", \"\\www\\\", \"/var/www/\"))\n    and  not FolderPath has_any (\"\\w3wp.exe\", \"\\httpd.exe\", \"\\nginx.exe\")\n| project Timestamp, DeviceName, ActionType, InitiatingProcessFolderPath, InitiatingProcessCommandLine\n| limit 1000",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/9e1a2c4c5dc27b08a62be6a78b64af67c85e0d56/queries/013950225a88.kql",
+    "filename": "013950225a88.kql",
+    "collected_at": "2026-06-20T03:15:57.821078+00:00"
+  },
+  {
+    "id": "d46c496a683e",
+    "title": "Source: https://github.com/azdabat/Minimum-Truth-Detection-Framework-ADX-Validated-Composite-Rules",
+    "description": "Collected: 2026-05-10 KQL Hunter - https://github.com/YOUR_USER/kql-hunter",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 7d;\nlet burstWindow = 10m;\nlet StopThreshold = 5;\n\nlet SecurityKeywords = dynamic([\n  \"defend\",\"sense\",\"crowdstrike\",\"carbonblack\",\n  \"veeam\",\"backup\",\"sophos\"\n]);\n\n// Service stop anchor\nlet Stops =\nDeviceProcessEvents\n| where Timestamp >= ago(lookback)\n| extend Cmd = tolower(ProcessCommandLine)\n| where Cmd has_any (\"net stop\",\"sc stop\")\n| where Cmd has_any (SecurityKeywords)\n\n| summarize\n    StopCount = count(),\n    SampleCmds = make_set(ProcessCommandLine, 5),\n    FirstSeen = min(Timestamp),\n    LastSeen  = max(Timestamp)\n  by DeviceName, AccountName,\n     bin(Timestamp, burstWindow)\n\n| where StopCount >= StopThreshold;\n\n// Reinforcement: driver/EDR tamper near window\nlet Tamper =\nDeviceEvents\n| where Timestamp >= ago(lookback)\n| where ActionType has_any (\"DriverLoad\",\"Tampering\",\"SecurityTool\")\n| project TamperTime=Timestamp, DeviceName;\n\nStops\n| join kind=leftouter Tamper on DeviceName\n| extend TamperNear =\n    isnotempty(TamperTime) and abs(datetime_diff(\"minute\", FirstSeen, TamperTime)) <= 30\n\n| extend FinalScore =\n      70\n    + iif(TamperNear, 25, 0)\n\n| extend Severity = case(\n    FinalScore >= 90, \"CRITICAL\",\n    \"HIGH\"\n)\n\n| extend HuntingDirectives = pack_array(\n    \"[SUMMARY] Defense disablement wave detected (service stop + tamper).\",\n    strcat(\"[STOP COUNT] \", StopCount),\n    iif(TamperNear, \"[SIGNAL] Driver/EDR tamper observed near window.\", \"\"),\n    \"[NEXT] Treat as active ransomware staging. Isolate immediately.\",\n    \"[IR] Acquire memory + check for encryption velocity cousins.\"\n)\n\n| project FirstSeen, DeviceName, AccountName,\n          Severity, HuntingDirectives\n| order by FinalScore desc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/9e1a2c4c5dc27b08a62be6a78b64af67c85e0d56/queries/8775055cc140.kql",
+    "filename": "8775055cc140.kql",
+    "collected_at": "2026-06-20T03:15:57.194773+00:00"
+  },
+  {
+    "id": "67c56eee4105",
+    "title": "map UPN to accountname to a devicelogin - > to use Security Alerts table, currently not scoped.",
+    "description": "rev2",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/kaywoz/bluestuff\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet UPNtoAccountName=\nIdentityInfo\n| where AccountUpn in~ (\"user@domain.com\", \"user2@domain.com\") // change this multi-placeholder.\n//| extend SearchForAccount = AccountName\n| distinct AccountName\n| extend AccountName = tolower(AccountName)\n| extend AccountName = iff((isempty(AccountName)), \"No valid user\", AccountName)\n;\n//UPNtoAccountName\nlet DeviceToAccountName=\nDeviceLogonEvents\n| join kind=inner UPNtoAccountName on AccountName\n| where ActionType has \"LogonSuccess\"\n| where LogonType has \"Interactive\"\n| summarize max(Timestamp) by DeviceName, DeviceId, AccountName\n//| project Timestamp,DeviceId, DeviceName, AccountName\n| extend Timestamp = max_Timestamp\n;\n//DeviceToAccountName\nlet DeviceToEvents=\nDeviceEvents\n| join kind=inner DeviceToAccountName on DeviceId\n| where AdditionalFields contains \"Description\\\":\\\"Defender\" or AdditionalFields contains \"ThreatName\\\":\\\"Behavior\"\n| extend d = parse_json(AdditionalFields)\n| extend TimestampDetection = Timestamp\n| mv-apply d on (project Detection = tostring(d.Description))\n;\nunion UPNtoAccountName, DeviceToAccountName, DeviceToEvents\n| sort by Timestamp\n| where isnotempty(DeviceName)\n| distinct Timestamp, DeviceId, AccountName, DeviceName, Detection\n| extend Detection = iff((isempty(Detection)), \"No Detection\", Detection)",
+    "source_repo": "kaywoz/bluestuff",
+    "source_url": "https://github.com/kaywoz/bluestuff/blob/73ebe24322f896576f8a85f1355f6ce0ebc31600/query/kql/map-upn-to-device.kql",
+    "filename": "map-upn-to-device.kql",
+    "collected_at": "2026-06-20T03:15:56.463082+00:00"
+  },
+  {
+    "id": "a5ba15e5966f",
+    "title": "Asr Hits",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/xsscx/windows\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceEvents\n| where ActionType startswith 'Asr' ",
+    "source_repo": "xsscx/windows",
+    "source_url": "https://github.com/xsscx/windows/blob/d5253e8fb684fb220366be7b5268038274b9dce8/kql/asr-hits.kql",
+    "filename": "asr-hits.kql",
+    "collected_at": "2026-06-20T03:15:55.839729+00:00"
+  },
+  {
+    "id": "a36ef2067855",
+    "title": "Dragnet [CVE]: dragnet-cve-2026-3032 \u2014 Web Shell Creation (CVE-2019-25487)",
+    "description": "Status: deprecated | Level: critical ID: 3351f5ae-8425-50b4-a917-b7436108f1ad",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/dragnet-dev/haul-rules-kql\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceEvents\n| where ((FolderPath endswith \".aspx\" or FolderPath endswith \".asp\" or FolderPath endswith \".php\" or FolderPath endswith \".jsp\" or FolderPath endswith \".jspx\"))\n    and (FolderPath has_any (\"\\inetpub\\wwwroot\\\", \"\\htdocs\\\", \"\\www\\\", \"/var/www/\"))\n    and  not FolderPath has_any (\"\\w3wp.exe\", \"\\httpd.exe\", \"\\nginx.exe\")\n| project Timestamp, DeviceName, ActionType, InitiatingProcessFolderPath, InitiatingProcessCommandLine\n| limit 1000",
+    "source_repo": "dragnet-dev/haul-rules-kql",
+    "source_url": "https://github.com/dragnet-dev/haul-rules-kql/blob/becbb3a80aa9316fbc847bce09643a1ba58b3e6e/cve/rules/kql/cve/2026/dragnet-cve-2026-3032-cve-web-shell.kql",
+    "filename": "dragnet-cve-2026-3032-cve-web-shell.kql",
+    "collected_at": "2026-06-20T03:15:54.694841+00:00"
+  },
+  {
+    "id": "c62a1ae9e55d",
+    "title": "Detecting credential theft from domain using LOLBIN ntdsutil.exe",
+    "description": "Similar to esentutl, this process also invokes vssvc.exe to invoke backup and storage of the NTDS.DIT file in the directory: C:\\Windows\\NTDS\\NTDS.dit. This file when backed up by ntdsutil, can be exfiltrated for password extraction, but as this is the storage for DC, contains hashes for all domain users. Note: To be able to crack the NTDS.DIT file, an adversary would also require the SYSTEM key which needs to be stolen as well, for example by esentutl or reg save. Upon execution, I didn't notice any device registry events but this time got two things. Along with that checked for the presence of the words create and full inside the command-line. From deviceEvents, I got ntdsutil.exe asking for further privileges following up with creation of vssvc.exe in the deviceProcessEvents as the underlying process involves Volume Shadow Copy service. So with those in mind and post adjusting for diluting precise check for time to the mili seconds, created the following query.",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/Vyiel/MS-XDR-Hunts\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet deviceEventsCustom = materialize ( \n    DeviceEvents\n    | extend deviceEventTime = bin(Timestamp, 1s)\n    | where InitiatingProcessVersionInfoInternalFileName has \"ntdsutil\"\n    | extend ifTokenChange = tostring(parse_json(AdditionalFields).TokenModificationProperties)\n    | extend tokenChangeDesc = parse_json(ifTokenChange).tokenChangeDescription\n    | where tokenChangeDesc has \"Privileges were added to the process\"\n    | summarize by DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, deviceEventTime);\nDeviceProcessEvents\n| extend processEventTime = bin(Timestamp, 1s)\n| join kind=inner ( deviceEventsCustom ) on DeviceName\n| where abs(datetime_diff(\"second\", deviceEventTime, processEventTime)) <= 2\n| where ProcessVersionInfoInternalFileName has_any (\"ntdsutil\", \"vssvc\")\n| where ProcessCommandLine matches regex @\"(?i)c[^a-zA-Z]*r[^a-zA-Z]*e[^a-zA-Z]*a[^a-zA-Z]*t[^a-zA-Z]*e\" \nor ProcessCommandLine matches regex @\"(?i)f[^a-zA-Z]*u[^a-zA-Z]*l[^a-zA-Z]*l\"\n| project deviceProcessTime, DeviceName, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, ProcessCommandLine\n| summarize DetectionCount = count(), \n            FirstTimeDetected = min(deviceProcessTime), \n            LastTimeDetected = max(deviceProcessTime) \n  by DeviceName, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, ProcessCommandLine\n| project DeviceName, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, ProcessCommandLine, DetectionCount, FirstTimeDetected, LastTimeDetected\n| order by FirstTimeDetected desc",
+    "source_repo": "Vyiel/MS-XDR-Hunts",
+    "source_url": "https://github.com/Vyiel/MS-XDR-Hunts/blob/41a2a49e59fbe4984ade38408c57c3aad8d7df85/Domain%20Credential%20Theft%20via%20Ntdsutil.kql",
+    "filename": "Domain Credential Theft via Ntdsutil.kql",
+    "collected_at": "2026-06-20T03:15:53.882174+00:00"
+  },
+  {
+    "id": "a6fbb7eafc77",
+    "title": "Source: https://github.com/sivolko/kql-library",
+    "description": "Collected: 2026-05-27 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet DeviceEvents = externaldata(\n    AccountDomain:string,\n    AccountName:string,\n    AccountSid:string,\n    ActionType:string,\n    AdditionalFields:dynamic,\n    AppGuardContainerId:string,\n    DeviceId:string,\n    DeviceName:string,\n    FileName:string,\n    FileOriginIP:string,\n    FileOriginUrl:string,\n    FolderPath:string,\n    InitiatingProcessAccountDomain:string,\n    InitiatingProcessAccountName:string,\n    InitiatingProcessAccountObjectId:string,\n    InitiatingProcessAccountSid:string,\n    InitiatingProcessAccountUpn:string,\n    InitiatingProcessCommandLine:string,\n    InitiatingProcessFileName:string,\n    InitiatingProcessFolderPath:string,\n    InitiatingProcessId:long,\n    InitiatingProcessLogonId:long,\n    InitiatingProcessMD5:string,\n    InitiatingProcessParentFileName:string,\n    InitiatingProcessParentId:long,\n    InitiatingProcessSHA1:string,\n    InitiatingProcessSHA256:string,\n    LocalIP:string,\n    LocalPort:int,\n    LogonId:long,\n    MD5:string,\n    MachineGroup:string,\n    ProcessCommandLine:string,\n    ProcessId:long,\n    ProcessTokenElevation:string,\n    RegistryKey:string,\n    RegistryValueData:string,\n    RegistryValueName:string,\n    RemoteDeviceName:string,\n    RemoteIP:string,\n    RemotePort:int,\n    RemoteUrl:string,\n    ReportId:long,\n    SHA1:string,\n    SHA256:string,\n    Timestamp:datetime,\n    TimeGenerated:datetime,\n    FileSize:long,\n    InitiatingProcessCreationTime:datetime,\n    InitiatingProcessFileSize:long,\n    InitiatingProcessParentCreationTime:datetime,\n    InitiatingProcessVersionInfoCompanyName:string,\n    InitiatingProcessVersionInfoFileDescription:string,\n    InitiatingProcessVersionInfoInternalFileName:string,\n    InitiatingProcessVersionInfoOriginalFileName:string,\n    InitiatingProcessVersionInfoProductName:string,\n    InitiatingProcessVersionInfoProductVersion:string,\n    ProcessCreationTime:datetime,\n    CreatedProcessSessionId:long,\n    IsProcessRemoteSession:bool,\n    ProcessRemoteSessionDeviceName:string,\n    ProcessRemoteSessionIP:string,\n    InitiatingProcessSessionId:long,\n    IsInitiatingProcessRemoteSession:bool,\n    InitiatingProcessRemoteSessionDeviceName:string,\n    InitiatingProcessRemoteSessionIP:string,\n    InitiatingProcessUniqueId:string,\n    SourceSystem:string,\n    Type:string\n)\n[\"https://raw.githubusercontent.com/Jiayang-Lai/100-Days-of-KQL/refs/heads/main/samples/DemoDeviceEvents.csv\"]\nwith(format=\"csv\", ignoreFirstRecord=true);\nlet DeviceInfo = externaldata(\n    AdditionalFields:dynamic,\n    ClientVersion:string,\n    DeviceId:string,\n    DeviceName:string,\n    DeviceObjectId:string,\n    IsAzureADJoined:bool,\n    LoggedOnUsers:dynamic,\n    MachineGroup:string,\n    OSArchitecture:string,\n    OSBuild:long,\n    OSPlatform:string,\n    OSVersion:string,\n    RegistryDeviceTag:string,\n    ReportId:long,\n    TimeGenerated:datetime,\n    Timestamp:datetime,\n    AadDeviceId:string,\n    DeviceCategory:string,\n    DeviceSubtype:string,\n    DeviceType:string,\n    JoinType:string,\n    MergedDeviceIds:string,\n    MergedToDeviceId:string,\n    Model:string,\n    OnboardingStatus:string,\n    OSDistribution:string,\n    OSVersionInfo:string,\n    Vendor:string,\n    SensorHealthState:string,\n    IsExcluded:bool,\n    ExclusionReason:string,\n    AssetValue:string,\n    ExposureLevel:string,\n    IsInternetFacing:bool,\n    DeviceManualTags:string,\n    DeviceDynamicTags:string,\n    AwsResourceName:string,\n    GcpFullResourceName:string,\n    CloudPlatforms:string,\n    HardwareUuid:string,\n    HostDeviceId:string,\n    IsTransient:bool,\n    MitigationStatus:string,\n    OsBuildRevision:string,\n    RestrictedDeviceSecurityOperations:string,\n    SourceSystem:string,\n    Type:string\n)\n[\"https://raw.githubusercontent.com/Jiayang-Lai/100-Days-of-KQL/refs/heads/main/samples/DemoDeviceInfo.csv\"]\nwith(format=\"csv\", ignoreFirstRecord=true);\n// Lookup operator example: enriching DeviceEvents with device information from DeviceInfo\n// The lookup operator matches rows based on shared column values\nDeviceEvents\n// | where TimeGenerated > ago(7d)  // Filter to recent events\n| lookup kind=inner DeviceInfo on DeviceId, DeviceName  // Inner join enriches with device details\n| project\n    TimeGenerated,\n    DeviceId,\n    DeviceName,\n    ActionType,\n    InitiatingProcessFileName,\n    OSPlatform,           // From DeviceInfo\n    OSVersion,            // From DeviceInfo\n    OnboardingStatus      // From DeviceInfo\n| limit 5                 // Return only 5 rows",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/9e1a2c4c5dc27b08a62be6a78b64af67c85e0d56/queries/42d6a88a9dc5.kql",
+    "filename": "42d6a88a9dc5.kql",
+    "collected_at": "2026-06-20T03:15:53.242300+00:00"
+  },
+  {
+    "id": "b04e0d5e237a",
+    "title": "TeamPCP Supply Chain Attack \u2014 Unified IOC Sweep (FP Filtered)",
+    "description": "CVE-2026-33634 | CVSS 9.4 Defender XDR Custom Detection Rule Rule Name: TeamPCP Supply Chain C2 and Malware IOC Match Severity: High | Category: CommandAndControl | Frequency: 1 hour Author: Ugur Can Ates | Last Updated: 2026-03-25",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender",
+      "network"
+    ],
+    "content": "// Source: https://github.com/ugurrates/teampcp-supply-chain-attack\n// Collected: 2026-06-20\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet SHA256_IOCs = dynamic([\n    \"18a24f83e807479438dcab7a1804c51a00dafc1d526698a66e0640d1e5dd671a\",\n    \"c37c0ae9641d2e5329fcdee847a756bf1140fdb7f0b7c78a40fdc39055e7d926\",\n    \"0c0d206d5e68c0cf64d57ffa8bc5b1dad54f2dda52f24e96e02e237498cb9c3a\",\n    \"61ff00a81b19624adaad425b9129ba2f312f4ab76fb5ddc2c628a5037d31a4ba\",\n    \"f398f06eefcd3558c38820a397e3193856e4e6e7c67f81ecc8e533275284b152\",\n    \"7df6cef7ab9aae2ea08f2f872f6456b5d51d896ddda907a238cd6668ccdc4bb7\",\n    \"5e2ba7c4c53fa6e0cef58011acdd50682cf83fb7b989712d2fcf1b5173bad956\"\n]);\nlet IP_IOCs = dynamic([\"83.142.209.11\", \"45.148.10.212\"]);\nlet Domain_IOCs = dynamic([\n    \"checkmarx.zone\", \"aquasecurtiy.org\", \"litellm.cloud\",\n    \"tdtqy-oyaaa-aaaae-af2dq-cai.raw.icp0.io\"\n]);\nlet URL_IOCs = dynamic([\n    \"checkmarx.zone/static/checkmarx-util-1.0.4.tgz\",\n    \"checkmarx.zone/vsx\",\n    \"checkmarx.zone/raw\",\n    \"tdtqy-oyaaa-aaaae-af2dq-cai.raw.icp0.io\"\n]);\nDeviceFileEvents\n| where Timestamp > ago(30d)\n| where SHA256 in (SHA256_IOCs)\n| extend Source = \"FileHash\", Detail = strcat(FileName, \" | SHA256: \", SHA256)\n| project Timestamp, DeviceName, Source, Detail\n| union (\n    DeviceNetworkEvents\n    | where Timestamp > ago(30d)\n    | where RemoteIP in (IP_IOCs) or RemoteUrl has_any (Domain_IOCs) or RemoteUrl has_any (URL_IOCs)\n    | extend Source = \"Network\", Detail = strcat(RemoteUrl, \" | \", RemoteIP, \":\", RemotePort)\n    | project Timestamp, DeviceName, Source, Detail\n)\n| union (\n    DeviceEvents\n    | where Timestamp > ago(30d)\n    | where ActionType == \"DnsQueryResponse\"\n    | where AdditionalFields has_any (Domain_IOCs)\n    | extend Source = \"DNS\", Detail = AdditionalFields\n    | project Timestamp, DeviceName, Source, Detail\n)\n| sort by Timestamp desc",
+    "source_repo": "ugurrates/teampcp-supply-chain-attack",
+    "source_url": "https://github.com/ugurrates/teampcp-supply-chain-attack/blob/4e0a4f5f74b0105139932bbad89bac59c406600e/defender_xdr_query.kql",
+    "filename": "defender_xdr_query.kql",
+    "collected_at": "2026-06-20T03:15:52.607770+00:00"
+  },
+  {
     "id": "760e9552872a",
     "title": "Sucpicious Logins Combined With Impossible Travel Detection",
     "description": "KQL query collected from public GitHub repositories.",

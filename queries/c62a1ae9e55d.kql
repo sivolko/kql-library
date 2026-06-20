@@ -1,0 +1,26 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-06-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let deviceEventsCustom = materialize ( 
+    DeviceEvents
+    | extend deviceEventTime = bin(Timestamp, 1s)
+    | where InitiatingProcessVersionInfoInternalFileName has "ntdsutil"
+    | extend ifTokenChange = tostring(parse_json(AdditionalFields).TokenModificationProperties)
+    | extend tokenChangeDesc = parse_json(ifTokenChange).tokenChangeDescription
+    | where tokenChangeDesc has "Privileges were added to the process"
+    | summarize by DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, deviceEventTime);
+DeviceProcessEvents
+| extend processEventTime = bin(Timestamp, 1s)
+| join kind=inner ( deviceEventsCustom ) on DeviceName
+| where abs(datetime_diff("second", deviceEventTime, processEventTime)) <= 2
+| where ProcessVersionInfoInternalFileName has_any ("ntdsutil", "vssvc")
+| where ProcessCommandLine matches regex @"(?i)c[^a-zA-Z]*r[^a-zA-Z]*e[^a-zA-Z]*a[^a-zA-Z]*t[^a-zA-Z]*e" 
+or ProcessCommandLine matches regex @"(?i)f[^a-zA-Z]*u[^a-zA-Z]*l[^a-zA-Z]*l"
+| project deviceProcessTime, DeviceName, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, ProcessCommandLine
+| summarize DetectionCount = count(), 
+            FirstTimeDetected = min(deviceProcessTime), 
+            LastTimeDetected = max(deviceProcessTime) 
+  by DeviceName, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, ProcessCommandLine
+| project DeviceName, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, ProcessCommandLine, DetectionCount, FirstTimeDetected, LastTimeDetected
+| order by FirstTimeDetected desc

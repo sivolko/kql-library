@@ -1,0 +1,6 @@
+// Source: https://github.com/xsscx/windows
+// Collected: 2026-06-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType startswith 'Asr' 
