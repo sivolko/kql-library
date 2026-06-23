@@ -1,0 +1,14 @@
+// Source: https://github.com/ibondarenko1/azure-sentinel-detection-engineering
+// Collected: 2026-06-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let openNsgs = _GetWatchlist('soc-open-mgmt-nsg-rules') | project SearchKey;
+AzureActivity
+| where TimeGenerated > ago(1h)
+| where OperationNameValue has "Microsoft.Network/networkSecurityGroups/securityRules"
+| where OperationNameValue endswith "/write"
+| where ActivityStatusValue == "Success"
+| extend NsgName = tostring(split(tostring(Properties_d.resource), "/")[0])
+| where NsgName in~ (openNsgs)
+| extend CallerIp = tostring(parse_json(tostring(Properties_d.httpRequest)).clientIpAddress)
+| project TimeGenerated, Caller, CallerIp, NsgName, OperationNameValue, ResourceId

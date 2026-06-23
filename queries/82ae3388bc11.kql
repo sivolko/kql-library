@@ -1,0 +1,122 @@
+// Source: https://github.com/matt-thomas-git/platform-sre-codebase
+// Collected: 2026-06-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityRecommendation
+| where RecommendationSeverity == "High"
+| where RecommendationState == "Active"
+| project
+    RecommendationName,
+    RecommendationSeverity,
+    AffectedResourceType,
+    AffectedResourceName = ResourceId,
+    RemediationDescription,
+    TimeGenerated
+| extend ExposureRisk = case(
+    RecommendationName contains "public" or RecommendationName contains "internet" or RecommendationName contains "endpoint", "Internet Exposed - Fix First",
+    RecommendationName contains "VM" or RecommendationName contains "virtual machine", "Compute - Fix Second",
+    RecommendationName contains "storage", "Storage - Review Access",
+    "Other"
+)
+| order by ExposureRisk asc, TimeGenerated asc
+
+// ============================================================
+// Query 2: Secure Score History (Last 30 Days)
+// Track whether remediation work is actually improving the score
+// Useful for weekly progress reporting to management
+// ============================================================
+SecurityResources
+| where type == "microsoft.security/securescores"
+| where TimeGenerated > ago(30d)
+| extend Score = todouble(properties.score.current)
+| extend MaxScore = todouble(properties.score.max)
+| extend ScorePercentage = round((Score / MaxScore) * 100, 1)
+| summarize AvgScore = avg(ScorePercentage) by bin(TimeGenerated, 1d)
+| project TimeGenerated, SecureScorePct = round(AvgScore, 1)
+| order by TimeGenerated asc
+
+// ============================================================
+// Query 3: Active Security Alerts (Last 24 Hours)
+// Real-time threats - higher priority than recommendations
+// Recommendations = "you should fix this"; Alerts = "something bad may be happening now"
+// ============================================================
+SecurityAlert
+| where TimeGenerated > ago(24h)
+| where AlertSeverity in ("High", "Medium")
+| project
+    TimeGenerated,
+    AlertName,
+    AlertSeverity,
+    Description,
+    RemediationSteps,
+    AffectedEntity = Entities,
+    Status
+| order by AlertSeverity asc, TimeGenerated desc
+
+// ============================================================
+// Query 4: Resources with Public Endpoint Exposure
+// Surfaces PaaS resources NOT using Private Endpoints
+// Cross-reference with hub-and-spoke topology - these should be Private Endpoint only
+// ============================================================
+AzureActivity
+| where TimeGenerated > ago(30d)
+| where OperationNameValue contains "Microsoft.Storage"
+    or OperationNameValue contains "Microsoft.Sql"
+    or OperationNameValue contains "Microsoft.KeyVault"
+| where ActivityStatusValue == "Success"
+| where Properties contains "publicNetworkAccess" and Properties contains "Enabled"
+| project
+    TimeGenerated,
+    ResourceGroup,
+    Resource,
+    OperationNameValue,
+    CallerIpAddress,
+    Caller
+| order by TimeGenerated desc
+
+// ============================================================
+// Query 5: VM Security Recommendations Summary
+// Quick count of how many VMs need attention and what for
+// Use this to estimate effort for Priority 1 remediation sprint
+// ============================================================
+SecurityRecommendation
+| where RecommendationState == "Active"
+| where AffectedResourceType contains "virtualMachine" or AffectedResourceType contains "compute"
+| summarize
+    TotalFindings = count(),
+    HighSeverity = countif(RecommendationSeverity == "High"),
+    MediumSeverity = countif(RecommendationSeverity == "Medium"),
+    LowSeverity = countif(RecommendationSeverity == "Low")
+    by RecommendationName
+| order by HighSeverity desc, TotalFindings desc
+
+// ============================================================
+// Query 6: Storage Account Security Issues
+// Targets the second most common finding category after VMs
+// Look for: public blob access, no soft delete, no HTTPS only, no private endpoint
+// ============================================================
+SecurityRecommendation
+| where RecommendationState == "Active"
+| where AffectedResourceType contains "storage"
+| project
+    RecommendationName,
+    RecommendationSeverity,
+    AffectedResourceName = ResourceId,
+    RemediationDescription
+| order by RecommendationSeverity asc
+
+// ============================================================
+// Query 7: Defender Score Impact - What Fixes Move the Needle Most?
+// Prioritise remediations by their score impact
+// Fix high-impact items first for maximum Secure Score improvement per hour spent
+// ============================================================
+SecurityRecommendation
+| where RecommendationState == "Active"
+| where RecommendationSeverity in ("High", "Medium")
+| summarize
+    AffectedResources = count(),
+    MaxScoreImpact = max(todouble(RecommendationAdditionalData.maxScore))
+    by RecommendationName, RecommendationSeverity
+| extend PotentialScoreGain = AffectedResources * MaxScoreImpact
+| project RecommendationName, RecommendationSeverity, AffectedResources, MaxScoreImpact, PotentialScoreGain
+| order by PotentialScoreGain desc

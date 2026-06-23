@@ -1,0 +1,8 @@
+// Source: https://github.com/mk74936/cloud_security
+// Collected: 2026-06-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == "Microsoft.PolicyInsights/policyStates/write"
+| summarize Total = count(), Compliant = countif(ComplianceState == "Compliant") by ResourceGroup
+| extend ComplianceScore = round(100 * todouble(Compliant) / Total, 2)

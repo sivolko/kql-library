@@ -1,0 +1,8 @@
+// Source: https://github.com/carlzxc71/demo-kql-queries-public
+// Collected: 2026-06-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(7d)
+| where OperationNameValue contains "deployments"
+| where ActivityStatusValue =~ "Failure"

@@ -1,0 +1,9 @@
+// Source: https://github.com/abbeyadegbola/Sentinel-KQL
+// Collected: 2026-06-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue contains "SecurityInsights"
+| where OperationName contains "Delete"
+| where ActivityStatusValue contains "Succeeded"
+| project TimeGenerated, Caller, OperationName

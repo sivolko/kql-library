@@ -1,5 +1,164 @@
 [
   {
+    "id": "5c60f8e6626c",
+    "title": "Lists all the delete operations performed in your Microsoft Sentinel workspace. Time range needs to be set",
+    "description": "https://learn.microsoft.com/en-us/azure/sentinel/audit-sentinel-data",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/abbeyadegbola/Sentinel-KQL\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| where OperationNameValue contains \"SecurityInsights\"\n| where OperationName contains \"Delete\"\n| where ActivityStatusValue contains \"Succeeded\"\n| project TimeGenerated, Caller, OperationName",
+    "source_repo": "abbeyadegbola/Sentinel-KQL",
+    "source_url": "https://github.com/abbeyadegbola/Sentinel-KQL/blob/e97debab06533411f4786f9b809443c65407fee5/Azure/Identify-Delete-SentinelOps.kql",
+    "filename": "Identify-Delete-SentinelOps.kql",
+    "collected_at": "2026-06-23T03:15:23.551865+00:00"
+  },
+  {
+    "id": "1ab58d7f5621",
+    "title": "Compliance Score",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/mk74936/cloud_security\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| where OperationNameValue == \"Microsoft.PolicyInsights/policyStates/write\"\n| summarize Total = count(), Compliant = countif(ComplianceState == \"Compliant\") by ResourceGroup\n| extend ComplianceScore = round(100 * todouble(Compliant) / Total, 2)",
+    "source_repo": "mk74936/cloud_security",
+    "source_url": "https://github.com/mk74936/cloud_security/blob/5f5a684b4a2d3a31341799e9c69402748606be8b/cloud_security/v17/dashboards/queries/compliance-score.kql",
+    "filename": "compliance-score.kql",
+    "collected_at": "2026-06-23T03:15:22.922093+00:00"
+  },
+  {
+    "id": "e5fec9eaa345",
+    "title": "Save as a function in your workspace then invoke via its name, i.e if you save as KeyVaultAccess",
+    "description": "KeyVaultAccess | where TimeGenerated > ago(30d) | where Actor == \"user@yourdomain.com\" // will find actions taken by that user KeyVaultAccess | where TimeGenerated > ago(30d) | where * contains \"Delete\" // will find when delete access is added or removed This will parse the AzureActivity log for Azure Key Vault access changes.",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/Gyarbij/Artemis\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureDiagnostics\n| where ResourceType == \"VAULTS\"\n| where OperationName == \"VaultPatch\"\n| where ResultType == \"Success\"\n| project-rename\n    ServicePrincipalAdded=addedAccessPolicy_ObjectId_g,\n    Actor=identity_claim_http_schemas_xmlsoap_org_ws_2005_05_identity_claims_name_s,\n    AddedKeyPolicy = addedAccessPolicy_Permissions_keys_s,\n    AddedSecretPolicy = addedAccessPolicy_Permissions_secrets_s,\n    AddedCertPolicy = addedAccessPolicy_Permissions_certificates_s,\n    RemovedKeyPolicy = removedAccessPolicy_Permissions_keys_s,\n    RemovedSecretPolicy = removedAccessPolicy_Permissions_secrets_s,\n    RemovedCertPolicy = removedAccessPolicy_Permissions_certificates_s,\n    ServicePrincipalRemoved=removedAccessPolicy_ObjectId_g\n| project\n    TimeGenerated,\n    KeyVaultName=Resource,\n    ServicePrincipalAdded,\n    ServicePrincipalRemoved,\n    Actor,\n    IPAddressofActor=CallerIPAddress,\n    AddedSecretPolicy,\n    AddedKeyPolicy,\n    AddedCertPolicy,\n    RemovedSecretPolicy,\n    RemovedKeyPolicy,\n    RemovedCertPolicy\n| where isnotempty(AddedKeyPolicy)\n    or isnotempty(AddedSecretPolicy)\n    or isnotempty(AddedCertPolicy)\n    or isnotempty(RemovedKeyPolicy)\n    or isnotempty(RemovedSecretPolicy)\n    or isnotempty(RemovedCertPolicy)",
+    "source_repo": "Gyarbij/Artemis",
+    "source_url": "https://github.com/Gyarbij/Artemis/blob/4ef64a4c54532e0a1155265078a96e222c4abae5/Hunting/Functions/Function-AzureKeyVaultAccess.kql",
+    "filename": "Function-AzureKeyVaultAccess.kql",
+    "collected_at": "2026-06-23T03:15:22.276045+00:00"
+  },
+  {
+    "id": "3c7a9e194842",
+    "title": "Save as a function in your workspace then invoke via its name, i.e if you save as KeyVaultAccess",
+    "description": "KeyVaultAccess | where TimeGenerated > ago(30d) | where Actor == \"user@yourdomain.com\" // will find actions taken by that user KeyVaultAccess | where TimeGenerated > ago(30d) | where * contains \"Delete\" // will find when delete access is added or removed This will parse the AzureActivity log for Azure Key Vault access changes.",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/petitess/kusto\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureDiagnostics\n| where ResourceType == \"VAULTS\"\n| where OperationName == \"VaultPatch\"\n| where ResultType == \"Success\"\n| project-rename\n    ServicePrincipalAdded=addedAccessPolicy_ObjectId_g,\n    Actor=identity_claim_http_schemas_xmlsoap_org_ws_2005_05_identity_claims_name_s,\n    AddedKeyPolicy = addedAccessPolicy_Permissions_keys_s,\n    AddedSecretPolicy = addedAccessPolicy_Permissions_secrets_s,\n    AddedCertPolicy = addedAccessPolicy_Permissions_certificates_s,\n    RemovedKeyPolicy = removedAccessPolicy_Permissions_keys_s,\n    RemovedSecretPolicy = removedAccessPolicy_Permissions_secrets_s,\n    RemovedCertPolicy = removedAccessPolicy_Permissions_certificates_s,\n    ServicePrincipalRemoved=removedAccessPolicy_ObjectId_g\n| project\n    TimeGenerated,\n    KeyVaultName=Resource,\n    ServicePrincipalAdded,\n    ServicePrincipalRemoved,\n    Actor,\n    IPAddressofActor=CallerIPAddress,\n    AddedSecretPolicy,\n    AddedKeyPolicy,\n    AddedCertPolicy,\n    RemovedSecretPolicy,\n    RemovedKeyPolicy,\n    RemovedCertPolicy\n| where isnotempty(AddedKeyPolicy)\n    or isnotempty(AddedSecretPolicy)\n    or isnotempty(AddedCertPolicy)\n    or isnotempty(RemovedKeyPolicy)\n    or isnotempty(RemovedSecretPolicy)\n    or isnotempty(RemovedCertPolicy)",
+    "source_repo": "petitess/kusto",
+    "source_url": "https://github.com/petitess/kusto/blob/71fd9d18d82e7e3ebb81df0cbbb9895c29a95853/Sentinel-Queries/Functions/Function-AzureKeyVaultAccess.kql",
+    "filename": "Function-AzureKeyVaultAccess.kql",
+    "collected_at": "2026-06-23T03:15:21.614727+00:00"
+  },
+  {
+    "id": "82ae3388bc11",
+    "title": "Defender for Cloud - Security Posture Monitoring",
+    "description": "Inside Travel Group - Cloud Engineer Technical Assessment Use Case: Triage 14 high-severity findings, track Secure Score over time, prioritise remediation Tables: SecurityRecommendation, SecurityAlert, AzureActivity, SecurityResources Prerequisite: Defender for Cloud connected to Log Analytics workspace",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/matt-thomas-git/platform-sre-codebase\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityRecommendation\n| where RecommendationSeverity == \"High\"\n| where RecommendationState == \"Active\"\n| project\n    RecommendationName,\n    RecommendationSeverity,\n    AffectedResourceType,\n    AffectedResourceName = ResourceId,\n    RemediationDescription,\n    TimeGenerated\n| extend ExposureRisk = case(\n    RecommendationName contains \"public\" or RecommendationName contains \"internet\" or RecommendationName contains \"endpoint\", \"Internet Exposed - Fix First\",\n    RecommendationName contains \"VM\" or RecommendationName contains \"virtual machine\", \"Compute - Fix Second\",\n    RecommendationName contains \"storage\", \"Storage - Review Access\",\n    \"Other\"\n)\n| order by ExposureRisk asc, TimeGenerated asc\n\n// ============================================================\n// Query 2: Secure Score History (Last 30 Days)\n// Track whether remediation work is actually improving the score\n// Useful for weekly progress reporting to management\n// ============================================================\nSecurityResources\n| where type == \"microsoft.security/securescores\"\n| where TimeGenerated > ago(30d)\n| extend Score = todouble(properties.score.current)\n| extend MaxScore = todouble(properties.score.max)\n| extend ScorePercentage = round((Score / MaxScore) * 100, 1)\n| summarize AvgScore = avg(ScorePercentage) by bin(TimeGenerated, 1d)\n| project TimeGenerated, SecureScorePct = round(AvgScore, 1)\n| order by TimeGenerated asc\n\n// ============================================================\n// Query 3: Active Security Alerts (Last 24 Hours)\n// Real-time threats - higher priority than recommendations\n// Recommendations = \"you should fix this\"; Alerts = \"something bad may be happening now\"\n// ============================================================\nSecurityAlert\n| where TimeGenerated > ago(24h)\n| where AlertSeverity in (\"High\", \"Medium\")\n| project\n    TimeGenerated,\n    AlertName,\n    AlertSeverity,\n    Description,\n    RemediationSteps,\n    AffectedEntity = Entities,\n    Status\n| order by AlertSeverity asc, TimeGenerated desc\n\n// ============================================================\n// Query 4: Resources with Public Endpoint Exposure\n// Surfaces PaaS resources NOT using Private Endpoints\n// Cross-reference with hub-and-spoke topology - these should be Private Endpoint only\n// ============================================================\nAzureActivity\n| where TimeGenerated > ago(30d)\n| where OperationNameValue contains \"Microsoft.Storage\"\n    or OperationNameValue contains \"Microsoft.Sql\"\n    or OperationNameValue contains \"Microsoft.KeyVault\"\n| where ActivityStatusValue == \"Success\"\n| where Properties contains \"publicNetworkAccess\" and Properties contains \"Enabled\"\n| project\n    TimeGenerated,\n    ResourceGroup,\n    Resource,\n    OperationNameValue,\n    CallerIpAddress,\n    Caller\n| order by TimeGenerated desc\n\n// ============================================================\n// Query 5: VM Security Recommendations Summary\n// Quick count of how many VMs need attention and what for\n// Use this to estimate effort for Priority 1 remediation sprint\n// ============================================================\nSecurityRecommendation\n| where RecommendationState == \"Active\"\n| where AffectedResourceType contains \"virtualMachine\" or AffectedResourceType contains \"compute\"\n| summarize\n    TotalFindings = count(),\n    HighSeverity = countif(RecommendationSeverity == \"High\"),\n    MediumSeverity = countif(RecommendationSeverity == \"Medium\"),\n    LowSeverity = countif(RecommendationSeverity == \"Low\")\n    by RecommendationName\n| order by HighSeverity desc, TotalFindings desc\n\n// ============================================================\n// Query 6: Storage Account Security Issues\n// Targets the second most common finding category after VMs\n// Look for: public blob access, no soft delete, no HTTPS only, no private endpoint\n// ============================================================\nSecurityRecommendation\n| where RecommendationState == \"Active\"\n| where AffectedResourceType contains \"storage\"\n| project\n    RecommendationName,\n    RecommendationSeverity,\n    AffectedResourceName = ResourceId,\n    RemediationDescription\n| order by RecommendationSeverity asc\n\n// ============================================================\n// Query 7: Defender Score Impact - What Fixes Move the Needle Most?\n// Prioritise remediations by their score impact\n// Fix high-impact items first for maximum Secure Score improvement per hour spent\n// ============================================================\nSecurityRecommendation\n| where RecommendationState == \"Active\"\n| where RecommendationSeverity in (\"High\", \"Medium\")\n| summarize\n    AffectedResources = count(),\n    MaxScoreImpact = max(todouble(RecommendationAdditionalData.maxScore))\n    by RecommendationName, RecommendationSeverity\n| extend PotentialScoreGain = AffectedResources * MaxScoreImpact\n| project RecommendationName, RecommendationSeverity, AffectedResources, MaxScoreImpact, PotentialScoreGain\n| order by PotentialScoreGain desc",
+    "source_repo": "matt-thomas-git/platform-sre-codebase",
+    "source_url": "https://github.com/matt-thomas-git/platform-sre-codebase/blob/48370905aca8b89c57d2b477fef1526dee31236b/observability/kql/inside-travel/defender-security-monitoring.kql",
+    "filename": "defender-security-monitoring.kql",
+    "collected_at": "2026-06-23T03:15:20.828664+00:00"
+  },
+  {
+    "id": "f7c7bb880695",
+    "title": "Title:   Failed deployments",
+    "description": "Answers: ARM/template deployments that failed, with caller and the substatus reason. Source:  Logs \u2014 AzureActivity Prereq:  Subscription Activity-log diagnostic setting -> workspace (terraform/activity.tf). Run in:  Log Analytics > Logs (scope: the workspace) Drop the `endswith \"/deployments/write\"` line to widen this to *every* failed control-plane operation, not just deployments. NOTE: `=~` (case-insensitive equals) is deliberate \u2014 the AzureActivity table reference",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/carlzxc71/demo-kql-queries-public\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| where TimeGenerated > ago(7d)\n| where OperationNameValue contains \"deployments\"\n| where ActivityStatusValue =~ \"Failure\"",
+    "source_repo": "carlzxc71/demo-kql-queries-public",
+    "source_url": "https://github.com/carlzxc71/demo-kql-queries-public/blob/f902826686cf00b14688d61f7bc80ced855a3c4d/activity/02-failed-deployments.kql",
+    "filename": "02-failed-deployments.kql",
+    "collected_at": "2026-06-23T03:15:20.198503+00:00"
+  },
+  {
+    "id": "6df63cd37071",
+    "title": "Vm Creation Using Azure Activity",
+    "description": "Could be useful as part of rogue VM creation hunting, could add queries to check the tags and ensure is compliant with Org Tagging",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/jkerai1/KQL-Queries\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet operationList = dynamic([\"microsoft.compute/virtualmachines/write\", \"microsoft.resources/deployments/write\"]);\n//\nAzureActivity\n| where TimeGenerated > ago(90d)\n| where OperationNameValue in~ (operationList)\n| where ActivitySubstatusValue == \"Created\"\n| extend ProvisioningState = parse_json(tostring(parse_json(tostring(parse_json(Properties).responseBody)).properties)).provisioningState,\nVM_ID = parse_json(tostring(parse_json(tostring(parse_json(Properties).responseBody)).properties)).vmId,\nImageReference_Offer = parse_json(tostring(parse_json(tostring(parse_json(tostring(parse_json(tostring(Properties_d.responseBody)).properties)).storageProfile)).imageReference)).offer,\nImageReference_Exact_version = parse_json(tostring(parse_json(tostring(parse_json(tostring(parse_json(tostring(Properties_d.responseBody)).properties)).storageProfile)).imageReference)).exactVersion,\nImageReference_SKU = parse_json(tostring(parse_json(tostring(parse_json(tostring(parse_json(tostring(Properties_d.responseBody)).properties)).storageProfile)).imageReference)).sku\n//Only search for Windows Server\n| where ImageReference_Offer == \"WindowsServer\"",
+    "source_repo": "jkerai1/KQL-Queries",
+    "source_url": "https://github.com/jkerai1/KQL-Queries/blob/0715193bfce173c8fefd35da2a8e508890333b38/Azure/VM%20Creation%20using%20Azure%20Activity.kql",
+    "filename": "VM Creation using Azure Activity.kql",
+    "collected_at": "2026-06-23T03:15:19.442799+00:00"
+  },
+  {
+    "id": "56765acd450f",
+    "title": "This query finds out if any new query packs are created",
+    "description": "This query finds out if any new query packs are created",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/le0li9ht/Microsoft-Sentinel-Queries\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity \n| where TimeGenerated > ago(340d) \n| where OperationNameValue contains \"Microsoft.OperationalInsights/queryPacks/write\" // find all querypack write operations\n| where Caller contains \"<migration person mail>\" //give person's e-mail who is migrating\n| summarize arg_max(TimeGenerated, *) by ResourceId \n| where ActivitySubstatusValue contains \"Created\" \n| project TimeGenerated,Resource, Caller, CallerIpAddress",
+    "source_repo": "le0li9ht/Microsoft-Sentinel-Queries",
+    "source_url": "https://github.com/le0li9ht/Microsoft-Sentinel-Queries/blob/44de43909fee0564e2fb532bf09fe1c2cf4dd5ce/MigrationQueries/QuerypacksCreated.kql",
+    "filename": "QuerypacksCreated.kql",
+    "collected_at": "2026-06-23T03:15:18.687627+00:00"
+  },
+  {
+    "id": "bf060442bdb5",
+    "title": "DET-009, NSG rule change exposed inbound from Any",
+    "description": "MITRE: DefenseEvasion / T1562 Source: AzureActivity | Frequency: every 60 min | Lookback: 1h Generated from detections/rules/DET-009-nsg-opened-inbound-any.yaml by cicd/sync-kql-mirror.py, do not edit by hand. soc-open-mgmt-nsg-rules: refreshed hourly from Azure Resource Graph by the nsg-posture-watchlist Action; SearchKey = NSG name currently open inbound from Any.",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/ibondarenko1/azure-sentinel-detection-engineering\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet openNsgs = _GetWatchlist('soc-open-mgmt-nsg-rules') | project SearchKey;\nAzureActivity\n| where TimeGenerated > ago(1h)\n| where OperationNameValue has \"Microsoft.Network/networkSecurityGroups/securityRules\"\n| where OperationNameValue endswith \"/write\"\n| where ActivityStatusValue == \"Success\"\n| extend NsgName = tostring(split(tostring(Properties_d.resource), \"/\")[0])\n| where NsgName in~ (openNsgs)\n| extend CallerIp = tostring(parse_json(tostring(Properties_d.httpRequest)).clientIpAddress)\n| project TimeGenerated, Caller, CallerIp, NsgName, OperationNameValue, ResourceId",
+    "source_repo": "ibondarenko1/azure-sentinel-detection-engineering",
+    "source_url": "https://github.com/ibondarenko1/azure-sentinel-detection-engineering/blob/590f4e97078e8114af13fe77889e62de3b3b4dee/kql/detections/DET-009.kql",
+    "filename": "DET-009.kql",
+    "collected_at": "2026-06-23T03:15:17.886578+00:00"
+  },
+  {
+    "id": "97bce6c6634f",
+    "title": "Source: https://github.com/sivolko/kql-library",
+    "description": "Collected: 2026-05-13 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender",
+      "azure",
+      "m365",
+      "threat-intel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet startDate = datetime(2024-07-01);\nlet endDate = datetime(2024-07-05);\nunion AADNonInteractiveUserSignInLogs, PowerBIActivity, AWSGuardDuty, ThreatIntelligenceIndicator, CloudAppEvents, BehaviorAnalytics, Dynamics365Activity, AzureActivity, DeviceEvents, DeviceLogonEvents, Anomalies, AppTraces, AADUserRiskEvents, IdentityInfo\n| where TimeGenerated between (startDate .. endDate)\n| summarize count() by bin(TimeGenerated, 1d)\n| render timechart",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/a2ee3c4f60a8977b8756beace29356e683a7f016/queries/77072ec43be0.kql",
+    "filename": "77072ec43be0.kql",
+    "collected_at": "2026-06-23T03:15:17.252232+00:00"
+  },
+  {
+    "id": "dc37f6a1fcac",
+    "title": "Severity: High",
+    "description": "Tactics : Impact, DefenseEvasion MITRE   : T1485, T1562 Freq    : PT1H   Period: PT3H ==========================================================================================",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "azure",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-06-23\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff// Rule    : Azure - Mass Deletion of Critical Resources (NSGs/VMs/Storage/VNETs/Key Vaults)\n// Severity: High\n// Tactics : Impact, DefenseEvasion\n// MITRE   : T1485, T1562\n// Freq    : PT1H   Period: PT3H\n//==========================================================================================\n\nlet LookupWindow = 1h;\nlet DeleteThreshold = 10;\nlet ResourceTypeThreshold = 2;\nlet KnownIaCPatterns = dynamic([\"terraform\", \"bicep\", \"pipeline\", \"github\", \"pulumi\", \"devops\", \"arm-deployment\", \"cleanup\", \"deprovisioner\"]);\nlet AzurePlatformIPs = dynamic([\"168.63.\", \"169.254.\"]);\n// Identities with established high-volume deletion patterns (14-day baseline)\nlet KnownBulkDeleters = AzureActivity\n    | where TimeGenerated between (ago(14d) .. ago(2h))\n    | where OperationNameValue has \"DELETE\"\n    | where ActivityStatusValue =~ \"Success\"\n    | summarize DailyDeletes = count() by Caller, Day = bin(TimeGenerated, 1d)\n    | summarize AvgDailyDeletes = avg(DailyDeletes), DaysActive = dcount(Day) by Caller\n    | where AvgDailyDeletes >= 10 and DaysActive >= 5\n    | distinct Caller;\n// Critical resource DELETE operations (last 2h to capture full 1h windows)\nlet CriticalDeletes = AzureActivity\n    | where TimeGenerated > ago(2h)\n    | where ActivityStatusValue =~ \"Success\"\n    | where OperationNameValue has \"DELETE\"\n    | where OperationNameValue has_any (\n        \"MICROSOFT.NETWORK/NETWORKSECURITYGROUPS\",\n        \"MICROSOFT.COMPUTE/VIRTUALMACHINES\",\n        \"MICROSOFT.STORAGE/STORAGEACCOUNTS\",\n        \"MICROSOFT.NETWORK/VIRTUALNETWORKS\",\n        \"MICROSOFT.NETWORK/SUBNETS\",\n        \"MICROSOFT.COMPUTE/DISKS\",\n        \"MICROSOFT.KEYVAULT/VAULTS\",\n        \"MICROSOFT.NETWORK/APPLICATIONGATEWAYS\",\n        \"MICROSOFT.NETWORK/LOADBALANCERS\"\n    )\n    | where not(tolower(Caller) has_any (KnownIaCPatterns))\n    | where isnotempty(CallerIpAddress)\n    | where not(CallerIpAddress has_any (AzurePlatformIPs))\n    | where Caller !in (KnownBulkDeleters);\n// Aggregate per caller/IP in 1-hour tumbling windows\nlet DeleteBursts = CriticalDeletes\n    | summarize\n        DeleteCount = count(),\n        DistinctResourceTypes = dcount(tostring(split(OperationNameValue, \"/\")[1])),\n        DeletedResources = make_set(ResourceId, 20),\n        Operations = make_set(OperationNameValue, 10),\n        ResourceGroups = make_set(ResourceGroup, 5),\n        SubscriptionIds = make_set(SubscriptionId, 5),\n        CallerIP = any(CallerIpAddress),\n        SourceIPs = make_set(CallerIpAddress, 5),\n        FirstDelete = min(TimeGenerated),\n        LastDelete = max(TimeGenerated)\n        by Caller, bin(TimeGenerated, LookupWindow)\n    | where DeleteCount >= DeleteThreshold\n    | where DistinctResourceTypes >= ResourceTypeThreshold;\n// Enrich: correlate with SigninLogs for suspicious human sign-ins\nlet UserSigninContext = SigninLogs\n    | where TimeGenerated > ago(3h)\n    | where isnotempty(IPAddress)\n    | project\n        SigninTime = TimeGenerated,\n        UserPrincipalName,\n        SigninIP = IPAddress,\n        UserDisplayName,\n        RiskLevelAggregated,\n        RiskState,\n        ConditionalAccessStatus,\n        Location,\n        AppDisplayName\n    | extend IsRisky = RiskLevelAggregated in (\"high\", \"medium\") or RiskState =~ \"atRisk\";\n// Enrich: correlate with SP sign-ins\nlet SPSigninContext = AADServicePrincipalSignInLogs\n    | where TimeGenerated > ago(3h)\n    | where isnotempty(IPAddress)\n    | project\n        SPSigninTime = TimeGenerated,\n        ServicePrincipalName,\n        ServicePrincipalId,\n        SPSigninIP = IPAddress,\n        SPConditionalAccessStatus = ConditionalAccessStatus,\n        SPResultType = ResultType;\nDeleteBursts\n| join kind=leftouter (\n    UserSigninContext\n    | summarize\n        UserSigninCount = count(),\n        SigninLocations = make_set(Location, 3),\n        SigninApps = make_set(AppDisplayName, 3),\n        MaxRisk = max(RiskLevelAggregated),\n        HasRiskySignin = max(toint(IsRisky)),\n        UserNames = make_set(UserPrincipalName, 3)\n        by SigninIP\n  ) on $left.CallerIP == $right.SigninIP\n| join kind=leftouter (\n    SPSigninContext\n    | summarize\n        SPSigninCount = count(),\n        SigninSPs = make_set(ServicePrincipalName, 3),\n        CABypassCount = countif(SPConditionalAccessStatus has_any (\"failure\", \"notApplied\"))\n        by SPSigninIP\n  ) on $left.CallerIP == $right.SPSigninIP\n| extend\n    HasSigninCorroboration = isnotempty(UserSigninCount) or isnotempty(SPSigninCount),\n    SigninRiskLevel = coalesce(MaxRisk, \"unknown\"),\n    AccountName = tostring(split(Caller, \"@\")[0]),\n    AccountUPNSuffix = tostring(split(Caller, \"@\")[1])\n| project-away SigninIP, SPSigninIP",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/76ea40272a4f51f4db6260638a8b92623ad26f0c/Use%20Cases%20Threat%20Hunting/AzureCustomDetections/AnalyticRules/RULE-11_Mass-Resource-Deletion.kql",
+    "filename": "RULE-11_Mass-Resource-Deletion.kql",
+    "collected_at": "2026-06-23T03:15:16.612889+00:00"
+  },
+  {
     "id": "c170ec8d59e2",
     "title": "============================================================",
     "description": "Hunt: Suspicious PowerShell Commandlet Execution MITRE: T1059.001 | T1482 | T1069 | T1087 | T1003 | T1021 | T1053 Uses DeviceEvents ActionType=PowerShellCommand for cmdlet-level ============================================================",
