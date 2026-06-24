@@ -1,0 +1,14 @@
+// Source: https://github.com/samtimur/ARMAzLandingZ
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent 
+| where EventID == 4650 or EventID == 4651
+| extend ed = parse_xml(EventData).EventData.Data
+| mv-apply ed on 
+(
+    where ed['@Name'] == 'MMIntegrityAlg'
+    | project MMIntegrityAlg = ed['#text']
+)
+| where MMIntegrityAlg != "%%8242" and MMIntegrityAlg != "%%8243" 
+| project TimeGenerated, Computer, Activity, MMIntegrityAlg

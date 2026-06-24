@@ -1,0 +1,9 @@
+// Source: https://github.com/ava-orange-education/Ultimate-Microsoft-XDR-for-Full-Spectrum-Cyber-Defence
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated between (ago(7d) .. now())
+| extend LoginType = case(EventID == 50126, "Failed", EventID == 4624, "Successful", "Other")
+| summarize LoginCount = count() by LoginType
+| project LoginType, LoginCount 

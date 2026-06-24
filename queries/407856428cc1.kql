@@ -1,0 +1,16 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+let NationStateIP = 
+SigninLogs
+| where TimeGenerated > ago(90d)
+| where RiskEventTypes_V2 has "estsNationStateIP"
+| project IPAddress;
+BehaviorAnalytics
+| where SourceIPAddress has_any(NationStateIP)
+| where DevicesInsights.ThreatIntelIndicatorDescription has "Storm-1575"
+| project TimeGenerated, UserPrincipalName, ActivityType, 
+SourceIPAddress, SourceIPLocation, DevicesInsights.ThreatIntelIndicatorDescription
+
+// MITRE ATT&CK

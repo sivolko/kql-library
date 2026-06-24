@@ -1,0 +1,7 @@
+// Source: https://github.com/chadmcox/Entra_ID
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago(90d)
+| where OperationName == "ConfirmSafe"

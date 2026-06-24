@@ -1,0 +1,9 @@
+// Source: https://github.com/jsmallwood/LogAnalyticsAnalysis
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(31d)
+| where _IsBillable == true
+| distinct EventID, Activity, Channel, EventSourceName
+| project EventID, Activity, Channel, EventSourceName

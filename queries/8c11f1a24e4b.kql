@@ -1,0 +1,21 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timerange=180d;
+let timeframe=45d;
+SigninLogs
+| where TimeGenerated > ago(timerange)
+| where UserType == "Guest" or UserPrincipalName contains "#ext#"
+| where ResultType == 0
+| summarize arg_max(TimeGenerated, *) by UserPrincipalName
+| join kind = leftanti  
+    (
+    SigninLogs
+    | where TimeGenerated > ago(timeframe)
+    | where UserType == "Guest" or UserPrincipalName contains "#ext#"
+    | where ResultType == 0
+    | summarize arg_max(TimeGenerated, *) by UserPrincipalName
+    )
+    on UserPrincipalName
+| project UserPrincipalName

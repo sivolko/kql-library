@@ -1,0 +1,37 @@
+// Source: https://github.com/ChrFrohn/KQL
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where AccountType == "User" 
+| where EventID in (4728, 4729, 4732, 4733, 4756, 4757)
+| parse MemberName with * 'CN=' Target ',OU=' *
+| extend Action = case(
+    EventID in (4728, 4756, 4732), "Add",
+    EventID in (4729, 4757, 4733), "Remove", 
+    "Unknown"
+)
+| extend 
+    TimeWindow = case(
+        TimeGenerated > ago(1h), "🔴 Last Hour",
+        TimeGenerated > ago(6h), "🟡 Last 6 Hours", 
+        "🟠 Last 24 Hours"
+    ),
+    ActionDisplay = case(
+        Action == "Add", "➕ Add",
+        Action == "Remove", "➖ Remove",
+        "❓ Unknown"
+    ),
+    DateFormatted = format_datetime(TimeGenerated, "yyyy-MM-dd HH:mm:ss")
+| project 
+    DateFormatted,
+    TimeWindow,
+    ActionDisplay,
+    Actor = SubjectUserName,
+    Target,
+    GroupName = TargetUserName,
+    GroupID = TargetSid,
+    TimeGenerated
+| order by TimeGenerated desc
+| project-away TimeGenerated

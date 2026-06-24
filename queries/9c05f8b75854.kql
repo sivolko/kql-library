@@ -1,0 +1,14 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago (7d)
+| where OperationName in~("Add eligible member to role in PIM completed (permanent)", "Add member to role in PIM completed (permanent)")
+| where TargetResources[2].type == "Group" or TargetResources[2].type == "User"
+| where TargetResources[0].displayName != "Member"
+| extend ObjectAdded = TargetResources[2].displayName
+| extend ChangedBy = InitiatedBy.user.userPrincipalName
+| extend ['Azure AD Role'] = TargetResources[0].displayName
+| parse AdditionalDetails with * 'Justification","value":"' Justification '"' *
+| project TimeGenerated,OperationName, ['Azure AD Role'], ObjectAdded, Justification, ChangedBy

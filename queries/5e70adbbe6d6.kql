@@ -1,0 +1,9 @@
+// Source: https://github.com/sbkuehn/azure-lighthouse-sentinel
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+union
+    workspace("TenantAWorkspace").SigninLogs,
+    workspace("TenantBWorkspace").SigninLogs
+| project UserPrincipalName, Location, TimeGenerated, TenantId
+| sort by UserPrincipalName asc, TimeGenerated asc

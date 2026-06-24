@@ -1,0 +1,13 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityInfo
+| where TimeGenerated > ago (21d)
+| summarize arg_max(TimeGenerated,*) by AccountUPN
+| join kind=inner(
+SigninLogs) on $left.AccountUPN==$right.UserPrincipalName
+| project SigninTime=TimeGenerated1, UserPrincipalName, AppDisplayName, ResultType, AssignedRoles, Location, UserAgent, AuthenticationRequirement, Country, City, CorrelationId
+| join kind=inner (
+AADUserRiskEvents) on CorrelationId
+| project SigninTime, UserPrincipalName, AppDisplayName, ResultType, DetectionTimingType, RiskState, RiskLevel, Location, AssignedRoles, UserAgent, AuthenticationRequirement, Country, City

@@ -1,0 +1,8 @@
+// Source: https://github.com/gennaromigliaccio/Microsoft-Sentinel
+// Collected: 2026-06-24
+// KQL Library - https://github.com/sivolko/kql-library
+
+let VIPUsers = (_GetWatchlist('VIPUsers') | distinct ["User Principal Name"]);
+SigninLogs
+| where UserPrincipalName in~ (VIPUsers)
+| project TimeGenerated, UserPrincipalName, ResultSignature, AppDisplayName
