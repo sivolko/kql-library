@@ -1,0 +1,8 @@
+// Source: https://github.com/mattiapertusati/SPLUNK-SOC-LAB
+// Collected: 2026-06-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (1102, 104)
+| extend User_Responsible = coalesce(SubjectAccount, Account, "SYSTEM/Unknown")
+| project TimeGenerated, Computer, EventID, User_Responsible, Activity

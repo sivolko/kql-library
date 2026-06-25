@@ -1,0 +1,9 @@
+// Source: https://github.com/letisiapangataa/azure-sentinel-power-bi-dashboard
+// Collected: 2026-06-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 1116  // Windows Defender malware detection
+| parse EventData with * '<Data Name="Threat Name">' ThreatName '</Data>' *
+| summarize DetectionCount = count() by ThreatName, bin(TimeGenerated, 1d)
+| order by TimeGenerated desc
