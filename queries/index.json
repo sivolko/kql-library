@@ -1,5 +1,51 @@
 [
   {
+    "id": "54f0a5335771",
+    "title": "Source: https://github.com/kaywoz/bluestuff",
+    "description": "Collected: 2026-05-12 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Identity & Access",
+    "tags": [
+      "defender",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet targetUser = \"user@example.com\"; //change target user variable here\nlet totalCount = toscalar(\n    IdentityLogonEvents\n    | where AccountUpn contains targetUser\n    | summarize count()\n);\nlet percentageCountLocation = IdentityLogonEvents\n| where AccountUpn contains targetUser\n| summarize Count = count() by Location\n| extend PercentageLocation = round(100.0 * Count / totalCount, 2)\n| extend LocationTag = iff(PercentageLocation >= 10, \"Majority\", \"Minority\")\n| project Location, Count, PercentageLocation, LocationTag\n;\nlet percentageCountIP = IdentityLogonEvents\n| where AccountUpn contains targetUser\n| summarize Count = count() by IPAddress\n| extend PercentageIP = round(100.0 * Count / totalCount, 2)\n| extend IPTag = iff(PercentageIP >= 10, \"Majority\", \"Minority\")\n| project IPAddress, Count, PercentageIP, IPTag\n;\nlet mainSearch = IdentityLogonEvents\n| where AccountUpn contains targetUser\n| extend d = parse_json(AdditionalFields)\n| extend SuccessCloudService = tostring(d[\"ARG.CLOUD_SERVICE\"])\n| extend FailCloudService = tostring(d[\"TO.CLOUD_SERVICE\"])\n| extend CloudService = coalesce(SuccessCloudService, FailCloudService)\n;\nmainSearch\n| join kind=leftouter (\n    percentageCountLocation\n) on Location\n| join kind=leftouter (\n    percentageCountIP\n) on IPAddress\n| extend Flag = case(\nActionType contains \"fail\" and OSPlatform contains \"unknown\" and LocationTag contains \"minority\" and ISP !contains \"Zscalerserver\", \"RED - location minority\",\nActionType contains \"fail\" and OSPlatform contains \"unknown\" and LocationTag contains \"majority\" and ISP !contains \"Zscalerserver\", \"Yellow - location majority\",\nActionType contains \"fail\" and OSPlatform contains \"unknown\" and IPTag contains \"minority\" and ISP !contains \"Zscalerserver\", \"WARN - IP minority\",\n\"Green - no indicators\")\n| project Timestamp, Flag, ActionType, FailureReason, CloudService, OSPlatform, IPAddress, Location, ISP \n| sort by Timestamp",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/67e2a5e5b3260e546558d9d7ddd529853cd3959b/queries/48dcc148cb90.kql",
+    "filename": "48dcc148cb90.kql",
+    "collected_at": "2026-06-26T03:16:18.838057+00:00"
+  },
+  {
+    "id": "ce82c387f2f6",
+    "title": "Find processes that performed LDAP authentication with cleartext passwords",
+    "description": "Find processes that performed LDAP authentication with cleartext passwords",
+    "category": "Identity & Access",
+    "tags": [
+      "defender",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/noakup/AzMonLogsAgent\n// Collected: 2026-06-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nIdentityLogonEvents\n| where Protocol == \"LDAP\" //and isnotempty(AccountName)\n| project LogonTime = Timestamp, DeviceName, Application, ActionType, LogonType //,AccountName\n| join kind=inner (\nDeviceNetworkEvents\n| where ActionType == \"ConnectionSuccess\"\n| extend DeviceName = toupper(trim(@\"\\..*$\",DeviceName))\n| where RemotePort == \"389\"\n| project NetworkConnectionTime = Timestamp, DeviceName, AccountName = InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine\n) on DeviceName\n| where LogonTime - NetworkConnectionTime between (-2m .. 2m)\n| project Application, LogonType, ActionType, LogonTime, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine //, AccountName\n| limit 100",
+    "source_repo": "noakup/AzMonLogsAgent",
+    "source_url": "https://github.com/noakup/AzMonLogsAgent/blob/4ffee16f14276a9b0526d468ad3b38b0345ea759/NGSchema/Sentinel/KQL/LDAPAuthenticationWithCleartextPasswordsQuery.kql",
+    "filename": "LDAPAuthenticationWithCleartextPasswordsQuery.kql",
+    "collected_at": "2026-06-26T03:16:17.395788+00:00"
+  },
+  {
+    "id": "6531bb2ecd1b",
+    "title": "Identity Sign-In Activity",
+    "description": "Identity Sign-In Activity",
+    "category": "Identity & Access",
+    "tags": [
+      "defender",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/dferrell30/ShadowTraceOps-CommunityEdition\n// Collected: 2026-06-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nIdentityLogonEvents\n| project Timestamp, AccountUpn, IPAddress, Location, ResultType",
+    "source_repo": "dferrell30/ShadowTraceOps-CommunityEdition",
+    "source_url": "https://github.com/dferrell30/ShadowTraceOps-CommunityEdition/blob/692af693be0dcecd443b053a5e59f741802be1c6/Toolkit/Config/KQL/DeepDive/03-identity-sign-in-activity.kql",
+    "filename": "03-identity-sign-in-activity.kql",
+    "collected_at": "2026-06-26T03:16:16.495213+00:00"
+  },
+  {
     "id": "1bd5515e7822",
     "title": "Source: https://github.com/EEN421/KQL-Queries",
     "description": "Collected: 2026-05-15 KQL Library - https://github.com/sivolko/kql-library",

@@ -1,0 +1,17 @@
+// Source: https://github.com/noakup/AzMonLogsAgent
+// Collected: 2026-06-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| where Protocol == "LDAP" //and isnotempty(AccountName)
+| project LogonTime = Timestamp, DeviceName, Application, ActionType, LogonType //,AccountName
+| join kind=inner (
+DeviceNetworkEvents
+| where ActionType == "ConnectionSuccess"
+| extend DeviceName = toupper(trim(@"\..*$",DeviceName))
+| where RemotePort == "389"
+| project NetworkConnectionTime = Timestamp, DeviceName, AccountName = InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine
+) on DeviceName
+| where LogonTime - NetworkConnectionTime between (-2m .. 2m)
+| project Application, LogonType, ActionType, LogonTime, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine //, AccountName
+| limit 100

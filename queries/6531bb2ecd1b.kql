@@ -1,0 +1,6 @@
+// Source: https://github.com/dferrell30/ShadowTraceOps-CommunityEdition
+// Collected: 2026-06-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| project Timestamp, AccountUpn, IPAddress, Location, ResultType
