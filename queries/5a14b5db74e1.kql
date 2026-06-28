@@ -1,0 +1,10 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation == "New-RoleGroup"
+| where RecordType == "ExchangeAdmin"
+| parse Parameters with * 'Name","Value":"' RoleName '"' *
+| parse Parameters with * 'Roles","Value":"' PermissionsAdded '"' *
+| project TimeGenerated, Actor=UserId, RoleName, PermissionsAdded

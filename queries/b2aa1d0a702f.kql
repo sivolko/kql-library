@@ -1,0 +1,192 @@
+// Source: https://github.com/MitchellGulledge3/zscaler-sentinel-mcp-tools
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 24h;
+let SourceUserName = tolower(trim(@" ", "{SourceUserName}"));
+let CommonSecurityLogSource = union isfuzzy=true (datatable(TimeGenerated:datetime, DeviceVendor:string, DeviceProduct:string)[]), CommonSecurityLog;
+let ZPA_CL_Source = union isfuzzy=true (datatable(TimeGenerated:datetime, Message:string)[]), ZPA_CL;
+let ZIA =
+    CommonSecurityLogSource
+    | where TimeGenerated >= ago(lookback)
+    | where DeviceVendor =~ "Zscaler"
+    | where DeviceProduct in~ ("NSSWeblog", "NSSDNSlog", "NSSFWlog", "NSSTunnelLog", "NSSCASBLog", "NSSCASBEmailDLPLog", "NSSEndpointDLPLog")
+        or DeviceProduct startswith "NSS"
+    | extend ZIAUser = tolower(tostring(coalesce(
+        column_ifexists("SourceUserName", ""),
+        column_ifexists("DestinationUserName", ""),
+        column_ifexists("SourceUserID", ""),
+        column_ifexists("DestinationUserID", "")
+    )))
+    | where isnotempty(SourceUserName) and (ZIAUser == SourceUserName or ZIAUser contains SourceUserName)
+    | extend AdditionalExtensionsText = tostring(column_ifexists("AdditionalExtensions", ""))
+    | extend
+        UrlCategory = coalesce(
+            extract(@"(?i)(?:^|;)ZscalerNSSWeblogURLClass=([^;]*)", 1, AdditionalExtensionsText),
+            extract(@"(?i)(?:^|;)urlclass=([^;]*)", 1, AdditionalExtensionsText),
+            tostring(column_ifexists("DeviceCustomString2", ""))
+        ),
+        DlpDictionary = coalesce(
+            extract(@"(?i)(?:^|;)ZscalerNSSWeblogDLPDictionaries=([^;]*)", 1, AdditionalExtensionsText),
+            extract(@"(?i)(?:^|;)dlpdicthitcount=([^;]*)", 1, AdditionalExtensionsText),
+            tostring(column_ifexists("DeviceCustomString1", ""))
+        ),
+        AppRiskScore = todouble(extract(@"(?i)(?:^|;)app_risk_score=([^;]*)", 1, AdditionalExtensionsText)),
+        ThreatSeverity = coalesce(
+            extract(@"(?i)(?:^|;)threatseverity=([^;]*)", 1, AdditionalExtensionsText),
+            tostring(column_ifexists("DeviceCustomString3", ""))
+        ),
+        MalwareClass = coalesce(
+            extract(@"(?i)(?:^|;)malwareclass=([^;]*)", 1, AdditionalExtensionsText),
+            tostring(column_ifexists("DeviceCustomString4", ""))
+        ),
+        RuleType = extract(@"(?i)(?:^|;)ruletype=([^;]*)", 1, AdditionalExtensionsText)
+    | extend
+        ZIAAction = tostring(column_ifexists("DeviceAction", "")),
+        ZIAActivity = tostring(column_ifexists("Activity", "")),
+        Destination = coalesce(
+            tostring(column_ifexists("DestinationHostName", "")),
+            tostring(column_ifexists("RequestURL", "")),
+            tostring(column_ifexists("DestinationIP", ""))
+        ),
+        SourceIP = tostring(column_ifexists("SourceIP", "")),
+        BytesOut = tolong(coalesce(column_ifexists("SentBytes", 0), column_ifexists("BytesOut", 0))),
+        BytesIn = tolong(coalesce(column_ifexists("ReceivedBytes", 0), column_ifexists("BytesIn", 0)))
+    | extend
+        IsBlocked = ZIAAction in~ ("Blocked", "Denied", "Quarantined") or ZIAActivity has_any ("Blocked", "Denied"),
+        IsDlp = isnotempty(DlpDictionary) and DlpDictionary !in~ ("None", "NA", "N/A", "-"),
+        IsThreat = UrlCategory has_any ("Malware", "Phishing", "Botnet", "Security Risk") or ThreatSeverity !in ("", "0", "None") or MalwareClass !in~ ("", "None"),
+        IsRiskyWeb = coalesce(AppRiskScore, 0.0) >= 4.0 or UrlCategory has_any ("Newly Registered", "Suspicious", "Security Risk")
+    | summarize
+        ZIAEvents = count(),
+        ZIABlocked = countif(IsBlocked),
+        ZIAThreatEvents = countif(IsThreat),
+        ZIADlpEvents = countif(IsDlp),
+        ZIARiskyEvents = countif(IsRiskyWeb),
+        ZIABytesOut = sum(BytesOut),
+        ZIABytesIn = sum(BytesIn),
+        ZIADestinations = make_set(Destination, 10),
+        ZIAUrlCategories = make_set(UrlCategory, 10),
+        ZIARuleTypes = make_set(RuleType, 10),
+        ZIASourceIPs = make_set(SourceIP, 10),
+        ZIAFirstSeen = min(TimeGenerated),
+        ZIALastSeen = max(TimeGenerated)
+        by UserKey = ZIAUser;
+let ZPA =
+    ZPA_CL_Source
+    | where TimeGenerated >= ago(lookback)
+    | extend CleanMessage = trim_start("-", tostring(column_ifexists("Message", "")))
+    | parse-kv CleanMessage as (
+        Username:string,
+        User:string,
+        SrcIpAddr:string,
+        ClientPublicIP:string,
+        ClientPrivateIP:string,
+        Application:string,
+        AppGroup:string,
+        DstDomainHostname:string,
+        DstIpAddr:string,
+        ConnectionStatus:string,
+        SessionStatus:string,
+        InternalReason:string,
+        Policy:string,
+        Server:string,
+        ServerIP:string,
+        Hostname:string,
+        NetworkSessionId:string,
+        SessionID:string,
+        ZENTotalBytesRxClient:string,
+        ZENTotalBytesTxClient:string,
+        TotalBytesRx:string,
+        TotalBytesTx:string
+    ) with (pair_delimiter=",", kv_delimiter=":", quote='"')
+    | extend ZPAUser = tolower(tostring(coalesce(
+        Username,
+        User,
+        column_ifexists("Username", ""),
+        column_ifexists("User", "")
+    )))
+    | where isnotempty(SourceUserName) and (ZPAUser == SourceUserName or ZPAUser contains SourceUserName)
+    | extend
+        ZPAAction = coalesce(ConnectionStatus, SessionStatus, tostring(column_ifexists("ConnectionStatus", ""))),
+        ZPAReason = coalesce(InternalReason, tostring(column_ifexists("InternalReason", ""))),
+        ZPAApplication = coalesce(Application, AppGroup, DstDomainHostname, Server, Hostname),
+        ZPADestination = coalesce(DstDomainHostname, Server, Hostname, DstIpAddr, ServerIP),
+        ZPASourceIP = coalesce(SrcIpAddr, ClientPrivateIP, ClientPublicIP),
+        ZPABytesRx = tolong(coalesce(ZENTotalBytesRxClient, TotalBytesRx, "0")),
+        ZPABytesTx = tolong(coalesce(ZENTotalBytesTxClient, TotalBytesTx, "0"))
+    | extend
+        IsZPABlocked = ZPAAction has_any ("fail", "deny", "blocked", "closed", "timeout") or ZPAReason has_any ("deny", "blocked", "policy"),
+        IsZPASuccess = ZPAAction has_any ("open", "connected", "success", "allow")
+    | summarize
+        ZPAEvents = count(),
+        ZPAFailures = countif(IsZPABlocked),
+        ZPASuccesses = countif(IsZPASuccess),
+        ZPAApplications = make_set(ZPAApplication, 10),
+        ZPADestinations = make_set(ZPADestination, 10),
+        ZPASourceIPs = make_set(ZPASourceIP, 10),
+        ZPAPolicies = make_set(Policy, 10),
+        ZPASessions = dcount(coalesce(NetworkSessionId, SessionID)),
+        ZPABytesRx = sum(ZPABytesRx),
+        ZPABytesTx = sum(ZPABytesTx),
+        ZPAFirstSeen = min(TimeGenerated),
+        ZPALastSeen = max(TimeGenerated)
+        by UserKey = ZPAUser;
+ZIA
+| join kind=fullouter ZPA on UserKey
+| extend UserName = coalesce(UserKey, UserKey1, SourceUserName)
+| extend
+    ZIAEvents = coalesce(ZIAEvents, 0),
+    ZIABlocked = coalesce(ZIABlocked, 0),
+    ZIAThreatEvents = coalesce(ZIAThreatEvents, 0),
+    ZIADlpEvents = coalesce(ZIADlpEvents, 0),
+    ZIARiskyEvents = coalesce(ZIARiskyEvents, 0),
+    ZIABytesOut = coalesce(ZIABytesOut, 0),
+    ZPAEvents = coalesce(ZPAEvents, 0),
+    ZPAFailures = coalesce(ZPAFailures, 0),
+    ZPASuccesses = coalesce(ZPASuccesses, 0),
+    ZPASessions = coalesce(ZPASessions, 0),
+    ZPABytesTx = coalesce(ZPABytesTx, 0)
+| extend
+    ZIASignalScore = (ZIAThreatEvents * 5) + (ZIADlpEvents * 4) + (ZIARiskyEvents * 2) + ZIABlocked,
+    ZPASignalScore = (ZPAFailures * 4) + (ZPASessions * 2) + iff(ZPAEvents > 0, 3, 0),
+    CrossSourceBonus = iff(ZIAEvents > 0 and ZPAEvents > 0, 10, 0)
+| extend CorrelationScore = ZIASignalScore + ZPASignalScore + CrossSourceBonus
+| extend Verdict = case(
+    ZIAEvents == 0 and ZPAEvents == 0, "No matching ZIA or ZPA activity in the last 24h",
+    CorrelationScore >= 40, "High - correlated ZIA threat/DLP activity and ZPA private-app access",
+    CorrelationScore >= 20, "Medium - review ZIA activity alongside ZPA access",
+    "Low - user activity observed with limited correlated risk"
+)
+| project
+    UserName,
+    Verdict,
+    CorrelationScore,
+    ZIAEvents,
+    ZIABlocked,
+    ZIAThreatEvents,
+    ZIADlpEvents,
+    ZIARiskyEvents,
+    ZIABytesOut,
+    ZIADestinations,
+    ZIAUrlCategories,
+    ZIARuleTypes,
+    ZIASourceIPs,
+    ZPAEvents,
+    ZPAFailures,
+    ZPASuccesses,
+    ZPASessions,
+    ZPAApplications,
+    ZPADestinations,
+    ZPAPolicies,
+    ZPASourceIPs,
+    ZPABytesTx,
+    FirstSeen = min_of(ZIAFirstSeen, ZPAFirstSeen),
+    LastSeen = max_of(ZIALastSeen, ZPALastSeen),
+    RecommendedActions = case(
+        Verdict startswith "High", "Open an incident, review ZIA policy hits, validate ZPA private-app access, revoke sessions if activity is unexpected.",
+        Verdict startswith "Medium", "Review destinations, private applications, and policy outcomes before tuning ZIA/ZPA controls.",
+        Verdict startswith "Low", "No immediate action; keep as context for the user's 24h activity.",
+        "Confirm the username format and that ZIA/ZPA connectors are ingesting data."
+    )
+| order by CorrelationScore desc

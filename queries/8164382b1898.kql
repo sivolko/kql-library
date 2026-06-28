@@ -1,0 +1,41 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod         = 1h;
+let OffHoursStart          = 22;    // 22:00 UTC
+let OffHoursEnd            = 6;     // 06:00 UTC
+let AccessThreshold        = 20;
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackPeriod)
+| where RecordType in ("SharePoint", "OneDrive")
+| where UserId has "#EXT#"          // guest/external account
+| where Operation in (
+    "FileAccessed", "FileDownloaded", "FileViewed",
+    "FilePreviewed", "FileCheckedOut")
+| extend HourUTC = hourofday(TimeGenerated)
+| where HourUTC >= OffHoursStart or HourUTC < OffHoursEnd
+| summarize
+    AccessCount     = count(),
+    FilesAccessed   = make_set(SourceFileName, 15),
+    SiteURLs        = make_set(SiteUrl, 5),
+    ClientIPs       = make_set(ClientIP, 5),
+    HoursActive     = make_set(HourUTC, 10)
+    by UserId
+| where AccessCount >= AccessThreshold
+| extend GuestDomain = tostring(extract(@"#EXT#@(.+)", 1, UserId))
+| extend AlertSeverity = case(
+    AccessCount >= 100, "High",
+    AccessCount >= 50,  "Medium",
+    "Low")
+| project
+    TimeGenerated  = now(),
+    UserId,
+    GuestDomain,
+    AccessCount,
+    FilesAccessed,
+    SiteURLs,
+    ClientIPs,
+    HoursActive,
+    AlertSeverity

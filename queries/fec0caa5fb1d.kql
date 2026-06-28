@@ -1,0 +1,53 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod      = 1d;
+let MailboxThreshold    = 3;     // minimum distinct source mailboxes sharing same destination
+
+// Collect all new/modified forwarding rules
+let ForwardingRules = OfficeActivity
+    | where TimeGenerated > ago(LookbackPeriod)
+    | where RecordType == "ExchangeAdmin"
+    | where Operation in (
+        "New-InboxRule", "Set-InboxRule",
+        "New-TransportRule", "Set-TransportRule",
+        "Set-Mailbox", "Set-MailboxAutoReplyConfiguration")
+    | extend Params = tostring(Parameters)
+    | extend
+        ForwardingDest = coalesce(
+            extract(@"(ForwardTo|ForwardAsAttachmentTo|RedirectTo|DeliverToMailboxAndForward|ForwardingAddress|ForwardingSmtpAddress).*?([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})", 2, Params),
+            extract(@"(ForwardTo|ForwardAsAttachmentTo|RedirectTo).*?([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})", 2, Params)
+        )
+    | where isnotempty(ForwardingDest)
+    | extend
+        ForwardDomain   = tostring(split(ForwardingDest, "@")[1]),
+        IsExternal      = not(ForwardingDest has "onmicrosoft.com")
+    | where IsExternal;
+
+// Group by destination — look for same dest receiving from multiple source accounts
+ForwardingRules
+| summarize
+    SourceMailboxCount  = dcount(UserId),
+    SourceMailboxes     = make_set(UserId, 20),
+    Operations          = make_set(Operation, 10),
+    ForwardDomain       = any(ForwardDomain),
+    ClientIPs           = make_set(ClientIP, 10),
+    FirstSeen           = min(TimeGenerated),
+    LastSeen            = max(TimeGenerated)
+    by ForwardingDest
+| where SourceMailboxCount >= MailboxThreshold
+| extend AlertSeverity = case(
+    SourceMailboxCount >= 10, "Critical",
+    SourceMailboxCount >= 5,  "High",
+    "Medium")
+| project
+    TimeGenerated      = LastSeen,
+    ForwardingDest,
+    ForwardDomain,
+    SourceMailboxCount,
+    SourceMailboxes,
+    Operations,
+    ClientIPs,
+    FirstSeen,
+    AlertSeverity

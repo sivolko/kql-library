@@ -1,0 +1,8 @@
+// Source: https://github.com/ErikBolme/azure-cloud-security-lab
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue contains "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS"
+| where ActivityStatusValue == "Success"
+| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, Properties

@@ -1,0 +1,43 @@
+// Source: https://github.com/javierDAW/detection-diary
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let offboarding_users = dynamic(["<add_known_offboarding_upn_1>", "<add_known_offboarding_upn_2>"]);
+let threshold_count = 100;
+let window = 1h;
+
+CloudAppEvents
+| where TimeGenerated >= ago(7d)
+| where AccountObjectId in~ (offboarding_users) or AccountUpn in~ (offboarding_users)
+| where ActionType in (
+    "FileDownloaded",
+    "FileSyncDownloadedFull",
+    "FileAccessed",
+    "FileRead",
+    "AnonymousLinkUsed",
+    "AddedToSecureLink"
+  )
+| summarize
+    EventCount = count(),
+    DistinctFiles = dcount(ObjectName),
+    FirstEvent = min(TimeGenerated),
+    LastEvent = max(TimeGenerated),
+    Applications = make_set(Application),
+    SampleFiles = make_set(ObjectName, 10)
+    by AccountUpn, bin(TimeGenerated, window)
+| where EventCount >= threshold_count
+| extend RiskScore = case(
+    EventCount >= 500, "Critical",
+    EventCount >= 200, "High",
+    EventCount >= 100, "Medium",
+    "Low"
+  )
+| project
+    WindowStart = TimeGenerated,
+    AccountUpn,
+    EventCount,
+    DistinctFiles,
+    Applications,
+    RiskScore,
+    SampleFiles
+| sort by EventCount desc

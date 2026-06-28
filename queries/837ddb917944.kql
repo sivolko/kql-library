@@ -1,0 +1,49 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ScheduledTaskPersistence = SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID in (4698, 4702)                  // Created, Modified
+| parse EventData with * "<TaskName>" TaskName "</TaskName>" *
+| parse EventData with * "<Command>" TaskCommand "</Command>" *
+| parse EventData with * "<Arguments>" TaskArgs "</Arguments>" *
+| parse EventData with * "<UserId>" TaskUser "</UserId>" *
+| where TaskCommand has_any (
+    "powershell", "pwsh", "cmd.exe",
+    "wscript", "cscript", "mshta",
+    "regsvr32", "rundll32", "certutil",
+    "bitsadmin", "curl", "wget")
+| extend
+    EventType      = "ScheduledTask",
+    PersistDetail  = strcat(TaskName, " → ", TaskCommand, " ", TaskArgs),
+    MitreTech      = "T1053.005"
+| project
+    TimeGenerated, Computer, Account, EventID,
+    EventType, TaskName, TaskCommand, TaskArgs,
+    TaskUser, PersistDetail, MitreTech;
+
+// Part 2: Registry Run Key Modifications (EventID 4657 — requires SACL)
+// Note: Requires "Audit Registry" policy enabled
+let RegistryRunKey = SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4657                          // Registry value modified
+| where ObjectName has_any (
+    "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+    "\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "\\SYSTEM\\CurrentControlSet\\Services")
+| extend
+    EventType     = "RegistryPersistence",
+    PersistDetail = strcat(ObjectName, " → ", tostring(NewValue)),
+    MitreTech     = "T1547.001"
+| project
+    TimeGenerated, Computer, Account, EventID,
+    EventType, ObjectName, PersistDetail, MitreTech;
+
+// Combine both persistence vectors
+union ScheduledTaskPersistence, RegistryRunKey
+| extend
+    RiskLevel   = "HIGH",
+    MitreTactic = "TA0003"
+| sort by TimeGenerated desc

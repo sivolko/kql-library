@@ -1,0 +1,16 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let knownapps=
+    OfficeActivity
+    | where TimeGenerated > ago(180d) and TimeGenerated < ago(7d)
+    | where OfficeWorkload == "MicrosoftTeams"
+    | where Operation == "AppInstalled"
+    | distinct AzureADAppId;
+OfficeActivity
+| where TimeGenerated > ago (7d)
+| where OfficeWorkload == "MicrosoftTeams"
+| where Operation == "AppInstalled"
+| where AzureADAppId !in (knownapps)
+| project TimeGenerated, UserId, AddonName, AzureADAppId

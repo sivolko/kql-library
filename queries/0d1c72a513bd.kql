@@ -1,0 +1,10 @@
+// Source: https://github.com/ZeroDeltaSEC/Exploring-KQL
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where DeviceName contains "<DEVICE_NAME>"
+| where ActionType startswith "ASR"
+| where InitiatingProcessCommandLine != ""snowagent.exe" -c snowagent.config  scan"
+| project TimeGenerated, DeviceName, ActionType, FileName, FolderPath, ProcessCommandLine,
+          InitiatingProcessCommandLine, AccountDomain, AccountName

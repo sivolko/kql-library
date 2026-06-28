@@ -1,0 +1,20 @@
+// Source: https://github.com/SiteQ8/M365-Defender-Hunting
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let kw_civil_id_regex = @"\b[123]\d{11}\b";
+union isfuzzy=true
+(
+    DeviceProcessEvents
+    | project TimeGenerated, TableName="DeviceProcessEvents", Host=DeviceName, Text=tostring(ProcessCommandLine)
+),
+(
+    DeviceEvents
+    | project TimeGenerated, TableName="DeviceEvents", Host=DeviceName, Text=tostring(AdditionalFields)
+),
+(
+    EmailEvents
+    | project TimeGenerated, TableName="EmailEvents", Host=NetworkMessageId, Text=strcat(SenderFromAddress, " ", Subject)
+)
+| where Text matches regex kw_civil_id_regex
+| extend KuwaitCivilID = extract(kw_civil_id_regex, 0, Text)

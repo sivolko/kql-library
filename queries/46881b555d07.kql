@@ -1,0 +1,101 @@
+// Source: https://github.com/cyb-sehgal/Microsoft-Sentinel-SIEM
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(7d)
+
+
+// ── 2. Detect New Process Creation ────────────────────────────
+// EventID 4688 = A new process has been created
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(3d)
+
+
+// ── 3. Count Process Creation Events ──────────────────────────
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(3d)
+| count
+
+
+// ── 4. Summarize Process Events by Computer ───────────────────
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(3d)
+| summarize count() by Computer
+
+
+// ── 5. Render Events as Timechart ─────────────────────────────
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(3d)
+| summarize count() by bin(TimeGenerated, 1h)
+| render timechart
+
+
+// ── 6. Render Events as Barchart ──────────────────────────────
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(3d)
+| summarize count() by Computer
+| render barchart
+
+
+// ── 7. Project Specific Columns ───────────────────────────────
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(3d)
+| project TimeGenerated, Computer, Account, CommandLine
+
+
+// ── 8. Distinct Accounts Creating Processes ───────────────────
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(3d)
+| distinct Account
+
+
+// ── 9. Order Events Ascending ─────────────────────────────────
+SecurityEvent
+| where EventID == "4264"
+| summarize count() by Account
+| order by Account asc
+
+
+// ── 10. Entra ID — Detect New User Created ────────────────────
+// Hunt for user creation events in Entra ID (Azure AD) Audit Logs
+// MITRE ATT&CK: Persistence > Create Account > Cloud Account (T1136.003)
+AuditLogs
+| where OperationName == "Add user"
+
+
+// ── 11. Entra ID — Detect User Deletion ───────────────────────
+// Hunt for user deletion events in Entra ID Audit Logs
+// MITRE ATT&CK: Defense Evasion > Valid Accounts > Cloud Accounts (T1078.004)
+AuditLogs
+| where OperationName == "Delete user"
+
+
+// ── 12. Verify Threat Intelligence Indicators ─────────────────
+ThreatIntelligenceIndicator
+| take 100
+
+
+// ── 13. Check Threat Intelligence Indicators Detail ───────────
+ThreatIntelIndicators
+| take 50
+
+
+// ── 14. Non-Interactive Sign-In Logs ──────────────────────────
+// Verify Entra ID ingestion via AAD Non-Interactive Sign-In Logs
+AADNonInteractiveUserSignInLogs
+| take 100
+
+
+// ── 15. Summarize Security Events with Limit ──────────────────
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(3d)
+| take 10

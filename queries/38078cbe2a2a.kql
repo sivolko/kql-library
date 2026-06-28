@@ -1,0 +1,107 @@
+// Source: https://github.com/azdabat/Minimum-Truth-Detection-Framework-ADX-Validated-Composite-Rules
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 30d;
+
+// Adjust to match your org naming conventions (example)
+let ApprovedNamingPattern = @"^ACME-(DC|SVC|SQL|WIN|LAP|ADMIN)-\d{2}$";
+
+// 1) Baseline device list from MDE (inventory + onboarding state)
+let MDEInventory =
+    DeviceInfo
+    | where Timestamp >= ago(lookback)
+    | summarize arg_max(Timestamp, *) by DeviceId
+    | project
+        MDE_DeviceId = DeviceId,
+        DeviceName,
+        OSPlatform,
+        DeviceType,
+        OnboardingState,
+        MDE_LastSeen = Timestamp;
+
+// 2) Devices observed anywhere in telemetry (best-effort inventory)
+//    NOTE: Some tables will not provide a consistent DeviceId. We anchor on DeviceName.
+let TelemetryDevices =
+    union isfuzzy=true
+        (DeviceNetworkEvents | project ObsTime=Timestamp, DeviceName, ObsDeviceId=DeviceId, Source="DeviceNetworkEvents"),
+        (DeviceProcessEvents | project ObsTime=Timestamp, DeviceName, ObsDeviceId=DeviceId, Source="DeviceProcessEvents"),
+        (DeviceLogonEvents   | project ObsTime=Timestamp, DeviceName, ObsDeviceId=DeviceId, Source="DeviceLogonEvents"),
+        (SecurityEvent       | project ObsTime=TimeGenerated, DeviceName=Computer, ObsDeviceId=tostring(""), Source="SecurityEvent")
+    | where isnotempty(DeviceName)
+    | summarize
+        LastObserved = max(ObsTime),
+        Sources = make_set(Source, 10),
+        ObservedDeviceIds = make_set(ObsDeviceId, 5)
+      by DeviceName;
+
+// 3) EDR-related secure configuration issues (TVM) – raises risk if present
+let EdrConfigIssues =
+    DeviceTvmSecureConfigurationAssessment
+    | where Timestamp >= ago(lookback)
+    | join kind=inner (DeviceTvmSecureConfigurationAssessmentKB) on ConfigurationId
+    | where IsCompliant == 0 and IsApplicable == 1
+    | where ConfigurationSubcategory == "EDR"
+    | summarize
+        EdrIssueCount = count(),
+        EdrIssues = make_set(ConfigurationName, 20)
+      by DeviceName;
+
+// 4) Join everything, score, and surface highest-risk candidates
+TelemetryDevices
+| extend NameOk = DeviceName matches regex ApprovedNamingPattern
+
+| join kind=leftouter MDEInventory on DeviceName
+| join kind=leftouter EdrConfigIssues on DeviceName
+
+| extend
+    IsOnboarded = iif(OnboardingState == "Onboarded", 1, 0),
+    IsUnknownToMDE = iif(isnull(MDE_DeviceId), 1, 0),
+    HasEdrIssues   = iif(coalesce(EdrIssueCount, 0) > 0, 1, 0)
+
+| extend RiskScore =
+      0
+    + iif(NameOk == false, 4, 0)
+    + iif(IsUnknownToMDE == 1, 5, 0)
+    + iif(IsOnboarded == 0, 3, 0)
+    + iif(HasEdrIssues == 1, 4, 0)
+
+| where RiskScore >= 4
+
+| extend Severity = case(
+    RiskScore >= 11, "CRITICAL",
+    RiskScore >= 8,  "HIGH",
+    "MEDIUM"
+)
+
+| extend HunterDirective = case(
+    NameOk == false and IsUnknownToMDE == 1,
+        "CRITICAL: Observed device not in MDE inventory + non-standard hostname. Validate via asset owner/network team (DHCP/CMDB/AD object). If unrecognised, isolate or block at NAC/segmentation.",
+    IsUnknownToMDE == 1 and IsOnboarded == 0,
+        "HIGH: Device appears in telemetry but missing from MDE inventory/onboarding. Treat as shadow IT or attacker-controlled until validated. Confirm ownership + enforce onboarding.",
+    NameOk == false,
+        "HIGH: Hostname breaks corporate naming standard. Check AD computer object + DHCP leases + segment. Confirm this is not spoofed/unmanaged.",
+    HasEdrIssues == 1 and IsOnboarded == 1,
+        "HIGH: Onboarded device with EDR posture gaps. Fix policy, confirm sensor health, re-check for coverage on adjacent controls.",
+    IsOnboarded == 0,
+        "MEDIUM: Device not fully onboarded. Confirm deployment status and close EDR coverage gap.",
+    "Investigate device legitimacy and ensure it is fully inventoried and covered by EDR."
+)
+
+| project
+    TimeDetected = LastObserved,
+    Severity,
+    DeviceName,
+    OSPlatform,
+    DeviceType,
+    OnboardingState,
+    MDE_DeviceId,
+    Sources,
+    NameOk,
+    IsUnknownToMDE,
+    HasEdrIssues,
+    EdrIssueCount,
+    EdrIssues,
+    RiskScore,
+    HunterDirective
+| order by RiskScore desc, TimeDetected desc

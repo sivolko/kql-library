@@ -1,0 +1,175 @@
+// Source: https://github.com/sagarm365/kql-threat-hunting-playbook
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let risky = EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where RiskLevelAggregated in (50, 100)
+| project AccountUpn, RiskTime = Timestamp;
+let cloudAnom = CloudAppEvents
+| where Timestamp > ago(7d)
+| where UncommonForUser has_any ("ActivityType", "ActionType")
+| project AccountUpn, CloudTime = Timestamp, Application, ActivityType;
+let avDet = DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType == "AntivirusDetection"
+| project AvTime = Timestamp, DeviceName, AccountName, ThreatNames;
+risky
+| join kind=inner cloudAnom on AccountUpn
+| where CloudTime between (RiskTime .. RiskTime + 2h)
+| join kind=inner avDet on $left.AccountUpn == $right.AccountName
+| where AvTime between (CloudTime .. CloudTime + 4h)
+| project RiskTime, CloudTime, AvTime, AccountUpn,
+          Application, ActivityType, DeviceName, ThreatNames
+| order by RiskTime asc
+
+// ── QUERY 2 ─────────────────────────────────────────────────
+// Risky Entra sign-in → AV detection on same device
+// MITRE: TA0001, TA0040
+// ──────────────────────────────────────────────────────────────
+let riskySignins = EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where RiskLevelAggregated in (50, 100)
+| project SigninTime = Timestamp, AccountUpn, IPAddress, DeviceName;
+let avDetections = DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType == "AntivirusDetection"
+| project AvTime = Timestamp, DeviceName, AccountName, ThreatNames;
+riskySignins
+| join kind=inner avDetections on DeviceName
+| where AvTime between (SigninTime .. SigninTime + 2h)
+| project SigninTime, AvTime, AccountUpn, DeviceName, IPAddress, ThreatNames
+
+// ── QUERY 3 ─────────────────────────────────────────────────
+// Malicious URL click → Process execution within 30 minutes
+// MITRE: TA0001, TA0002
+// ──────────────────────────────────────────────────────────────
+let clicks = UrlClickEvents
+| where Timestamp > ago(1d)
+| where ThreatTypes has_any ("Malware", "Phish")
+| project ClickTime = Timestamp, AccountUpn, Url;
+let processes = DeviceProcessEvents
+| where Timestamp > ago(1d)
+| project ProcTime = Timestamp, DeviceName, AccountUpn, FileName, ProcessCommandLine;
+clicks
+| join kind=inner (processes) on AccountUpn
+| where ProcTime between (ClickTime .. ClickTime + 30m)
+| project ClickTime, ProcTime, AccountUpn, DeviceName, Url, FileName, ProcessCommandLine
+| order by ClickTime asc, ProcTime asc
+
+// ── QUERY 4 ─────────────────────────────────────────────────
+// Cloud app risky activity within 1 hour of high-risk sign-in
+// MITRE: TA0001, TA0009
+// ──────────────────────────────────────────────────────────────
+let riskySignins = EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where RiskLevelAggregated in (50, 100)
+| project AccountObjectId, AccountUpn, RiskyTime = Timestamp;
+CloudAppEvents
+| where Timestamp > ago(7d)
+| project AccountObjectId, Timestamp, Application, ActivityType, IPAddress
+| join kind=inner riskySignins on AccountObjectId
+| where Timestamp between (RiskyTime .. RiskyTime + 1h)
+| project RiskyTime, Timestamp, AccountUpn, Application, ActivityType, IPAddress
+
+// ── QUERY 5 ─────────────────────────────────────────────────
+// Phishing email IP used for Entra sign-in
+// MITRE: TA0001
+// ──────────────────────────────────────────────────────────────
+let phishSenders = EmailEvents
+| where Timestamp > ago(7d)
+| where ThreatTypes has "Phish"
+| summarize by SenderIPv4, SenderFromDomain;
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where IPAddress in (phishSenders.SenderIPv4)
+| project Timestamp, AccountUpn, Application, IPAddress, Country, City
+
+// ── QUERY 6 ─────────────────────────────────────────────────
+// Malicious attachment delivered → Office process → child process
+// MITRE: TA0001, TA0002
+// ──────────────────────────────────────────────────────────────
+let malAttach = EmailAttachmentInfo
+| where Timestamp > ago(7d)
+| where ThreatTypes has "Malware"
+| project RecipientEmailAddress, FileName, DeliveryTime = Timestamp;
+let officeProcs = DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where FileName in~ ("winword.exe","excel.exe","powerpnt.exe","outlook.exe")
+| project ProcTime = Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine;
+malAttach
+| join kind=inner officeProcs on $left.RecipientEmailAddress endswith $right.AccountName
+| where ProcTime between (DeliveryTime .. DeliveryTime + 2h)
+| project DeliveryTime, ProcTime, RecipientEmailAddress,
+          AccountName, DeviceName, FileName, ProcessCommandLine
+
+// ── QUERY 7 ─────────────────────────────────────────────────
+// Credential access behavior → high-risk sign-in
+// MITRE: TA0006, TA0001
+// ──────────────────────────────────────────────────────────────
+let highBehaviors = BehaviorInfo
+| where Timestamp > ago(7d)
+| where Categories has "CredentialAccess" or Categories has "InitialAccess"
+| project BehaviorId, AccountUpn, StartTime, Categories, AttackTechniques;
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where RiskLevelAggregated in (50, 100)
+| join kind=inner highBehaviors on AccountUpn
+| where Timestamp between (StartTime .. StartTime + 2h)
+| project StartTime, Timestamp, AccountUpn,
+          Categories, AttackTechniques, Application
+
+// ── QUERY 8 ─────────────────────────────────────────────────
+// On-prem AD interactive logon → cloud high-risk sign-in
+// MITRE: TA0008, TA0001
+// ──────────────────────────────────────────────────────────────
+let adLogons = IdentityLogonEvents
+| where Timestamp > ago(7d)
+| where LogonType has "Interactive"
+| project ADLogonTime = Timestamp, AccountUpn, DeviceName, IPAddress;
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where RiskLevelAggregated in (50, 100)
+| join kind=inner adLogons on AccountUpn
+| where Timestamp between (ADLogonTime .. ADLogonTime + 2h)
+| project ADLogonTime, Timestamp, AccountUpn, DeviceName, IPAddress
+
+// ── QUERY 9 ─────────────────────────────────────────────────
+// Multi-signal risky user — identity + cloud + email anomalies
+// MITRE: TA0001, TA0006, TA0009
+// ──────────────────────────────────────────────────────────────
+let idAnom = EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where RiskLevelAggregated in (50, 100)
+| summarize IdAnomalies = count() by AccountUpn;
+let cloudAnom = CloudAppEvents
+| where Timestamp > ago(7d)
+| where UncommonForUser has_any ("ActivityType", "ActionType")
+| summarize CloudAnomalies = count() by AccountUpn;
+let emailAnom = UrlClickEvents
+| where Timestamp > ago(7d)
+| where ThreatTypes has_any ("Malware", "Phish")
+| summarize MaliciousClicks = count() by AccountUpn;
+idAnom
+| join kind=inner cloudAnom on AccountUpn
+| join kind=inner emailAnom on AccountUpn
+| project AccountUpn, IdAnomalies, CloudAnomalies, MaliciousClicks
+| order by (IdAnomalies + CloudAnomalies + MaliciousClicks) desc
+
+// ── QUERY 10 ────────────────────────────────────────────────
+// Devices with both many UEBA behaviors and malware detections
+// MITRE: TA0040
+// ──────────────────────────────────────────────────────────────
+let behaviorCounts = BehaviorInfo
+| where Timestamp > ago(7d)
+| summarize Behaviors = count() by DeviceId;
+let avCounts = DeviceEvents
+| where Timestamp > ago(7d)
+| where ActionType == "AntivirusDetection"
+| summarize AVDetections = count() by DeviceId;
+behaviorCounts
+| join kind=inner avCounts on DeviceId
+| join kind=inner (DeviceInfo | project DeviceId, DeviceName) on DeviceId
+| project DeviceName, Behaviors, AVDetections
+| where Behaviors > 5 and AVDetections > 2
+| order by Behaviors desc

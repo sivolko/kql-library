@@ -1,0 +1,13 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let WatchlistName = (_GetWatchlist('Your Watchlist-Alias') | project UserPrincipalName);
+SigninLogs
+    | where TimeGenerated > ago (30d)
+    | where ResultType == 0
+    | where UserPrincipalName in~(WatchlistName)
+    | distinct UserPrincipalName
+    | join kind = rightanti (WatchlistName
+    | extend UserPrincipalName = tolower(UserPrincipalName)
+) on UserPrincipalName

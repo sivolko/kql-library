@@ -1,0 +1,30 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let VulnerableEndpoint =
+DeviceTvmSoftwareVulnerabilities 
+| where CveId == "CVE-2024-43452"
+| distinct DeviceName;
+let ExeWithLP =
+DeviceFileEvents
+| where ActionType == @"FileCreated"
+| where FileName endswith ".exe"
+| invoke FileProfile("SHA1",1000)
+| where GlobalPrevalence <= 50
+| join kind=leftouter DeviceFileCertificateInfo on SHA1
+| where SignatureState == @"Unsigned"
+| distinct FileName; // An unsual low prevalence unsigned .exe created
+let EPwithCMDRun =
+DeviceEvents 
+| where InitiatingProcessCommandLine has ".exe" and InitiatingProcessCommandLine has ".dat"
+| where FileName has_any(ExeWithLP)
+| distinct DeviceName; // Command line execution with low prevalence exe and .dat file
+DeviceNetworkEvents
+| where RemotePort == "445"
+| where ActionType == "ConnectionSuccess"
+| where DeviceName has_any (EPwithCMDRun) // Successful outbound SMB connection
+| where DeviceName has_any (VulnerableEndpoint) // Not Patch - Vulnerable
+
+
+// MITRE ATT&CK

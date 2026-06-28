@@ -1,0 +1,13 @@
+// Source: https://github.com/johnB007/Defender_XDR
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let spikeStart = datetime(2026-06-09);
+let spikeEnd   = datetime(2026-06-12);
+DeviceEvents
+| where TimeGenerated between (spikeStart .. spikeEnd)
+| summarize Events  = count(),
+            Devices = dcount(DeviceName)
+    by ActionType
+| extend EventsPerDevice = round(todouble(Events) / todouble(Devices), 1)
+| top 30 by Events desc

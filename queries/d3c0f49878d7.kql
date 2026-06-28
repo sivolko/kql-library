@@ -1,0 +1,35 @@
+// Source: https://github.com/madhuperera/Microsoft_Sentinel
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod = 60d;          // covers a 30d current + 30d baseline by default
+let BinSize        = 1d;
+let TargetUser     = "";           // e.g. "jane.doe@contoso.com"; "" = all users
+let ServiceAccountUPNs = toscalar(
+    // isfuzzy=true: if the watchlist is absent the query still runs (degrades to
+    // no service-account exclusions) instead of failing. UserType + ExcludedUPNs remain.
+    union isfuzzy=true
+        (datatable(UPN:string)[]),
+        (_GetWatchlist("service-accounts") | project UPN = tostring(UPN))
+    | summarize make_set(tolower(UPN)));
+let ExcludedUPNs = dynamic(["sharepoint\\system","app@sharepoint","system@sharepoint"]);
+let MeaningfulOps = dynamic([
+    "Send","SendAs","SendOnBehalf",
+    "FileUploaded","FileModified","FileCheckedIn","FileRenamed","FileMoved","FileDownloaded",
+    "ClientViewSignaled","PageViewed",
+    "MessageSent","MessageEdited","ChatCreated","TeamCreated","ChannelAdded",
+    "MeetingParticipantDetail"]);
+OfficeActivity
+| where TimeGenerated >= ago(LookbackPeriod)
+| where UserType == "Regular"
+| where Operation in (MeaningfulOps)
+| extend UPN = tolower(tostring(UserId))
+// Exclude external / B2B guests: OfficeActivity UserType "Regular" includes guests
+// (it only separates Regular from Admin/System/App). Guest UPNs carry the "#EXT#"
+// marker. Remove this line if you want guests included.
+| where UPN !contains "#ext#"
+| where UPN !in (ExcludedUPNs) and UPN !in (ServiceAccountUPNs)
+| where TargetUser == "" or UPN == tolower(TargetUser)
+| summarize Events = count() by bin(TimeGenerated, BinSize), Workload = tostring(OfficeWorkload)
+| order by TimeGenerated asc
+| render timechart

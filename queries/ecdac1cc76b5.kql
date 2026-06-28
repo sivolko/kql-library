@@ -1,0 +1,55 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-06-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let suspiciousids=
+SigninLogs
+| where TimeGenerated > ago (1d)
+| where ResultType in (0,50199)
+| summarize Results=make_set(ResultType) by CorrelationId
+| where Results has_all (0, 50199)
+| distinct CorrelationId;
+SigninLogs
+| where CorrelationId in (suspiciousids)
+| project TimeGenerated, UserPrincipalName, Location, IPAddress, UserAgent, ResultType
+
+
+let knownusers=
+SigninLogs
+| where TimeGenerated > ago (30d) and TimeGenerated < ago(1d)
+| where ResultType in (0,50199)
+| summarize Results=make_set(ResultType) by CorrelationId, UserPrincipalName
+| where Results has_all (0, 50199)
+| distinct UserPrincipalName;
+let suspiciousids=
+SigninLogs
+| where TimeGenerated > ago (1d)
+| where ResultType in (0,50199)
+| summarize Results=make_set(ResultType) by CorrelationId, UserPrincipalName
+| where Results has_all (0, 50199)
+| where UserPrincipalName !in (knownusers)
+| distinct CorrelationId;
+SigninLogs
+| where CorrelationId in (suspiciousids)
+| project TimeGenerated, UserPrincipalName, Location, IPAddress, UserAgent, ResultType
+
+
+let suspiciousids=
+SigninLogs
+| where TimeGenerated > ago (30d) and TimeGenerated < ago(1d)
+| where ResultType in (0, 50199)
+| summarize Results=make_set(ResultType) by CorrelationId, UserPrincipalName, IPAddress
+| where Results has_all (0, 50199)
+| distinct UserPrincipalName, IPAddress
+| join kind=rightanti (
+    SigninLogs
+    | where TimeGenerated > ago (1d)
+    | where ResultType in (0, 50199)
+    | summarize Results=make_set(ResultType) by CorrelationId, UserPrincipalName, IPAddress
+    | where Results has_all (0, 50199)
+    ) 
+    on UserPrincipalName, IPAddress
+    | distinct CorrelationId;
+SigninLogs
+| where CorrelationId in (suspiciousids)
+| project TimeGenerated, UserPrincipalName, Location, IPAddress, UserAgent, ResultType
