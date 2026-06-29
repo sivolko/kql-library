@@ -1,0 +1,69 @@
+// Source: https://github.com/MBCloudTeck/NTLM-Must-Die
+// Collected: 2026-06-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4624  // Successful logon
+| extend PackageName = tostring(parse_json(EventData).PackageName)
+| extend LogonType = toint(parse_json(EventData).LogonType)
+| where PackageName in ("NTLM V1", "NTLM V2", "LM") or PackageName contains "NTLM"
+| extend 
+    Protocol = case(
+        PackageName contains "NTLM V1" or PackageName == "NTLM V1", "NTLMv1",
+        PackageName contains "NTLM V2" or PackageName == "NTLM V2", "NTLMv2",
+        PackageName == "LM", "LM (Extremely Insecure)",
+        PackageName contains "NTLM", "NTLM (Version Unknown)",
+        "Other Legacy Protocol"
+    ),
+    SecurityRating = case(
+        PackageName == "LM", "F - Critically Insecure",
+        PackageName contains "NTLM V1", "D - Highly Insecure",
+        PackageName contains "NTLM V2", "C - Moderately Insecure",
+        "Unknown"
+    ),
+    LogonTypeDescription = case(
+        LogonType == 2, "Interactive",
+        LogonType == 3, "Network",
+        LogonType == 4, "Batch",
+        LogonType == 5, "Service",
+        LogonType == 7, "Unlock",
+        LogonType == 8, "NetworkCleartext",
+        LogonType == 9, "NewCredentials",
+        LogonType == 10, "RemoteInteractive",
+        LogonType == 11, "CachedInteractive",
+        "Other"
+    )
+| summarize 
+    AuthenticationCount = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    UniqueSystems = dcount(Computer),
+    UniqueAccounts = dcount(Account),
+    UniqueSourceIPs = dcount(IpAddress),
+    LogonTypes = make_set(LogonTypeDescription)
+    by Protocol, SecurityRating
+| extend UrgentAction = case(
+    Protocol in ("LM (Extremely Insecure)", "NTLMv1"), "YES - Disable Immediately",
+    Protocol == "NTLMv2", "Schedule Remediation",
+    "Monitor"
+)
+| project 
+    Protocol,
+    SecurityRating,
+    AuthenticationCount,
+    UniqueSystems,
+    UniqueAccounts,
+    UniqueSourceIPs,
+    LogonTypes,
+    UrgentAction,
+    FirstSeen,
+    LastSeen
+| order by 
+    case(
+        SecurityRating == "F - Critically Insecure", 1,
+        SecurityRating == "D - Highly Insecure", 2,
+        SecurityRating == "C - Moderately Insecure", 3,
+        4
+    ) asc,
+    AuthenticationCount desc

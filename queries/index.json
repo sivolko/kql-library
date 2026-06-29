@@ -1,5 +1,132 @@
 [
   {
+    "id": "8079db26ab51",
+    "title": "Use Case : To detect users being added to local admin group",
+    "description": "Create a daily report of users being added to on premise Active Directory groups, summarized by group name",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/vivekrn11/AzureSentinelKQLqueries\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (7d)\n| where AccountType == \"User\"\n| where EventID in (4728, 4732, 4756, 4761, 4746, 4751)\n| project TimeGenerated, MemberName, ['Group Name']=TargetUserName, EventID, Account, Computer, EventData, Activity, MemberSid\n| parse MemberName with * 'CN=' UserAdded ',' *\n| summarize UsersAdded=make_set(UserAdded) by ['Group Name'], startofday(TimeGenerated),  EventID, Account, Computer, EventData, Activity, MemberSid\n| sort by ['Group Name'] asc, TimeGenerated desc ",
+    "source_repo": "vivekrn11/AzureSentinelKQLqueries",
+    "source_url": "https://github.com/vivekrn11/AzureSentinelKQLqueries/blob/7ea2679762c37baec3ed329361528556772bbe59/SecurityEventKQLqueries/SummaryofGroupAdditions.kql",
+    "filename": "SummaryofGroupAdditions.kql",
+    "collected_at": "2026-06-29T03:18:44.622185+00:00"
+  },
+  {
+    "id": "17d022617f9a",
+    "title": "Query: Lateral Movement Detection",
+    "description": "Description: Identifies potential lateral movement through network and remote interactive logons Author: Security Team Created: 2025-01-24 Last Modified: 2025-01-24 Version: 1.0 Severity: Medium MITRE ATT&CK: T1021 - Remote Services MITRE Tactics: Lateral Movement Data Sources: SecurityEvent",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/gearmobile1505/Cloud-Sec-Projects\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookbackTime = 24h;\nlet logonThreshold = 3;\nlet timeWindow = 1h;\n\nSecurityEvent\n| where TimeGenerated > ago(lookbackTime)\n| where EventID == 4624  // Successful logon\n| where LogonType in (3, 10)  // Network (3) or RemoteInteractive (10) logon\n| extend \n    SourceIP = tostring(IpAddress),\n    TargetAccount = tostring(TargetUserName),\n    TargetComputer = tostring(Computer),\n    LogonTypeName = case(\n        LogonType == 3, \"Network\",\n        LogonType == 10, \"RemoteInteractive\",\n        \"Other\")\n| summarize \n    LogonAttempts = count(),\n    UniqueComputers = dcount(TargetComputer),\n    TargetComputers = make_set(TargetComputer),\n    LogonTypes = make_set(LogonTypeName),\n    FirstLogon = min(TimeGenerated),\n    LastLogon = max(TimeGenerated)\n    by TargetAccount, SourceIP, bin(TimeGenerated, timeWindow)\n| where LogonAttempts > logonThreshold or UniqueComputers > 2\n| extend \n    LogonSpread = LastLogon - FirstLogon,\n    RiskScore = case(\n        UniqueComputers > 5, \"High\",\n        UniqueComputers > 3 or LogonAttempts > 10, \"Medium\", \n        \"Low\")\n| order by UniqueComputers desc, LogonAttempts desc",
+    "source_repo": "gearmobile1505/Cloud-Sec-Projects",
+    "source_url": "https://github.com/gearmobile1505/Cloud-Sec-Projects/blob/1b61731e1c9a769b9320b677ca5911a47985a3a1/sentinel-kql-queries/queries/network/lateral-movement-detection.kql",
+    "filename": "lateral-movement-detection.kql",
+    "collected_at": "2026-06-29T03:18:43.886454+00:00"
+  },
+  {
+    "id": "a2269e23ea59",
+    "title": "Function Name: ASimProcessTerminateMicrosoftSecurityEvents",
+    "description": "Description: This ASIM parser supports normalizing Windows process terminate events (event 4689) collected using the Security Events connectors, utilizing either the Log Analytics agent or the Azure Monitor Agent (AMA) and stored in the SecurityEvent table to the ASIM Process Event normalized schema.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/LaurieRhodes/PUBLIC-adx-basic\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff//\n// Function Name: ASimProcessTerminateMicrosoftSecurityEvents\n// Description: This ASIM parser supports normalizing Windows process terminate events (event 4689) collected using the Security Events connectors, utilizing either the Log Analytics agent or the Azure Monitor Agent (AMA) and stored in the SecurityEvent table to the ASIM Process Event normalized schema. \n\n// Version: \n// Last Updated: \n//\n.create-or-alter function with (skipvalidation=true) ASimProcessTerminateMicrosoftSecurityEvents(    ['disabled']:bool=false)\n{\nlet ProcessEvents=(){\n SecurityEvent\n | where not(disabled)\n // -- Filter\n | where EventID == 4689\n // -- Map\n | extend\n   // Event\n     EventCount = int(1),\n     EventVendor = \"Microsoft\",\n     EventProduct = \"Security Events\",\n     EventSchemaVersion = \"0.1.0\",\n     EventSchema = 'ProcessEvent',\n     EventStartTime = todatetime(TimeGenerated),\n     EventEndTime = todatetime(TimeGenerated),\n     EventType = \"ProcessTerminated\",\n     EventResult = 'Success',\n     EventOriginalType = tostring(EventID),\n     EventOriginalUid = EventOriginId,\n     EventResultDetails = Status,\n     EventOriginalResultDetails = Status, \n   // Device\n     DvcId = SourceComputerId,\n     DvcHostname = Computer,\n     DvcOs = \"Windows\",\n   // Users\n     ActorUserIdType = iff (SubjectUserSid <> \"S-1-0-0\", \"SID\", \"\"),\n     ActorUserId = iff (SubjectUserSid <> \"S-1-0-0\", SubjectUserSid, \"\"), \n     ActorUsername = iff (SubjectDomainName == '-', SubjectUserName, SubjectAccount),\n     ActorUsernameType = iff(SubjectDomainName == '-','Simple', 'Windows'),\n     ActorSessionId = SubjectLogonId,\n     ActorDomainName = SubjectDomainName,\n   // Processes \n     TargetProcessId = tostring(toint(ProcessId)),\n     TargetProcessName = ProcessName,\n     TargetProcessCommandLine = CommandLine,\n     TargetProcessTokenElevation = TokenElevationType,\n     Process = ProcessName\n   // Aliases\n   | extend \n     User = ActorUsername,\n     Dvc = DvcHostname,\n     Process = TargetProcessName\n }; ProcessEvents\n}",
+    "source_repo": "LaurieRhodes/PUBLIC-adx-basic",
+    "source_url": "https://github.com/LaurieRhodes/PUBLIC-adx-basic/blob/f3caf87f4eed4093d3ddbdd688e6fde74e71c48f/schema/ASIM/Parsers/ASimProcessEvent/ASimProcessTerminateMicrosoftSecurityEvents.kql",
+    "filename": "ASimProcessTerminateMicrosoftSecurityEvents.kql",
+    "collected_at": "2026-06-29T03:18:43.110924+00:00"
+  },
+  {
+    "id": "c8f26d62d17b",
+    "title": "Source: https://github.com/shayshab/Azure_Sentinel_SOC_Lab",
+    "description": "Collected: 2026-06-07 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| project TimeGenerated, Account, Computer, IpAddress, CityName, CountryName, Latitude, Longitude\n| order by TimeGenerated desc\n\n// Attacks by country (top attacking countries)\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by CountryName\n| order by count_ desc\n| take 20\n\n// Attacks by city\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by CityName, CountryName\n| order by count_ desc\n| take 15\n\n// Geographic attack timeline\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by CountryName, bin(TimeGenerated, 1h)\n| render timechart\n\n// Top attacking countries (last 7 days)\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625 and TimeGenerated > ago(7d)\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by CountryName\n| order by count_ desc\n| take 10\n\n// Attack map data for visualization\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625 and TimeGenerated > ago(24h)\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by Latitude, Longitude, CountryName, CityName\n| where isnotempty(Latitude) and isnotempty(Longitude)\n| order by count_ desc\n\n// High-risk country detection\nlet highRiskCountries = datatable(Country:string) [\n    \"Russia\",\n    \"China\", \n    \"North Korea\",\n    \"Iran\",\n    \"Syria\"\n];\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| where CountryName in (highRiskCountries)\n| order by TimeGenerated desc\n\n// Geographic attack patterns by time of day\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| extend HourOfDay = hourofday(TimeGenerated)\n| summarize count() by CountryName, HourOfDay\n| order by count_ desc\n\n// Attacks by ISP/Organization\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by ISP, Organization\n| order by count_ desc\n| take 15\n\n// Geographic distribution pie chart data\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625 and TimeGenerated > ago(7d)\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by CountryName\n| order by count_ desc\n| take 10\n| render piechart\n\n// City-level attack analysis\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by CityName, CountryName, Latitude, Longitude\n| where isnotempty(CityName)\n| order by count_ desc\n| take 20\n\n// Geographic alert query (for high-risk countries)\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| where CountryName in (\"Russia\", \"China\", \"North Korea\")\n| summarize count() by IpAddress, CountryName\n| where count_ > 5\n\n// Regional attack analysis\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| extend Region = case(\n    CountryName in (\"United States\", \"Canada\"), \"North America\",\n    CountryName in (\"United Kingdom\", \"France\", \"Germany\", \"Italy\", \"Spain\"), \"Europe\",\n    CountryName in (\"China\", \"Japan\", \"South Korea\"), \"Asia Pacific\",\n    CountryName in (\"Russia\", \"Ukraine\", \"Belarus\"), \"Eastern Europe\",\n    CountryName in (\"Brazil\", \"Argentina\", \"Chile\"), \"South America\",\n    \"Other\"\n)\n| summarize count() by Region\n| order by count_ desc\n\n// Geographic attack velocity\nlet geo = _GetWatchlist('geoip');\nSecurityEvent\n| where EventID == 4625\n| lookup geo on $left.IpAddress == $right.Network\n| summarize count() by CountryName, bin(TimeGenerated, 5m)\n| where count_ > 5\n| summarize \n    TotalBursts = count(),\n    MaxAttempts = max(count_),\n    AvgAttempts = avg(count_)\n    by CountryName\n| order by TotalBursts desc\n\n// Unknown geographic locations\nSecurityEvent\n| where EventID == 4625\n| where isempty(IpAddress) or IpAddress == \"::1\" or IpAddress == \"127.0.0.1\"\n| summarize count() by IpAddress\n| order by count_ desc ",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/0bea2fe9e55e1389e53017b17fe22bd9d57f6779/queries/0f60dd30aa28.kql",
+    "filename": "0f60dd30aa28.kql",
+    "collected_at": "2026-06-29T03:18:42.332247+00:00"
+  },
+  {
+    "id": "cdc769e70a12",
+    "title": "Securityevent Sdeletedeployedviagpoandrunrecursively",
+    "description": "| where CommandLine has_all (\"-s\", \"-r\") // Recursively",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/ep3p/Sentinel_KQL\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet query_frequency = 1h;\nlet query_lookback = 1h;\nlet query_period = query_frequency + query_lookback;\nlet join_timespan_step = 5m;\nSecurityEvent\n| where TimeGenerated > ago(query_frequency)\n| where EventID == 4688\n| where CommandLine has \"sdelete\" or Process =~ \"sdelete.exe\"\n//| where CommandLine has_all (\"-s\", \"-r\") // Recursively\n| extend bin_TimeGenerated = bin(TimeGenerated, join_timespan_step)\n| join hint.strategy=shuffle kind=inner (\n    SecurityEvent\n    | where TimeGenerated > ago(query_period)\n    | where EventID == 4688 //and Process has \"svchost.exe\"\n    | where CommandLine has_any (\"-k GPSvcGroup\", \"-s gpsvc\")\n    | extend bin_TimeGenerated = bin(TimeGenerated, join_timespan_step)\n    | project bin_TimeGenerated, Computer, NewProcessName, NewProcessId, ParentCommandLine = CommandLine, ParentParentProcessName = ParentProcessName\n    | mv-expand bin_TimeGenerated = range(bin_TimeGenerated, bin_TimeGenerated + query_lookback, join_timespan_step) to typeof(datetime)\n    ) on Computer, bin_TimeGenerated, $left.ParentProcessName == $right.NewProcessName, $left.ProcessId == $right.NewProcessId\n| project\n    TimeGenerated,\n    Computer,\n    Account,\n    AccountType,\n    Activity,\n    CommandLine,\n    NewProcessName,\n    NewProcessId,\n    ParentCommandLine,\n    ParentProcessName,\n    ParentProcessId = ProcessId,\n    ParentParentProcessName,\n    TokenElevationType,\n    SubjectLogonId",
+    "source_repo": "ep3p/Sentinel_KQL",
+    "source_url": "https://github.com/ep3p/Sentinel_KQL/blob/285874ec704cc536f7dad151a0efc5ea8c7ad20e/Queries/Azure-Sentinel/Solutions/Windows%20Security%20Events/Analytic%20Rules/SecurityEvent-SdeletedeployedviaGPOandrunrecursively.kql",
+    "filename": "SecurityEvent-SdeletedeployedviaGPOandrunrecursively.kql",
+    "collected_at": "2026-06-29T03:18:41.589096+00:00"
+  },
+  {
+    "id": "5773b5ee0147",
+    "title": "=========================================================",
+    "description": "RULE-11 | AD-LSASS-Credential-Dump Description : LSASS credential dump detection \u2014 Event 4688 (Process Creation) CommandLine patterns that indicate known LSASS dump tools or techniques: - Mimikatz sekurlsa::logonpasswords - ProcDump targeting lsass.exe - comsvcs.dll MiniDump (living-off-the-land) - TaskManager /dump (GUI dump) - SafetyKatz, PPLdump, nanodump, lsassy",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "defender"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet LookBack = 15m;\n\n// LSASS dump command line patterns\nlet LSASSPatterns = dynamic([\n    \"sekurlsa::\", \"logonpasswords\", \"lsadump::\",\n    \"procdump\", \"lsass.exe\",\n    \"comsvcs\", \"MiniDump\",\n    \"Out-Minidump\", \"Invoke-Mimikatz\",\n    \"SafetyKatz\", \"ppldump\", \"nano\",\n    \"lsass.dmp\", \"lsass.zip\",\n    \"rundll32.*comsvcs\",\n    \"taskmgr.*lsass\"\n]);\n\n// SecurityEvent-based detection (requires CommandLine logging)\nlet SE_LSASSDump = SecurityEvent\n    | where TimeGenerated > ago(LookBack)\n    | where EventID == 4688\n    | where isnotempty(CommandLine)\n    | where CommandLine has_any (LSASSPatterns)\n    | extend\n        Source      = \"SecurityEvent_4688\",\n        Actor       = SubjectUserName,\n        ActorDomain = SubjectDomainName,\n        Process     = NewProcessName,\n        CmdLine     = CommandLine,\n        Host        = Computer;\n\n// DeviceProcessEvents from MDE (richer detail)\nlet MDE_LSASSDump = DeviceProcessEvents\n    | where TimeGenerated > ago(LookBack)\n    | where ProcessCommandLine has_any (LSASSPatterns)\n        or FileName in~ (\"procdump.exe\", \"procdump64.exe\", \"nanodump.exe\",\n                          \"ppldump.exe\", \"safetykatz.exe\", \"mimikatz.exe\",\n                          \"lsassy.exe\", \"pypykatz.exe\")\n    | extend\n        Source      = \"MDE_DeviceProcessEvents\",\n        Actor       = InitiatingProcessAccountName,\n        ActorDomain = InitiatingProcessAccountDomain,\n        Process     = FileName,\n        CmdLine     = ProcessCommandLine,\n        Host        = DeviceName;\n\nunion SE_LSASSDump, MDE_LSASSDump\n| extend\n    TargetLSASS = CmdLine has \"lsass\",\n    Technique   = case(\n        CmdLine has \"sekurlsa::\",        \"Mimikatz_sekurlsa\",\n        CmdLine has \"comsvcs\",           \"comsvcs_MiniDump_LOTL\",\n        CmdLine has \"procdump\",          \"ProcDump_LSASS\",\n        CmdLine has \"Out-Minidump\",      \"PowerSploit_Out-Minidump\",\n        CmdLine has \"lsadump::\",         \"Mimikatz_lsadump\",\n        CmdLine has \"ppldump\",           \"PPLdump_PPL_Bypass\",\n        CmdLine has \"nanodump\",          \"NanoDump\",\n        \"Generic_LSASS_Access\"\n    )\n| extend\n    Severity = \"Critical\",\n    WhySuspicious = strcat(\n        \"LSASS_Dump_Pattern: \", Technique, \"; \",\n        \"Actor: \", Actor, \"; \",\n        \"CmdLine: \", CmdLine\n    )\n| project\n    TimeGenerated,\n    Severity,\n    WhySuspicious,\n    Actor,\n    ActorDomain,\n    Process,\n    Technique,\n    CmdLine,\n    Host,\n    Source\n| order by TimeGenerated desc",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/2f912e46c24f45ce6a0db4fd08c33f35deba96e6/Use%20Cases%20Threat%20Hunting/ADSecurityEvents/V2_Watchlist/AnalyticRules/RULE-11_AD-LSASS-Credential-Dump.kql",
+    "filename": "RULE-11_AD-LSASS-Credential-Dump.kql",
+    "collected_at": "2026-06-29T03:18:40.691851+00:00"
+  },
+  {
+    "id": "0f3768ea3555",
+    "title": "Comprehensive Legacy Protocol Usage Report",
+    "description": "This query identifies all legacy authentication protocols including NTLM, LM, and others Use this for a complete view of authentication security posture",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/MBCloudTeck/NTLM-Must-Die\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago(7d)\n| where EventID == 4624  // Successful logon\n| extend PackageName = tostring(parse_json(EventData).PackageName)\n| extend LogonType = toint(parse_json(EventData).LogonType)\n| where PackageName in (\"NTLM V1\", \"NTLM V2\", \"LM\") or PackageName contains \"NTLM\"\n| extend \n    Protocol = case(\n        PackageName contains \"NTLM V1\" or PackageName == \"NTLM V1\", \"NTLMv1\",\n        PackageName contains \"NTLM V2\" or PackageName == \"NTLM V2\", \"NTLMv2\",\n        PackageName == \"LM\", \"LM (Extremely Insecure)\",\n        PackageName contains \"NTLM\", \"NTLM (Version Unknown)\",\n        \"Other Legacy Protocol\"\n    ),\n    SecurityRating = case(\n        PackageName == \"LM\", \"F - Critically Insecure\",\n        PackageName contains \"NTLM V1\", \"D - Highly Insecure\",\n        PackageName contains \"NTLM V2\", \"C - Moderately Insecure\",\n        \"Unknown\"\n    ),\n    LogonTypeDescription = case(\n        LogonType == 2, \"Interactive\",\n        LogonType == 3, \"Network\",\n        LogonType == 4, \"Batch\",\n        LogonType == 5, \"Service\",\n        LogonType == 7, \"Unlock\",\n        LogonType == 8, \"NetworkCleartext\",\n        LogonType == 9, \"NewCredentials\",\n        LogonType == 10, \"RemoteInteractive\",\n        LogonType == 11, \"CachedInteractive\",\n        \"Other\"\n    )\n| summarize \n    AuthenticationCount = count(),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated),\n    UniqueSystems = dcount(Computer),\n    UniqueAccounts = dcount(Account),\n    UniqueSourceIPs = dcount(IpAddress),\n    LogonTypes = make_set(LogonTypeDescription)\n    by Protocol, SecurityRating\n| extend UrgentAction = case(\n    Protocol in (\"LM (Extremely Insecure)\", \"NTLMv1\"), \"YES - Disable Immediately\",\n    Protocol == \"NTLMv2\", \"Schedule Remediation\",\n    \"Monitor\"\n)\n| project \n    Protocol,\n    SecurityRating,\n    AuthenticationCount,\n    UniqueSystems,\n    UniqueAccounts,\n    UniqueSourceIPs,\n    LogonTypes,\n    UrgentAction,\n    FirstSeen,\n    LastSeen\n| order by \n    case(\n        SecurityRating == \"F - Critically Insecure\", 1,\n        SecurityRating == \"D - Highly Insecure\", 2,\n        SecurityRating == \"C - Moderately Insecure\", 3,\n        4\n    ) asc,\n    AuthenticationCount desc",
+    "source_repo": "MBCloudTeck/NTLM-Must-Die",
+    "source_url": "https://github.com/MBCloudTeck/NTLM-Must-Die/blob/dc84e7bfabec4d81208386227af205fc83507e61/NTLM%20resources/KQL/report-legacy-protocol-usage.kql",
+    "filename": "report-legacy-protocol-usage.kql",
+    "collected_at": "2026-06-29T03:18:39.794244+00:00"
+  },
+  {
+    "id": "88ebc206906e",
+    "title": "Create a summary of your computers and the accounts that have logged on with special privileges over the last 30 days",
+    "description": "Create a summary of your computers and the accounts that have logged on with special privileges over the last 30 days",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Gyarbij/Artemis\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (30d)\n| project TimeGenerated, EventID, Account, AccountType, PrivilegeList, Computer\n| where EventID == \"4672\"\n| where Account != \"NT AUTHORITY\\\\SYSTEM\" and Account !has \"Window Manager\"\n| where AccountType == \"User\"\n//The privilege list is stored in a string of text that we need to split\n| extend Privs=extract_all(@\"Se(.*?)Privilege\", PrivilegeList)\n//Once we retrieve the privileges from the string of text we can recreate the proper naming\n| mv-expand Privs\n| extend Privilege=strcat('Se', Privs, 'Privilege')\n| project TimeGenerated, Account, Computer, Privilege\n| summarize ['List of Privileges']=make_set(Privilege) by Computer, Account\n| sort by Computer asc  ",
+    "source_repo": "Gyarbij/Artemis",
+    "source_url": "https://github.com/Gyarbij/Artemis/blob/4ef64a4c54532e0a1155265078a96e222c4abae5/Hunting/Active%20Directory/SecurityEvent-SummarizePrivilegesAssignedonLogon.kql",
+    "filename": "SecurityEvent-SummarizePrivilegesAssignedonLogon.kql",
+    "collected_at": "2026-06-29T03:18:39.019713+00:00"
+  },
+  {
+    "id": "770711433fc5",
+    "title": "Source: https://github.com/bhavyau39/azure-honeypot-lab",
+    "description": "Collected: 2026-05-27 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-06-29\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4625\n| project TimeGenerated, Account, Computer, IpAddress = RemoteIp\n| sort by TimeGenerated desc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/0bea2fe9e55e1389e53017b17fe22bd9d57f6779/queries/23e7064faaaf.kql",
+    "filename": "23e7064faaaf.kql",
+    "collected_at": "2026-06-29T03:18:38.113485+00:00"
+  },
+  {
     "id": "4407e197e9c9",
     "title": "Source: https://github.com/robert-iw3/rnd_proto",
     "description": "Collected: 2026-05-13 KQL Library - https://github.com/sivolko/kql-library",

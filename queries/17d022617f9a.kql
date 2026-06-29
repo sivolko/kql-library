@@ -1,0 +1,36 @@
+// Source: https://github.com/gearmobile1505/Cloud-Sec-Projects
+// Collected: 2026-06-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookbackTime = 24h;
+let logonThreshold = 3;
+let timeWindow = 1h;
+
+SecurityEvent
+| where TimeGenerated > ago(lookbackTime)
+| where EventID == 4624  // Successful logon
+| where LogonType in (3, 10)  // Network (3) or RemoteInteractive (10) logon
+| extend 
+    SourceIP = tostring(IpAddress),
+    TargetAccount = tostring(TargetUserName),
+    TargetComputer = tostring(Computer),
+    LogonTypeName = case(
+        LogonType == 3, "Network",
+        LogonType == 10, "RemoteInteractive",
+        "Other")
+| summarize 
+    LogonAttempts = count(),
+    UniqueComputers = dcount(TargetComputer),
+    TargetComputers = make_set(TargetComputer),
+    LogonTypes = make_set(LogonTypeName),
+    FirstLogon = min(TimeGenerated),
+    LastLogon = max(TimeGenerated)
+    by TargetAccount, SourceIP, bin(TimeGenerated, timeWindow)
+| where LogonAttempts > logonThreshold or UniqueComputers > 2
+| extend 
+    LogonSpread = LastLogon - FirstLogon,
+    RiskScore = case(
+        UniqueComputers > 5, "High",
+        UniqueComputers > 3 or LogonAttempts > 10, "Medium", 
+        "Low")
+| order by UniqueComputers desc, LogonAttempts desc

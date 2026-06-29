@@ -1,0 +1,153 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-06-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| project TimeGenerated, Account, Computer, IpAddress, CityName, CountryName, Latitude, Longitude
+| order by TimeGenerated desc
+
+// Attacks by country (top attacking countries)
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CountryName
+| order by count_ desc
+| take 20
+
+// Attacks by city
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CityName, CountryName
+| order by count_ desc
+| take 15
+
+// Geographic attack timeline
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CountryName, bin(TimeGenerated, 1h)
+| render timechart
+
+// Top attacking countries (last 7 days)
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625 and TimeGenerated > ago(7d)
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CountryName
+| order by count_ desc
+| take 10
+
+// Attack map data for visualization
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625 and TimeGenerated > ago(24h)
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by Latitude, Longitude, CountryName, CityName
+| where isnotempty(Latitude) and isnotempty(Longitude)
+| order by count_ desc
+
+// High-risk country detection
+let highRiskCountries = datatable(Country:string) [
+    "Russia",
+    "China", 
+    "North Korea",
+    "Iran",
+    "Syria"
+];
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| where CountryName in (highRiskCountries)
+| order by TimeGenerated desc
+
+// Geographic attack patterns by time of day
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| extend HourOfDay = hourofday(TimeGenerated)
+| summarize count() by CountryName, HourOfDay
+| order by count_ desc
+
+// Attacks by ISP/Organization
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by ISP, Organization
+| order by count_ desc
+| take 15
+
+// Geographic distribution pie chart data
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625 and TimeGenerated > ago(7d)
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CountryName
+| order by count_ desc
+| take 10
+| render piechart
+
+// City-level attack analysis
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CityName, CountryName, Latitude, Longitude
+| where isnotempty(CityName)
+| order by count_ desc
+| take 20
+
+// Geographic alert query (for high-risk countries)
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| where CountryName in ("Russia", "China", "North Korea")
+| summarize count() by IpAddress, CountryName
+| where count_ > 5
+
+// Regional attack analysis
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| extend Region = case(
+    CountryName in ("United States", "Canada"), "North America",
+    CountryName in ("United Kingdom", "France", "Germany", "Italy", "Spain"), "Europe",
+    CountryName in ("China", "Japan", "South Korea"), "Asia Pacific",
+    CountryName in ("Russia", "Ukraine", "Belarus"), "Eastern Europe",
+    CountryName in ("Brazil", "Argentina", "Chile"), "South America",
+    "Other"
+)
+| summarize count() by Region
+| order by count_ desc
+
+// Geographic attack velocity
+let geo = _GetWatchlist('geoip');
+SecurityEvent
+| where EventID == 4625
+| lookup geo on $left.IpAddress == $right.Network
+| summarize count() by CountryName, bin(TimeGenerated, 5m)
+| where count_ > 5
+| summarize 
+    TotalBursts = count(),
+    MaxAttempts = max(count_),
+    AvgAttempts = avg(count_)
+    by CountryName
+| order by TotalBursts desc
+
+// Unknown geographic locations
+SecurityEvent
+| where EventID == 4625
+| where isempty(IpAddress) or IpAddress == "::1" or IpAddress == "127.0.0.1"
+| summarize count() by IpAddress
+| order by count_ desc 
