@@ -1,0 +1,133 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-06-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+Syslog
+| where Facility == "kern" or ProcessName == "auditd"
+| where SyslogMessage has "syscall=mount"
+| where SyslogMessage has "exe=\"/usr/bin/runc\""
+    or SyslogMessage has "exe=\"/usr/local/bin/runc\""
+    or SyslogMessage has "containerd-shim"
+| where not (SyslogMessage has "/var/lib/docker/overlay2/"
+    or SyslogMessage has "/run/containerd/io.containerd"
+    or SyslogMessage has "/proc/self/fd")
+| extend
+    MountTarget = extract(@'name="([^"]+)"', 1, SyslogMessage),
+    CallerExe   = extract(@'exe="([^"]+)"', 1, SyslogMessage),
+    ContainerID = extract(@'subj=([a-z0-9]{12,64})', 1, SyslogMessage)
+| project TimeGenerated, Computer, CallerExe, MountTarget, ContainerID, SyslogMessage
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: /dev/pts Device Open or TIOCSTI from Container Runtime (CVE-2025-52565)
+//
+// Rationale: runc opening /dev/pts/N should only occur within the container's
+// devpts mount namespace. An openat to a bare /dev/pts path from containerd-shim
+// or runc suggests symlink resolution to the host pts namespace.
+// TIOCSTI (ioctl 0x5412) from any container runtime process is highly anomalous.
+//
+// Data source: auditd syscall records (openat + ioctl)
+// ============================================================================
+Syslog
+| where SyslogMessage has "syscall=openat" or SyslogMessage has "syscall=ioctl"
+| where SyslogMessage has "/dev/pts/"
+    or SyslogMessage has "a1=5412"   // TIOCSTI decimal
+    or SyslogMessage has "a1=0x5412"
+| where SyslogMessage has "runc"
+    or SyslogMessage has "containerd-shim"
+| extend
+    Syscall     = extract(@'syscall=(\w+)', 1, SyslogMessage),
+    TargetPath  = extract(@'name="([^"]+)"', 1, SyslogMessage),
+    CallerPID   = extract(@' pid=(\d+)', 1, SyslogMessage)
+| project TimeGenerated, Computer, Syscall, TargetPath, CallerPID, SyslogMessage
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 3: Kubelet API Calls Following Container Escape Indicators
+//
+// Rationale: After a container escape, the attacker typically calls the kubelet
+// API on port 10250 to exec into pods or read secrets. Correlate kubelet API
+// access with any preceding container anomaly within 30 minutes.
+//
+// Data source: AKS kube-audit (AzureDiagnostics), network flow logs
+// ============================================================================
+let ContainerAnomalyWindow = 30min;
+let EscapeIndicators = Syslog
+    | where TimeGenerated > ago(24h)
+    | where SyslogMessage has "runc"
+        and (SyslogMessage has "syscall=mount"
+            or SyslogMessage has "/dev/pts/"
+            or SyslogMessage has "unconfined_t")
+    | summarize FirstAnomaly = min(TimeGenerated) by Computer;
+AzureDiagnostics
+| where Category == "kube-audit"
+| extend AuditLog = parse_json(log_s)
+| where AuditLog.requestURI has "/exec"
+    or AuditLog.requestURI has "/run/"
+    or AuditLog.requestURI has "/attach"
+| extend
+    NodeName     = tostring(AuditLog.sourceIPs),
+    UserAgent    = tostring(AuditLog.userAgent),
+    RequestPath  = tostring(AuditLog.requestURI),
+    Username     = tostring(AuditLog.user.username)
+| where Username startswith "system:node:"
+| join kind=inner EscapeIndicators on $left.NodeName == $right.Computer
+| where TimeGenerated between (FirstAnomaly .. FirstAnomaly + ContainerAnomalyWindow)
+| project TimeGenerated, NodeName, Username, RequestPath, UserAgent
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 4: Unconfined Process Exec After Container Init (CVE-2025-52881)
+//
+// Rationale: AppArmor/SELinux unconfined events from processes whose parent
+// is a runc/containerd-shim context, occurring within 500ms of container
+// startup, are the primary signal for the LSM label race.
+//
+// Data source: Linux audit AVC records forwarded to Sentinel
+// ============================================================================
+Syslog
+| where SyslogMessage has "type=AVC" or SyslogMessage has "apparmor=\"ALLOWED\""
+| where SyslogMessage has "unconfined" or SyslogMessage has "unconfined_t"
+| where SyslogMessage has "scontext=unconfined_t"
+    or SyslogMessage has "label=\"unconfined\""
+| extend
+    AuditType   = extract(@'type=(\w+)', 1, SyslogMessage),
+    Comm        = extract(@'comm="([^"]+)"', 1, SyslogMessage),
+    Name        = extract(@' name="([^"]+)"', 1, SyslogMessage),
+    PID         = extract(@' pid=(\d+)', 1, SyslogMessage)
+| where Name has "/proc/sysrq"
+    or Name has "/sys/kernel"
+    or Name has "/proc/kcore"
+    or Name has "/var/lib/kubelet"
+    or Comm == "sh"
+    or Comm == "bash"
+| project TimeGenerated, Computer, AuditType, Comm, Name, PID, SyslogMessage
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 5: Kubelet Credential File Access from Non-Kubelet Process
+//
+// Rationale: The kubelet credential files (/var/lib/kubelet/pki/,
+// /var/lib/kubelet/kubeconfig, /etc/kubernetes/kubelet.conf) should only be
+// read by the kubelet process itself. Access from any other process — especially
+// interactive shells or unfamiliar binaries — strongly indicates post-escape
+// credential theft.
+//
+// Data source: Defender for Endpoint (MDE) file access events forwarded to Sentinel
+// ============================================================================
+DeviceFileEvents
+| where FolderPath has "/var/lib/kubelet/pki"
+    or FolderPath has "/var/lib/kubelet/kubeconfig"
+    or FolderPath has "/etc/kubernetes/kubelet.conf"
+| where ActionType in ("FileRead", "FileOpened")
+| where InitiatingProcessFileName !in ("kubelet", "kubelet.sh")
+| extend
+    SuspiciousProcess = InitiatingProcessFileName,
+    AccessedFile      = FolderPath,
+    ParentProcess     = InitiatingProcessParentFileName
+| project TimeGenerated, DeviceName, SuspiciousProcess, ParentProcess, AccessedFile
+| order by TimeGenerated desc
