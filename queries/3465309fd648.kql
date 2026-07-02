@@ -1,0 +1,111 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-07-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| where AuthenticationPackageName =~ "NtLmSsp"
+| where SubStatus in ("0xC000006D", "0xC0000064", "0xC000015B")
+    // 0xC000006D = STATUS_LOGON_FAILURE (incomplete/wrong auth)
+    // 0xC0000064 = STATUS_NO_SUCH_USER
+    // 0xC000015B = STATUS_LOGON_TYPE_NOT_GRANTED
+| summarize
+    ProbeCount      = count(),
+    TargetComputers = make_set(Computer),
+    TargetAccounts  = make_set(TargetUserName),
+    FirstProbe      = min(TimeGenerated),
+    LastProbe       = max(TimeGenerated)
+  by IpAddress, bin(TimeGenerated, 5m)
+| where ProbeCount >= 5
+| project-away TimeGenerated
+| sort by ProbeCount desc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 2 — IIS EPA Probe: First-Request NTLM Without Prior Unauthenticated GET
+//
+// Rationale: Legitimate browsers send GET → 401 → NTLM Type 1 → Type 2 → Type 3.
+// EPA probes skip the first GET. In IIS logs, a session where the *first*
+// request already has an NTLM Authorization header (and results in 401 or 403)
+// is a probe pattern.
+// ──────────────────────────────────────────────────────────────────────────────
+W3CIISLog
+| where csMethod in ("GET", "POST")
+| where scStatus in (401, 403)
+| where csUriStem !in ("/favicon.ico", "/robots.txt")
+| where isnotempty(csUsername) or csUsername == "-"
+| summarize
+    ProbeCount   = count(),
+    URIsProbedSet = make_set(csUriStem),
+    StatusCodes  = make_set(scStatus),
+    FirstSeen    = min(TimeGenerated),
+    LastSeen     = max(TimeGenerated)
+  by cIP, sComputerName, bin(TimeGenerated, 10m)
+| where ProbeCount >= 3
+| sort by ProbeCount desc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 3 — SQL Server SSPI Probe Pattern
+//
+// Rationale: EPA/SPN enumeration probes SQL Server with SSPI Login7 without
+// completing authentication. Shows up as EventID 18456 (MSSQLSERVER) with
+// SSPI-related failure reason. Repeated failures from the same client host
+// indicate an automated probe.
+// ──────────────────────────────────────────────────────────────────────────────
+Event
+| where Source == "MSSQLSERVER"
+| where EventID == 18456
+| where RenderedDescription contains "SSPI" or RenderedDescription contains "Windows"
+| summarize
+    FailureCount = count(),
+    Instances    = make_set(Computer),
+    FirstSeen    = min(TimeGenerated),
+    LastSeen     = max(TimeGenerated)
+  by bin(TimeGenerated, 10m)
+| where FailureCount >= 3
+| sort by FailureCount desc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 4 — Correlation: EPA Probe Followed by Relay Attempt
+//
+// Rationale: Operators enumerate EPA state first, then immediately launch relay
+// attacks against viable targets. Correlate EPA probe events (Query 1 source IPs)
+// with subsequent NTLM relay events (Event 4624 Type 3 from unexpected source).
+// ──────────────────────────────────────────────────────────────────────────────
+let ProbeIPs = SecurityEvent
+| where EventID == 4625
+| where AuthenticationPackageName =~ "NtLmSsp"
+| where TimeGenerated > ago(1h)
+| summarize ProbeCount = count() by IpAddress
+| where ProbeCount >= 5
+| project IpAddress;
+SecurityEvent
+| where EventID == 4624
+| where LogonType == 3
+| where AuthenticationPackageName =~ "NtLmSsp"
+| join kind=inner ProbeIPs on $left.IpAddress == $right.IpAddress
+| project TimeGenerated, Computer, TargetUserName, TargetUserSid,
+          IpAddress, ProcessName, LogonProcessName
+| sort by TimeGenerated asc
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Query 5 — Service Discovery via NTLM Negotiation Inventory
+//
+// Rationale: Build a per-host inventory of services where NTLM was successfully
+// negotiated (Type 2 CHALLENGE issued), regardless of whether Type 3 followed.
+// This identifies which services are NTLM-enabled for relay surface mapping.
+// Event 4647 (user initiated logoff) or absence of 4624 following 4625 indicates
+// a probe-only interaction.
+// ──────────────────────────────────────────────────────────────────────────────
+SecurityEvent
+| where EventID in (4624, 4625)
+| where AuthenticationPackageName =~ "NtLmSsp"
+| where LogonType == 3
+| summarize
+    SuccessfulAuths = countif(EventID == 4624),
+    FailedAuths     = countif(EventID == 4625),
+    UniqueSourceIPs = dcount(IpAddress),
+    LastSeen        = max(TimeGenerated)
+  by Computer, TargetUserName
+| extend ProbeRatio = todouble(FailedAuths) / (SuccessfulAuths + FailedAuths + 1)
+| where ProbeRatio > 0.7 and FailedAuths >= 3
+| sort by ProbeRatio desc, FailedAuths desc

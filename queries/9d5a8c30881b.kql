@@ -1,0 +1,9 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-07-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4688
+| where Process has "hash.exe" or ParentProcessName has "hash.exe"
+| summarize ExecutionCount = count() by Computer
+| where ExecutionCount > 5

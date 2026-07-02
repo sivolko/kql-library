@@ -1,0 +1,8 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-07-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4689 
+| where Process has "MsMpEng.exe" or ParentProcessName has "MsMpEng.exe"
+| summarize TerminationCount = count() by Computer

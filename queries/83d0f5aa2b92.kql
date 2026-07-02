@@ -1,0 +1,31 @@
+// Source: https://github.com/wahidhendrawan/Detection-Rules
+// Collected: 2026-07-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4697                       // Service installed
+| where (
+    // Service path mencurigakan
+    ServiceFileName has_any (
+        @"\AppData\", @"\Temp\", @"\ProgramData\Temp\",
+        @"\Users\Public\", @"\Recycle.Bin\"
+    )
+    // Service path = LOLBin
+    or ServiceFileName has_any (
+        "powershell.exe", "cmd.exe /c", "wscript.exe",
+        "cscript.exe", "mshta.exe", "rundll32.exe"
+    )
+    // Service name yang mencurigakan (PsExec, random short name)
+    or ServiceName has_any (
+        "PSEXESVC", "PAExec", "RemCom"
+    )
+    // Service name pendek random (length 3-6, hex/random)
+    or (strlen(ServiceName) <= 6 and ServiceName matches regex @"^[a-zA-Z0-9]{3,6}$")
+)
+// Exclude trusted publisher
+| where ServiceFileName !contains @"\Program Files\Microsoft\"
+| where ServiceFileName !contains @"\Program Files\Windows Defender\"
+| project TimeGenerated, Computer, SubjectAccount = SubjectUserName,
+          ServiceName, ServiceFileName, ServiceType, ServiceStartType
+| order by TimeGenerated desc

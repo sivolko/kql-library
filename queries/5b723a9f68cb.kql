@@ -1,0 +1,33 @@
+// Source: https://github.com/TheAlistairRoss/AzureMonitor
+// Collected: 2026-07-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+let NegativeDayOfMonth = (Index:long, MonthNumber:int,DayNumber:int){
+    let DayOfWeek = totimespan(strcat(DayNumber,".00:00:00"));
+    let LastDayOfMonth = datetime_add("month",MonthNumber,startofyear(now())) -1d;
+    let AddDays = totimespan(strcat(((Index + 1) * 7),".00:00:00"));
+    let Output = print Day = (startofweek(LastDayOfMonth) + DayOfWeek)
+    | extend Day = iif (Day > LastDayOfMonth, Day - 7d, Day)
+    | extend Day = Day + AddDays;
+    toscalar(Output)
+};
+let isTimeRange = (TimeToCheck: datetime, StartTime: time, QueryFrequency: time) {
+    let Start = startofday(now()) + StartTime; 
+    let End = Start + QueryFrequency;
+    iif(
+        TimeToCheck between(Start .. End), true, false
+    )
+};
+let UTCStartTime = totimespan("16:20"); // Write this in 24 hour format with hh:mm UTC
+let DaylightSavingStart = NegativeDayOfMonth(-1,3,0); // Start of Daylight Saving (Time after this will be UTC +1h. This example is UK British Summer Time
+let DaylightSavingEnd = NegativeDayOfMonth(-1,10,0); // End of Daylight Saving (Time after this will be UTC. This example is UK British Summer Time
+let QueryFrequency = 10m; // This is the frequency of the alert. Specify this to avoid it running multiple times
+let StartTime = iif((now() between (DaylightSavingStart .. DaylightSavingEnd)),
+    UTCStartTime + 1h,
+    UTCStartTime
+);
+//
+// Your Query below, with a where filter to ignore any results unless run within the required TimePeriod
+SecurityEvent
+| where isTimeRange(now(), StartTime, QueryFrequency)  == true
+| take 10
