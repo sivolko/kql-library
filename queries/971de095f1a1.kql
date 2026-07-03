@@ -1,0 +1,7 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+Syslog 
+| where SeverityLevel == "err" or  SeverityLevel == "error"
+| top 100 by TimeGenerated desc

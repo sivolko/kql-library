@@ -1,0 +1,12 @@
+// Source: https://github.com/dCloser/SentinelAnalyticRules
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+let threshold = 20;
+Syslog
+| where TimeGenerated > ago(24h)
+| where SyslogMessage has_any ("block", "deny", "reject")
+| extend action = extract(@'act=(\S+)',1, SyslogMessage)
+| extend username = extract(@'suser=(\S+)',1, SyslogMessage) 
+| summarize DenyCount = count() by action, username
+| where DenyCount > threshold 

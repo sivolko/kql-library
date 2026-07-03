@@ -1,0 +1,11 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timerange=30d;
+OfficeActivity
+| where TimeGenerated > ago(timerange)
+| project TimeGenerated, Operation
+| where Operation in ("FileSyncDownloadedFull","FileSyncUploadedFull","FileDownloaded","FileUploaded")
+| summarize FilesDownloaded=countif(Operation in ("FileDownloaded","FileSyncDownloadedFull")),FilesUploaded=countif(Operation in ("FileSyncUploadedFull","FileUploaded")) by startofday(TimeGenerated)
+| render columnchart with (kind=unstacked, title="Downloads vs Uploads in Office 365", ytitle="Count", xtitle="Day")

@@ -1,0 +1,54 @@
+// Source: https://github.com/madhuperera/Microsoft_Sentinel
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod = 60d;          // covers a 30d current + 30d baseline by default
+let BinSize        = 1d;
+let TargetUser     = "jane.doe@contoso.com";   // <-- REQUIRED: the UPN to compare
+let WorkloadFilter = "";                        // "" = all workloads, else e.g. "SharePoint"
+let ServiceAccountUPNs = toscalar(
+    // isfuzzy=true: if the watchlist is absent the query still runs (degrades to
+    // no service-account exclusions) instead of failing. UserType + ExcludedUPNs remain.
+    union isfuzzy=true
+        (datatable(UPN:string)[]),
+        (_GetWatchlist("service-accounts") | project UPN = tostring(UPN))
+    | summarize make_set(tolower(UPN)));
+let ExcludedUPNs = dynamic(["sharepoint\\system","app@sharepoint","system@sharepoint"]);
+let MeaningfulOps = dynamic([
+    "Send","SendAs","SendOnBehalf",
+    "FileUploaded","FileModified","FileCheckedIn","FileRenamed","FileMoved","FileDownloaded",
+    "ClientViewSignaled","PageViewed",
+    "MessageSent","MessageEdited","ChatCreated","TeamCreated","ChannelAdded",
+    "MeetingParticipantDetail"]);
+// Shared base: meaningful events per user per day (optionally one workload).
+// materialize() — the base is referenced twice (user slice + org average), so we
+// compute the scan once and reuse it.
+let Base = materialize(
+    OfficeActivity
+    | where TimeGenerated >= ago(LookbackPeriod)
+    | where UserType == "Regular"
+    | where Operation in (MeaningfulOps)
+    | extend UPN = tolower(tostring(UserId))
+    // Exclude external / B2B guests: OfficeActivity UserType "Regular" includes guests
+    // (it only separates Regular from Admin/System/App). Guest UPNs carry the "#EXT#"
+    // marker. Remove this line if you want guests included.
+    | where UPN !contains "#ext#"
+    | where UPN !in (ExcludedUPNs) and UPN !in (ServiceAccountUPNs)
+    | where WorkloadFilter == "" or OfficeWorkload == WorkloadFilter
+    | summarize Events = count() by Day = bin(TimeGenerated, BinSize), UPN);
+// User line: the target user's daily meaningful events.
+let UserSeries = Base
+    | where UPN == tolower(TargetUser)
+    // todouble: keep Value as real so it unions cleanly with the org average below.
+    // union splits a same-named column when the types differ (long vs real).
+    | summarize Value = todouble(sum(Events)) by Day
+    | extend Series = "User";
+// Org line: average meaningful events per ACTIVE user per day (headcount-independent
+// backdrop, same scale as the user line).
+let OrgSeries = Base
+    | summarize Value = round(todouble(sum(Events)) / dcount(UPN), 2) by Day
+    | extend Series = "Org avg / active user";
+union UserSeries, OrgSeries
+| project Day, Series, Value
+| order by Day asc
+| render timechart with (series = Series, ycolumns = Value)

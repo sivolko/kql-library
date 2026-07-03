@@ -1,0 +1,12 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago (30d)
+| where ActionType startswith "SmartScreen"
+| extend SmartScreenExperience = tostring(AdditionalFields.Experience)
+| where AdditionalFields.Experience == "Phishing"
+| parse-where RemoteUrl with * '://' RemoteDomain '/' *
+| summarize Count=count()by RemoteDomain
+| sort by Count

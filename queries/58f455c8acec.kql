@@ -1,0 +1,38 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where RiskLevelDuringSignIn in~ ("medium", "high")
+| project
+    ['Risky Signin Time']=TimeGenerated,
+    UserPrincipalName,
+    SigninIP=IPAddress,
+    RiskLevelDuringSignIn,
+    RiskEventTypes,
+    SigninResult=ResultType
+| join kind=inner (
+    AuditLogs
+    | where OperationName == "Admin registered security info" and Result == "success"
+    | extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+    | extend Target = tostring(TargetResources[0].userPrincipalName)
+    | project
+        ['MFA Change Time']=TimeGenerated,
+        OperationName,
+        ResultReason,
+        Actor,
+        Target,
+        TargetResources
+    )
+    on $left.UserPrincipalName == $right.Actor
+| where ['MFA Change Time'] between (['Risky Signin Time'] .. timespan(4h))
+| project
+    ['Risky Signin Time'],
+    ['MFA Change Time'],
+    Actor,
+    Target,
+    SigninIP,
+    SigninResult,
+    OperationName,
+    ResultReason,
+    TargetResources

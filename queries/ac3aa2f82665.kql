@@ -1,0 +1,36 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackPeriod = 1h;
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackPeriod)
+| where RecordType == "ExchangeAdmin"
+| where Operation in (
+    "New-TransportRule", "Set-TransportRule",
+    "Enable-TransportRule", "New-JournalRule",
+    "New-RemoteDomain", "Set-RemoteDomain",
+    "New-AcceptedDomain")
+| extend Params = tostring(Parameters)
+| extend
+    HasForward      = Params has_any ("RedirectMessageTo", "CopyTo", "BlindCopyTo", "AddToRecipients"),
+    HasExternalDest = Params matches regex @"@(?!.*\.onmicrosoft\.com)[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
+    HasBypass       = Params has_any ("SetHeaderName", "ExceptIfSenderDomainIs", "SenderDomainIs"),
+    RuleCondition   = extract(@"Condition.*?:(.*?)(\s|$)", 1, Params),
+    DestinationAddr = extract(@"(RedirectMessageTo|CopyTo|BlindCopyTo).*?([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})", 2, Params)
+| project
+    TimeGenerated,
+    UserId,
+    ClientIP,
+    Operation,
+    HasForward,
+    HasExternalDest,
+    HasBypass,
+    DestinationAddr,
+    RuleCondition,
+    Params,
+    AlertSeverity  = case(
+        HasForward and HasExternalDest, "High",
+        HasForward,                     "Medium",
+        "Low")

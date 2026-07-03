@@ -1,0 +1,15 @@
+// Source: https://github.com/ugurkocde/kql_search_submissions
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(30d)
+| where UserId contains "X@X.X"
+| extend FolderDynamic = todynamic(Folder)
+| extend DestFolderDynamic = todynamic(DestFolder)
+| extend FolderPath = tostring(FolderDynamic["Path"])
+| extend DestFolderPath = tostring(DestFolderDynamic["Path"])
+| extend AffectedItemsDynamic = todynamic(AffectedItems)
+| extend AffectedItemsSubject = tostring(AffectedItemsDynamic[0]["Subject"])
+| extend AffectedItemsParentFolder = tostring(AffectedItemsDynamic[0]["ParentFolder"]["Path"])
+| project TimeGenerated, RecordType, Operation, OfficeWorkload, UserId, ClientProcessName, FolderPath, DestFolderPath, AffectedItemsSubject, AffectedItemsParentFolder, ItemType, EventSource, SourceRelativeUrl, SourceFileName, SourceFileExtension 

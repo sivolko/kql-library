@@ -1,0 +1,6 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-07-03
+// KQL Library - https://github.com/sivolko/kql-library
+
+Syslog 
+| summarize count() by ProcessName
