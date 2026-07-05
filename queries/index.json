@@ -1,5 +1,159 @@
 [
   {
+    "id": "36b77aa46637",
+    "title": "Summarize the total count and the list of files downloaded by guests in your Office 365 tenant",
+    "description": "Summarize the total count and the list of files downloaded by guests in your Office 365 tenant",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe=7d;\nOfficeActivity\n| where TimeGenerated > ago(timeframe)\n| where Operation in (\"FileSyncDownloadedFull\", \"FileDownloaded\")\n| where UserId contains \"#EXT#\"\n| summarize\n    ['Count of Downloads']=count(),\n    ['List of Files Downloaded']=make_set(OfficeObjectId)\n    by UserId\n| sort by ['Count of Downloads'] desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-SummarizeDownloadActivitybyGuests.kql",
+    "filename": "OfficeActivity-SummarizeDownloadActivitybyGuests.kql",
+    "collected_at": "2026-07-05T06:09:03.702581+00:00"
+  },
+  {
+    "id": "28733e933ee4",
+    "title": "Visualize the files shared to guests from Office 365 over time",
+    "description": "Visualize the files shared to guests from Office 365 over time",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timerange=90d;\nOfficeActivity\n| where TimeGenerated > ago(timerange)\n| where Operation in (\"SecureLinkCreated\", \"AddedToSecureLink\")\n| where TargetUserOrGroupType == \"Guest\"\n| summarize Count=count()by bin(TimeGenerated, 1d)\n| render timechart with (ytitle=\"File Count\", title=\"Files shared with guests over time\")",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-VisualizeFilesSharedtoGuests.kql",
+    "filename": "OfficeActivity-VisualizeFilesSharedtoGuests.kql",
+    "collected_at": "2026-07-05T06:09:01.678312+00:00"
+  },
+  {
+    "id": "2b380984639e",
+    "title": "Create a weekly summary of Teams created and deleted in your Office 365 tenant",
+    "description": "Create a weekly summary of Teams created and deleted in your Office 365 tenant",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| where TimeGenerated > ago(30d)\n| where Operation in (\"TeamCreated\", \"TeamDeleted\")\n| summarize\n    ['Count of Teams Created']=dcountif(TeamName, Operation == \"TeamCreated\"),\n    ['List of Teams Created']=make_set_if(TeamName, Operation == \"TeamCreated\"),\n    ['Count of Teams Deleted']=dcountif(TeamName, Operation == \"TeamDeleted\"),\n    ['List of Teams Deleted']=make_set_if(TeamName, Operation == \"TeamDeleted\")\n    by Week=startofweek(TimeGenerated)\n| sort by Week desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-SummarizeTeamsCreatedDeleted.kql",
+    "filename": "OfficeActivity-SummarizeTeamsCreatedDeleted.kql",
+    "collected_at": "2026-07-05T06:09:00.811903+00:00"
+  },
+  {
+    "id": "ac0701b48475",
+    "title": "Detect when a user shares multiple files to Azure AD guests over a short time frame.",
+    "description": "Detect when a user shares multiple files to Azure AD guests over a short time frame.",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe=30m;\nlet threshold=10;\nOfficeActivity\n| where TimeGenerated > ago(1d)\n| where Operation in (\"SecureLinkCreated\", \"AddedToSecureLink\")\n| where TargetUserOrGroupType == \"Guest\" or TargetUserOrGroupName contains \"#EXT#\"\n| summarize\n    ['File Share Count']=dcount(OfficeObjectId),\n    ['List of Files']=make_set(OfficeObjectId)\n    by UserId, bin(TimeGenerated, timeframe)\n| where ['File Share Count'] >= threshold",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-MultipleFilesSharedtoGuests.kql",
+    "filename": "OfficeActivity-MultipleFilesSharedtoGuests.kql",
+    "collected_at": "2026-07-05T06:08:59.914809+00:00"
+  },
+  {
+    "id": "822f5a9f8072",
+    "title": "Data connector required for this query - Office 365",
+    "description": "Find any of your Teams that have had guests added to them in the last week and arrange by the Teams with the most guests added.",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| where TimeGenerated > ago(7d)\n| where Operation == \"MemberAdded\"\n| mv-expand Members\n| extend UserAdded = tostring(Members.UPN)\n| where UserAdded contains \"#EXT#\"\n| where CommunicationType == \"Team\"\n| summarize\n    ['Number of Guests Added']=dcount(UserAdded),\n    ['List of Guests Added']=make_set(UserAdded)\n    by TeamName\n| sort by ['Number of Guests Added'] desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-SummarizeGuestsAddedtoTeams.kql",
+    "filename": "OfficeActivity-SummarizeGuestsAddedtoTeams.kql",
+    "collected_at": "2026-07-05T06:08:59.021256+00:00"
+  },
+  {
+    "id": "226d83e29b5f",
+    "title": "Detect when a shared Teams channel is created",
+    "description": "Detect when a shared Teams channel is created",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| where Operation == \"ChannelAdded\"\n| where ChannelType == \"Shared\"\n| project TimeGenerated, Actor=UserId, TeamName, ChannelType, ChannelName",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-SharedTeamsChannelCreated.kql",
+    "filename": "OfficeActivity-SharedTeamsChannelCreated.kql",
+    "collected_at": "2026-07-05T06:08:57.500180+00:00"
+  },
+  {
+    "id": "6dec41bf32c2",
+    "title": "Data connector required for this query - Office 365",
+    "description": "Detects users with global or exchange administrator roles who have accessed email items from mailboxes other than their own",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe=30d;\nlet adminusers=\nIdentityInfo\n| where TimeGenerated > ago(21d)\n| where AssignedRoles has_any (\"Exchange Administrator\", \"Global Administrator\")\n| summarize arg_max(TimeGenerated, *) by AccountUPN\n| project UserId=AccountUPN;\nOfficeActivity\n| where TimeGenerated > ago(timeframe)\n| where OfficeWorkload == \"Exchange\"\n| where Operation == \"MailItemsAccessed\"\n| where UserId in (adminusers)\n| where UserId != MailboxOwnerUPN\n| project AccessTime=TimeGenerated, UserId, MailboxOwnerUPN, Folders",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-DetectEmailsReadbyAdmins.kql",
+    "filename": "OfficeActivity-DetectEmailsReadbyAdmins.kql",
+    "collected_at": "2026-07-05T06:08:56.626937+00:00"
+  },
+  {
+    "id": "88240beda4e9",
+    "title": "Detect anomalies in the amount of files shared to guests in your Office 365 tenant from your users.",
+    "description": "Detect anomalies in the amount of files shared to guests in your Office 365 tenant from your users.",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet startdate=21d;\nlet enddate=1d;\n//Timeframe = time period to break the data up into, i.e 1 hour blocks.\nlet timeframe=1h;\n//Sensitivity = the lower the number the more sensitive the anomaly detection is, i.e it will find more anomalies, default is 1.5\nlet sensitivity=2;\n//Threshold = set a threshold to account for low volume anomailies, i.e moving from 1 file shared to 2 within an hour\nlet threshold = 5;\nlet outlierusers=\nOfficeActivity\n| where Operation in (\"AddedToSecureLink\",\"SecureLinkCreated\",\"SecureLinkUpdated\")\n| where TargetUserOrGroupType == \"Guest\" or TargetUserOrGroupName contains \"#ext#\"\n| make-series GuestFileShares=count() on TimeGenerated from startofday(ago(startdate)) to startofday(ago(enddate)) step timeframe by UserId\n| extend outliers=series_decompose_anomalies(GuestFileShares, sensitivity)\n| mv-expand TimeGenerated, GuestFileShares, outliers\n| where outliers == 1 and GuestFileShares > threshold\n//Optionally visualize the anomalies - remove everything below this line to just retrieve the data instead of visualizing\n| distinct UserId;\nOfficeActivity\n| where Operation in (\"AddedToSecureLink\",\"SecureLinkCreated\",\"SecureLinkUpdated\")\n| where TargetUserOrGroupType == \"Guest\" or TargetUserOrGroupName contains \"#ext#\"\n| where UserId in (outlierusers)\n| make-series GuestFileShares=count() default=0 on TimeGenerated from startofday(ago(startdate)) to startofday(ago(enddate)) step timeframe by UserId \n| render timechart with (ytitle=\"Share Count\",title=\"Anomalous Files Shared to Guests\")",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-AnomalousGuestFileShares.kql",
+    "filename": "OfficeActivity-AnomalousGuestFileShares.kql",
+    "collected_at": "2026-07-05T06:08:55.934096+00:00"
+  },
+  {
+    "id": "c694da531dc5",
+    "title": "Detect when an Exchange admin grants full mailbox access to another user",
+    "description": "Detect when an Exchange admin grants full mailbox access to another user",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| where RecordType == \"ExchangeAdmin\"\n| where Operation == \"Add-MailboxPermission\"\n| parse-where Parameters with * 'Identity\",\"Value\":\"' TargetMailbox '\"' *\n| parse-where Parameters with * 'User\",\"Value\":\"' UserGivenAccess '\"' *\n| parse-where Parameters with * 'AccessRights\",\"Value\":\"' AccessRights '\"' *\n| project\n    TimeGenerated,\n    Actor=UserId,\n    ['Target Mailbox']=TargetMailbox,\n    ['Target Mailbox DisplayName']=OfficeObjectId,\n    ['User Granted Access']=UserGivenAccess,\n    ['Access Type']=AccessRights\n| where tolower(Actor) != \"nt authority\\\\system (microsoft.exchange.servicehost)\"\n| sort by TimeGenerated desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-DetectFullMailboxAccess.kql",
+    "filename": "OfficeActivity-DetectFullMailboxAccess.kql",
+    "collected_at": "2026-07-05T06:08:55.222599+00:00"
+  },
+  {
+    "id": "36c4e14e5524",
+    "title": "Find any new operations audited in Office 365 in the last 14 days vs the previous 180 days",
+    "description": "Find any new operations audited in Office 365 in the last 14 days vs the previous 180 days",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet existingoperations=\n    OfficeActivity\n    | where TimeGenerated > ago(180d) and TimeGenerated < ago(14d)\n    | distinct Operation;\nOfficeActivity\n| where TimeGenerated > ago(14d)\n| summarize arg_min(TimeGenerated, *) by Operation\n| where Operation !in (existingoperations)\n| project ['Time First Seen']=TimeGenerated, Operation, OfficeWorkload",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-FindNewOperations.kql",
+    "filename": "OfficeActivity-FindNewOperations.kql",
+    "collected_at": "2026-07-05T06:08:54.308264+00:00"
+  },
+  {
+    "id": "6f09b1e43f4e",
+    "title": "Alerts when a file believed to be malware is uploaded to your Office 365 tenant in SharePoint or OneDrive",
+    "description": "Alerts when a file believed to be malware is uploaded to your Office 365 tenant in SharePoint or OneDrive",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-05\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| where TimeGenerated > ago(30d)\n| where Operation == \"FileMalwareDetected\"\n| project\n    TimeGenerated,\n    OfficeWorkload,\n    ['File Name']=SourceFileName,\n    ['File Location']=OfficeObjectId,\n    ['Relative File URL']=SourceRelativeUrl,\n    ClientIP",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-MalwareDetected.kql",
+    "filename": "OfficeActivity-MalwareDetected.kql",
+    "collected_at": "2026-07-05T06:08:53.181217+00:00"
+  },
+  {
     "id": "ceefb534b286",
     "title": "Author: Microsoft Azure",
     "description": "Display name: Reported errors Description: Show error events from the last hour. Categories: Virtual Machines Resource types: Virtual machines Topic: Errors",

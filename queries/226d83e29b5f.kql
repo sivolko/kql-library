@@ -1,0 +1,8 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-07-05
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation == "ChannelAdded"
+| where ChannelType == "Shared"
+| project TimeGenerated, Actor=UserId, TeamName, ChannelType, ChannelName
