@@ -1,0 +1,35 @@
+// Source: https://github.com/jacobeen3006/sentinel-university-deployment
+// Collected: 2026-07-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+let signinMatches = SigninLogs
+    | join kind=inner (
+        ThreatIntelligenceIndicator
+        | where Active == true
+        | where isnotempty(NetworkIP) or isnotempty(NetworkDestinationIP)
+        | project ThreatIP = coalesce(NetworkIP, NetworkDestinationIP),
+                 ThreatType = ThreatType,
+                 Description = Description
+    ) on $left.IPAddress == $right.ThreatIP
+    | project TimeGenerated, IPAddress, ThreatType, Description, Source = "SigninLogs";
+
+let firewallMatches = CommonSecurityLog
+    | where isnotempty(SourceIP) or isnotempty(DestinationIP)
+    | extend MatchIP = coalesce(SourceIP, DestinationIP)
+    | join kind=inner (
+        ThreatIntelligenceIndicator
+        | where Active == true
+        | where isnotempty(NetworkIP) or isnotempty(NetworkDestinationIP)
+        | project ThreatIP = coalesce(NetworkIP, NetworkDestinationIP),
+                 ThreatType = ThreatType,
+                 Description = Description
+    ) on $left.MatchIP == $right.ThreatIP
+    | project TimeGenerated, IPAddress = MatchIP, ThreatType, Description, Source = "CommonSecurityLog";
+
+union signinMatches, firewallMatches
+| summarize
+    MatchCount = count(),
+    UniqueIPs = dcount(IPAddress),
+    ThreatTypes = make_set(ThreatType)
+    by bin(TimeGenerated, 7d)
+| extend ThreatTypes = strcat_array(ThreatTypes, ", ")

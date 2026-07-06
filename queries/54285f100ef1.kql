@@ -1,0 +1,21 @@
+// Source: https://github.com/Gyarbij/Artemis
+// Collected: 2026-07-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where ActionType startswith "Asr"
+| where isnotempty(InitiatingProcessCommandLine)
+| summarize ['ASR Hit Count']=count()by ActionType, InitiatingProcessCommandLine
+| sort by ['ASR Hit Count'] desc 
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting license
+
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where ActionType startswith "Asr"
+| where isnotempty(InitiatingProcessCommandLine)
+| summarize ['ASR Hit Count']=count()by ActionType, InitiatingProcessCommandLine
+| sort by ['ASR Hit Count'] desc 

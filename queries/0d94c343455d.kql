@@ -1,0 +1,24 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-07-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ExcludeAllowedPaths = dynamic(["%WINDIR%", "%PROGRAMFILES%"]);
+let ExcludeNTAccounts = dynamic(["nt authority", "NT VIRTUAL MACHINE"]);
+DeviceEvents
+| where Timestamp > ago (7d)
+| where ActionType startswith "AppControlExecutable"
+| where FileName contains ".exe"
+| where not(FolderPath has_any (ExcludeAllowedPaths))
+| where not(InitiatingProcessAccountDomain has_any (ExcludeNTAccounts) or AccountDomain has_any (ExcludeNTAccounts))
+| extend AddtlFields = parse_json(AdditionalFields)
+| summarize arg_max(Timestamp, *) by FolderPath
+| project Timestamp,
+          DeviceName,
+          ActionType,  
+          ['Account Domain'] = InitiatingProcessAccountDomain,
+          ['Account Name'] = InitiatingProcessAccountName,
+          FolderPath,
+          FileName,
+          InitiatingProcessFileName,
+          InitiatingProcessVersionInfoProductName,
+          ["FQBN"] = AddtlFields["Fqbn"]

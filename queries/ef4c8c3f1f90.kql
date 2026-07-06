@@ -1,0 +1,23 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-07-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "SecurityLogCleared"
+| project
+    TimeGenerated,
+    DeviceName,
+    InitiatingProcessAccountDomain,
+    InitiatingProcessAccountName
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting license
+
+DeviceEvents
+| where ActionType == "SecurityLogCleared"
+| project
+    Timestamp,
+    DeviceName,
+    InitiatingProcessAccountDomain,
+    InitiatingProcessAccountName

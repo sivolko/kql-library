@@ -1,0 +1,9 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-07-06
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType contains "RemoteDesktopConnection"
+| extend location = geo_info_from_ip_address(LocalIP)
+| where location contains "Country"
+| project Timestamp, DeviceName, ActionType, LocalIP, LocalPort, location,ReportId, DeviceId
