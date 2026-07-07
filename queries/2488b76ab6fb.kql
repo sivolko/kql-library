@@ -1,0 +1,106 @@
+// Source: https://github.com/Jasmine8596/Azure-DP-203
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+SynapseSqlPoolExecRequests
+| where TimeGenerated > ago(24h)
+| where Status == "Completed"
+| where TotalElapsedTimeMs > 30000
+| project TimeGenerated, LoginName, Command, TotalElapsedTimeMs, ResourceClass
+| order by TotalElapsedTimeMs desc
+| take 20
+
+// Query distribution by status
+SynapseSqlPoolExecRequests
+| where TimeGenerated > ago(24h)
+| summarize Count = count() by Status
+| order by Count desc
+
+// ===================================================================
+// 2. Synapse Pipeline Run Monitoring
+// ===================================================================
+
+// Failed pipeline runs in the last 7 days
+SynapseIntegrationPipelineRuns
+| where TimeGenerated > ago(7d)
+| where Status == "Failed"
+| project TimeGenerated, PipelineName, Status, FailureType, ErrorMessage = Parameters
+| order by TimeGenerated desc
+
+// Pipeline run duration trends
+SynapseIntegrationPipelineRuns
+| where TimeGenerated > ago(7d)
+| where Status == "Succeeded"
+| extend DurationMin = DurationMs / 60000.0
+| summarize AvgDuration = avg(DurationMin), MaxDuration = max(DurationMin) by PipelineName
+| order by AvgDuration desc
+
+// Activity failures
+SynapseIntegrationActivityRuns
+| where TimeGenerated > ago(7d)
+| where Status == "Failed"
+| project TimeGenerated, PipelineName, ActivityName, ActivityType, Status
+| order by TimeGenerated desc
+
+// ===================================================================
+// 3. Storage Access Monitoring
+// ===================================================================
+
+// Storage read operations by caller
+StorageBlobLogs
+| where TimeGenerated > ago(24h)
+| where OperationName == "GetBlob"
+| summarize ReadCount = count(), TotalBytes = sum(ResponseBodySize) by CallerIpAddress
+| order by ReadCount desc
+| take 20
+
+// Failed storage operations (access denied, not found)
+StorageBlobLogs
+| where TimeGenerated > ago(24h)
+| where StatusCode >= 400
+| summarize FailCount = count() by StatusCode, StatusText, OperationName
+| order by FailCount desc
+
+// Large file uploads
+StorageBlobLogs
+| where TimeGenerated > ago(24h)
+| where OperationName == "PutBlob" or OperationName == "PutBlock"
+| where RequestBodySize > 100000000  // > 100MB
+| project TimeGenerated, Uri, RequestBodySize, CallerIpAddress
+| order by RequestBodySize desc
+
+// ===================================================================
+// 4. Spark Pool Monitoring
+// ===================================================================
+
+// Spark application runs
+SynapseBigDataPoolApplicationsEnded
+| where TimeGenerated > ago(7d)
+| project TimeGenerated, ApplicationName, State, TotalExecutorCpuTimeMs, TotalMemoryBytesUsed
+| order by TimeGenerated desc
+
+// Long-running Spark jobs
+SynapseBigDataPoolApplicationsEnded
+| where TimeGenerated > ago(7d)
+| extend DurationMin = TotalExecutorCpuTimeMs / 60000.0
+| where DurationMin > 30
+| project TimeGenerated, ApplicationName, DurationMin, State
+| order by DurationMin desc
+
+// ===================================================================
+// 5. Resource Health
+// ===================================================================
+
+// Azure resource health events
+AzureActivity
+| where TimeGenerated > ago(7d)
+| where CategoryValue == "ResourceHealth"
+| project TimeGenerated, ResourceGroup, Resource, OperationNameValue, Level
+| order by TimeGenerated desc
+
+// All errors across resource types
+AzureActivity
+| where TimeGenerated > ago(24h)
+| where Level == "Error"
+| summarize ErrorCount = count() by ResourceProviderValue, OperationNameValue
+| order by ErrorCount desc

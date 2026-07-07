@@ -1,0 +1,7 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4624 and TargetUserName == 'Guest' and LogonType in (10, 3)
+| summarize count() by Computer

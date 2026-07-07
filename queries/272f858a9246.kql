@@ -1,0 +1,13 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 10m;
+CommonSecurityLog
+| where TimeGenerated > ago(lookback)
+| where DeviceVendor == "Palo Alto Networks"
+| where Activity == "TRAFFIC"
+| where SourceIP startswith "10."  // Specify Source IP
+| where DestinationIP contains "<INTERNAL_IP>.166"  // Specify Destination IP
+| where DestinationPort in ('135','445')  // Specify Port
+| project TimeGenerated, SourceIP, DestinationIP, DestinationPort, DeviceAction, Activity, DestZone = DeviceCustomString5, SourceUserName, SourceZone = DeviceCustomString4, ApplicationProtocol, Rule = DeviceCustomString1, SessionEndReason = Reason, TotalBytes = FlexNumber1 

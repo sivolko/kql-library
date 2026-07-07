@@ -1,0 +1,49 @@
+// Source: https://github.com/MitchellGulledge3/zscaler-sentinel-mcp-tools
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 24h;
+let CommonSecurityLogSource = union isfuzzy=true (datatable(TimeGenerated:datetime, DeviceVendor:string, DeviceProduct:string)[]), CommonSecurityLog;
+let ZscalerLogs =
+    CommonSecurityLogSource
+    | where TimeGenerated >= ago(lookback)
+    | where DeviceVendor =~ "Zscaler"
+    | extend
+        Product = tostring(column_ifexists("DeviceProduct", "")),
+        Action = tostring(column_ifexists("DeviceAction", "")),
+        Activity = tostring(column_ifexists("Activity", "")),
+        User = tolower(tostring(column_ifexists("SourceUserName", ""))),
+        Destination = coalesce(tostring(column_ifexists("DestinationHostName", "")), tostring(column_ifexists("RequestURL", "")), tostring(column_ifexists("DestinationIP", ""))),
+        Additional = tostring(column_ifexists("AdditionalExtensions", "")),
+        Sent = tolong(column_ifexists("SentBytes", 0)),
+        Received = tolong(column_ifexists("ReceivedBytes", 0))
+    | extend
+        UrlCategory = coalesce(extract(@"(?i)(?:^|;)ZscalerNSSWeblogURLClass=([^;]*)", 1, Additional), extract(@"(?i)(?:^|;)urlclass=([^;]*)", 1, Additional), tostring(column_ifexists("DeviceCustomString2", ""))),
+        DlpDictionary = coalesce(extract(@"(?i)(?:^|;)ZscalerNSSWeblogDLPDictionaries=([^;]*)", 1, Additional), extract(@"(?i)(?:^|;)dlpdicthitcount=([^;]*)", 1, Additional), tostring(column_ifexists("DeviceCustomString1", ""))),
+        AppRiskScore = todouble(coalesce(extract(@"(?i)(?:^|;)app_risk_score=([^;]*)", 1, Additional), tostring(column_ifexists("DeviceCustomNumber1", "")))),
+        RuleType = extract(@"(?i)(?:^|;)ruletype=([^;]*)", 1, Additional),
+        Threat = coalesce(extract(@"(?i)(?:^|;)malwareclass=([^;]*)", 1, Additional), tostring(column_ifexists("DeviceCustomString4", "")), tostring(column_ifexists("DeviceCustomString5", "")))
+    | extend
+        IsBlocked = Action has_any ("Block", "Deny", "Quarantine") or Activity has_any ("Block", "Deny", "Quarantine"),
+        IsThreat = UrlCategory has_any ("Malware", "Phishing", "Botnet", "Security Risk", "Spyware") or Threat !in~ ("", "None", "NA", "N/A", "-"),
+        IsDlp = isnotempty(DlpDictionary) and DlpDictionary !in~ ("None", "NA", "N/A", "-"),
+        IsRiskyApp = coalesce(AppRiskScore, 0.0) >= 4.0;
+ZscalerLogs
+| summarize
+    Transactions = count(),
+    UniqueUsers = dcount(User),
+    UniqueDestinations = dcount(Destination),
+    Blocked = countif(IsBlocked),
+    Allowed = countif(not(IsBlocked)),
+    ThreatEvents = countif(IsThreat),
+    DlpEvents = countif(IsDlp),
+    HighRiskAppEvents = countif(IsRiskyApp),
+    BytesUploaded = sum(Sent),
+    BytesDownloaded = sum(Received),
+    Products = make_set(Product, 10),
+    TopCategories = make_set(UrlCategory, 15),
+    RuleTypes = make_set(RuleType, 15)
+| extend
+    BlockRatePct = round(100.0 * todouble(Blocked) / iff(Transactions == 0, 1.0, todouble(Transactions)), 2),
+    ThreatRatePct = round(100.0 * todouble(ThreatEvents) / iff(Transactions == 0, 1.0, todouble(Transactions)), 2)
+| project Transactions, UniqueUsers, UniqueDestinations, Allowed, Blocked, BlockRatePct, ThreatEvents, ThreatRatePct, DlpEvents, HighRiskAppEvents, BytesUploaded, BytesDownloaded, Products, TopCategories, RuleTypes

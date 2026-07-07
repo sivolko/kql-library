@@ -1,0 +1,8 @@
+// Source: https://github.com/carlzxc71/demo-kql-queries-public
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(30d)
+| where OperationNameValue has "Microsoft.Compute/virtualMachines"
+| where OperationNameValue has_any ("start", "restart", "deallocate", "powerOff")

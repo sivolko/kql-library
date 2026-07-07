@@ -1,0 +1,10 @@
+// Source: https://github.com/rod-trent/KQLMysteries
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 3 // Network connection event
+| where ProcessName has_any ('MsMpEng.exe', 'cert.exe', 'agent.exe') // Malicious processes
+| where RemoteAddress !in ('127.0.0.1', '::1') // Exclude local connections
+| where RemotePort != 443 // Exclude HTTPS connections
+| project TimeGenerated, ComputerName, Account, ProcessName, RemoteAddress, RemotePort // Select relevant fields

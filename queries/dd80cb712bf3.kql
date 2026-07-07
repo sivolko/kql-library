@@ -1,0 +1,198 @@
+// Source: https://github.com/sagarm365/kql-threat-hunting-playbook
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where RiskLevelAggregated in (50, 100)   // 50 = medium, 100 = high
+| summarize Count = count() by AccountUpn, RiskLevelAggregated, IPAddress, Country, City
+| order by Count desc
+
+// ── QUERY 2 ─────────────────────────────────────────────────
+// Sign-ins from new countries per user
+// MITRE: TA0001, TA0006, TA0005
+// ──────────────────────────────────────────────────────────────
+let lookback = 14d;
+let baseline =
+    EntraIdSignInEvents
+    | where Timestamp between (ago(lookback*2) .. ago(lookback))
+    | summarize BaselineCountries = make_set(Country) by AccountUpn;
+EntraIdSignInEvents
+| where Timestamp > ago(lookback)
+| join kind=leftouter baseline on AccountUpn
+| extend IsNewCountry = iif(isempty(BaselineCountries) or Country !in (BaselineCountries), true, false)
+| where IsNewCountry == true
+| summarize Count = count(), Countries = make_set(Country) by AccountUpn
+| order by Count desc
+
+// ── QUERY 3 ─────────────────────────────────────────────────
+// Sign-ins from unmanaged or non-compliant devices
+// MITRE: TA0001, TA0006
+// ──────────────────────────────────────────────────────────────
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where IsManaged == 0 or IsCompliant == 0
+| summarize Count = count() by AccountUpn, DeviceName, OSPlatform, IsManaged, IsCompliant
+| order by Count desc
+
+// ── QUERY 4 ─────────────────────────────────────────────────
+// High error-rate sign-ins per user
+// MITRE: TA0006
+// ──────────────────────────────────────────────────────────────
+EntraIdSignInEvents
+| where Timestamp > ago(24h)
+| summarize Total = count(), Failures = countif(ErrorCode != 0) by AccountUpn
+| extend FailureRate = todouble(Failures) / Total
+| where FailureRate > 0.5 and Failures > 10
+| order by FailureRate desc
+
+// ── QUERY 5 ─────────────────────────────────────────────────
+// Sign-ins with single-factor authentication only
+// MITRE: TA0001, TA0006
+// ──────────────────────────────────────────────────────────────
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| summarize Count = count() by AccountUpn, ClientAppUsed, Application
+| order by Count desc
+
+// ── QUERY 6 ─────────────────────────────────────────────────
+// Legacy protocols in IdentityLogonEvents
+// MITRE: TA0001, TA0006
+// ──────────────────────────────────────────────────────────────
+IdentityLogonEvents
+| where Timestamp > ago(7d)
+| where Protocol in ("POP3", "IMAP4", "SMTP", "ActiveSync")
+| summarize Count = count() by AccountUpn, Protocol, Application, DeviceType
+| order by Count desc
+
+// ── QUERY 7 ─────────────────────────────────────────────────
+// Sign-ins without Conditional Access evaluation
+// MITRE: TA0001
+// ──────────────────────────────────────────────────────────────
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where ConditionalAccessStatus == 2  // policies not applied
+| summarize Count = count() by AccountUpn, Application, ClientAppUsed
+| order by Count desc
+
+// ── QUERY 8 ─────────────────────────────────────────────────
+// Admin accounts with risky sign-ins
+// MITRE: TA0003 Persistence | TA0004 Privilege Escalation
+// ──────────────────────────────────────────────────────────────
+let admins =
+    IdentityInfo
+    | where AssignedRoles has_any ("Global Administrator", "Privileged Role Administrator")
+    | project AccountObjectId, AccountUpn;
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| join kind=inner (admins) on AccountObjectId
+| where RiskLevelAggregated in (10, 50, 100)
+| summarize Count = count() by AccountUpn, RiskLevelAggregated, IPAddress, Country, City
+| order by Count desc
+
+// ── QUERY 9 ─────────────────────────────────────────────────
+// Admin logons from unusual number of devices
+// MITRE: TA0003, TA0004
+// ──────────────────────────────────────────────────────────────
+let admins =
+    IdentityInfo
+    | where AssignedRoles has_any ("Global Administrator", "Security Administrator")
+    | project AccountUpn;
+IdentityLogonEvents
+| where Timestamp > ago(7d)
+| join kind=inner (admins) on AccountUpn
+| summarize DeviceCount = dcount(DeviceName) by AccountUpn
+| where DeviceCount > 3
+| order by DeviceCount desc
+
+// ── QUERY 10 ────────────────────────────────────────────────
+// Emergency access / break-glass accounts used
+// MITRE: TA0003, TA0004
+// ──────────────────────────────────────────────────────────────
+IdentityInfo
+| where Tags has "BreakGlass"
+| project AccountUpn, AccountObjectId
+| join kind=inner (
+    EntraIdSignInEvents
+    | where Timestamp > ago(30d)
+) on AccountUpn
+| summarize Count = count(), Apps = make_set(Application) by AccountUpn
+
+// ── QUERY 11 ────────────────────────────────────────────────
+// Classic impossible travel detection
+// MITRE: TA0001
+// ──────────────────────────────────────────────────────────────
+let max_speed_kmh = 800;
+EntraIdSignInEvents
+| where Timestamp > ago(1d)
+| where isnotempty(Latitude) and isnotempty(Longitude)
+| project AccountUpn, Timestamp, Latitude, Longitude, Country, City, IPAddress
+| order by AccountUpn asc, Timestamp asc
+| serialize
+| extend prevTime = prev(Timestamp,1), prevLat = prev(Latitude,1),
+         prevLon = prev(Longitude,1), prevUser = prev(AccountUpn,1)
+| where AccountUpn == prevUser
+| extend TimeDiffHours = datetime_diff('minute',Timestamp,prevTime)/60.0
+| where TimeDiffHours > 0
+| extend DistKm = 6371 * acos(
+    sin(radians(Latitude))*sin(radians(prevLat)) +
+    cos(radians(Latitude))*cos(radians(prevLat))*
+    cos(radians(Longitude)-radians(prevLon)))
+| extend Speed = DistKm / TimeDiffHours
+| where Speed > max_speed_kmh
+| project AccountUpn, Timestamp, prevTime, City, Country, DistKm, Speed
+
+// ── QUERY 12 ────────────────────────────────────────────────
+// Risky IPs — only failures, high volume
+// MITRE: TA0006
+// ──────────────────────────────────────────────────────────────
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where RiskLevelAggregated >= 50
+| summarize Count = count(), Users = make_set(AccountUpn)
+  by IPAddress, Country, City
+| where Count > 3
+| order by Count desc
+
+// ── QUERY 13 ────────────────────────────────────────────────
+// Password spray — many users from single IP
+// MITRE: TA0006 T1110.003
+// ──────────────────────────────────────────────────────────────
+EntraIdSignInEvents
+| where Timestamp > ago(1h)
+| where ErrorCode != 0
+| summarize TargetUsers = dcount(AccountUpn),
+            FailureCount = count(),
+            UserList = make_set(AccountUpn, 20)
+  by IPAddress, CountryCode
+| where TargetUsers > 10
+| order by TargetUsers desc
+
+// ── QUERY 14 ────────────────────────────────────────────────
+// Brute-force against a single account
+// MITRE: TA0006 T1110.001
+// ──────────────────────────────────────────────────────────────
+EntraIdSignInEvents
+| where Timestamp > ago(1h)
+| where ErrorCode in (50126, 50053, 50055, 50056)
+| summarize FailCount = count(), SourceIPs = make_set(IPAddress, 10)
+  by AccountUpn
+| where FailCount > 20
+| order by FailCount desc
+
+// ── QUERY 15 ────────────────────────────────────────────────
+// Successful sign-in after multiple failures — possible successful brute-force
+// MITRE: TA0001, TA0006
+// ──────────────────────────────────────────────────────────────
+let failures =
+    EntraIdSignInEvents
+    | where Timestamp > ago(1h)
+    | where ErrorCode != 0
+    | summarize FailureCount = count() by AccountUpn, IPAddress;
+EntraIdSignInEvents
+| where Timestamp > ago(1h)
+| where ErrorCode == 0
+| join kind=inner failures on AccountUpn, IPAddress
+| where FailureCount > 5
+| project Timestamp, AccountUpn, IPAddress, FailureCount, Application, Country

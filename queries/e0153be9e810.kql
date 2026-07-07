@@ -1,0 +1,44 @@
+// Source: https://github.com/MitchellGulledge3/zscaler-sentinel-mcp-tools
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 24h;
+let CommonSecurityLogSource = union isfuzzy=true (datatable(TimeGenerated:datetime, DeviceVendor:string, DeviceProduct:string)[]), CommonSecurityLog;
+CommonSecurityLogSource
+| where TimeGenerated >= ago(lookback)
+| where DeviceVendor =~ "Zscaler"
+| extend
+    Product = tostring(column_ifexists("DeviceProduct", "")),
+    Action = tostring(column_ifexists("DeviceAction", "")),
+    User = tolower(tostring(column_ifexists("SourceUserName", ""))),
+    Destination = coalesce(tostring(column_ifexists("DestinationServiceName", "")), tostring(column_ifexists("DestinationHostName", "")), tostring(column_ifexists("RequestURL", ""))),
+    FileType = tostring(column_ifexists("FileType", "")),
+    Sent = tolong(column_ifexists("SentBytes", 0)),
+    Additional = tostring(column_ifexists("AdditionalExtensions", ""))
+| extend
+    DlpDictionary = coalesce(extract(@"(?i)(?:^|;)ZscalerNSSWeblogDLPDictionaries=([^;]*)", 1, Additional), tostring(column_ifexists("DeviceCustomString1", ""))),
+    DlpRule = extract(@"(?i)(?:^|;)dlprulename=([^;]*)", 1, Additional),
+    DlpIdentifier = extract(@"(?i)(?:^|;)dlpidentifier=([^;]*)", 1, Additional),
+    UploadFileName = extract(@"(?i)(?:^|;)upload_filename=([^;]*)", 1, Additional),
+    UploadFileType = coalesce(extract(@"(?i)(?:^|;)upload_filetype=([^;]*)", 1, Additional), FileType),
+    HitCount = toint(extract(@"(?i)(?:^|;)dlpdicthitcount=([^;]*)", 1, Additional))
+| where isnotempty(DlpDictionary) and DlpDictionary !in~ ("None", "NA", "N/A", "-")
+| extend IsBlocked = Action has_any ("Block", "Deny", "Quarantine")
+| summarize
+    Incidents = count(),
+    Blocked = countif(IsBlocked),
+    Allowed = countif(not(IsBlocked)),
+    UniqueUsers = dcount(User),
+    BytesAttempted = sum(Sent),
+    TotalDictionaryHits = sum(coalesce(HitCount, 0)),
+    Products = make_set(Product, 10),
+    SampleUsers = make_set(User, 10),
+    Destinations = make_set(Destination, 10),
+    FileTypes = make_set(UploadFileType, 10),
+    FileNames = make_set(UploadFileName, 10),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by DlpDictionary, DlpRule, DlpIdentifier
+| order by Incidents desc, BytesAttempted desc
+| take 50
+| project DlpDictionary, DlpRule, DlpIdentifier, Incidents, Blocked, Allowed, UniqueUsers, BytesAttempted, TotalDictionaryHits, Products, SampleUsers, Destinations, FileTypes, FileNames, FirstSeen, LastSeen

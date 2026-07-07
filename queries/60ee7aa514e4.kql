@@ -1,0 +1,22 @@
+// Source: https://github.com/edwardjgriggs/detection-engineering
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 24h;
+OfficeActivity
+| where TimeGenerated > ago(lookback)
+| where Operation in ("New-InboxRule", "Set-InboxRule")
+| mv-expand Param = parse_json(Parameters)
+| extend ParamName  = tostring(Param.Name),
+         ParamValue = tostring(Param.Value)
+| where ParamName in (
+    "ForwardTo", "ForwardAsAttachmentTo", "RedirectTo",
+    "DeleteMessage", "MoveToFolder"
+  )
+| summarize RuleActions = make_bag(pack(ParamName, ParamValue))
+    by TimeGenerated, UserId, Operation, ClientIP, OriginatingServer
+| order by TimeGenerated desc
+
+// Note: the shape of the Parameters field varies by tenant and workload.
+// Verify the field names against your own OfficeActivity sample before
+// deploying, and consider flagging external recipient domains as a follow-on.

@@ -1,0 +1,14 @@
+// Source: https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 7d;
+let exclusions = dynamic([]);
+IdentityLogonEvents
+| where Timestamp > ago(lookback)
+| where Protocol == @"Ntlm"
+| where LogonType == @"Network"
+| where isnotempty(AccountName)
+| where AdditionalFields.IsInteractive == false
+| where AccountName !in (exclusions)
+| project Timestamp, DeviceName, AccountName, RemoteIP, RemoteDeviceName, AdditionalFields

@@ -1,0 +1,50 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-07-07
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookBack = 15m;
+
+// Known AdminSDHolder DN patterns
+let AdminSDHolderPatterns = dynamic([
+    "CN=AdminSDHolder,CN=System",
+    "adminsdholder"
+]);
+
+SecurityEvent
+| where TimeGenerated > ago(LookBack)
+| where EventID == 5136                     // DS Object Modified
+| where ObjectDN has_any (AdminSDHolderPatterns)
+    or (ObjectClass =~ "container"
+        and ObjectDN has "CN=System"
+        and toLower(ObjectDN) has "adminsdholder")
+| extend
+    ActorAccount     = strcat(SubjectDomainName, "\\", SubjectUserName),
+    TargetObject     = ObjectDN,
+    ModifiedAttrib   = AttributeLDAPDisplayName,
+    OperationDesc    = case(
+        OperationType == "%%14674", "Attribute Written",
+        OperationType == "%%14675", "Attribute Deleted",
+        OperationType == "%%14676", "Attribute Added",
+        OperationType
+    )
+| extend
+    Severity = "Critical",
+    WhySuspicious = strcat(
+        "AdminSDHolder_DACL_Modified; ",
+        "SDProp_will_propagate_to_all_protected_groups_in_60min; ",
+        "Actor: ", SubjectUserName, "; ",
+        "Operation: ", OperationDesc, "; ",
+        "Attribute: ", ModifiedAttrib
+    )
+| project
+    TimeGenerated,
+    Severity,
+    WhySuspicious,
+    ActorAccount,
+    TargetObject,
+    ModifiedAttrib,
+    OperationDesc,
+    Computer,
+    SubjectUserName,
+    SubjectDomainName
+| order by TimeGenerated desc
