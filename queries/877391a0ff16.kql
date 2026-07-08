@@ -1,0 +1,7 @@
+// Source: https://github.com/xpinux/Project-SABER
+// Collected: 2026-07-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationName == "Delete specified data from workspace" or OperationName contains "Delete Data" or OperationName contains "DeleteData" or OperationNameValue contains "DeletaData"
+| where ActivityStatus == "Accepted"

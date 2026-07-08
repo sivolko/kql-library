@@ -1,0 +1,11 @@
+// Source: https://github.com/leandroer/AI-Security-Incident-Response-Lab
+// Collected: 2026-07-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(24h)
+| where Workload in ("SharePoint", "OneDrive", "MicrosoftTeams", "Exchange")
+| summarize ResourceAccessCount=count(), Operations=make_set(Operation, 50), Sites=make_set(Site_Url, 25) by UserId, bin(TimeGenerated, 15m)
+| where ResourceAccessCount > 500
+| extend DetectionName = "AGENT03 - Potential Agent Data Exfiltration", Severity = "Critical"
+| project TimeGenerated, DetectionName, Severity, UserId, ResourceAccessCount, Operations, Sites

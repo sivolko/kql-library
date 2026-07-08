@@ -1,0 +1,57 @@
+// Source: https://github.com/rharvey12/AzurePr0jects
+// Collected: 2026-07-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago(24h)
+| where Category == "RoleManagement"
+| where ActivityDisplayName contains "Add member to role completed (PIM activation)"
+| extend hour = datetime_part('hour', TimeGenerated)
+| where hour < 7 or hour > 19
+| project TimeGenerated, 
+          InitiatedBy=tostring(InitiatedBy.user.userPrincipalName),
+          TargetResources,
+          Result
+
+// Query 2: Multiple PIM activations in short window (potential compromise)
+AuditLogs
+| where TimeGenerated > ago(4h)
+| where Category == "RoleManagement"
+| where ActivityDisplayName contains "PIM activation"
+| summarize ActivationCount = count() by 
+    User = tostring(InitiatedBy.user.userPrincipalName),
+    bin(TimeGenerated, 1h)
+| where ActivationCount > 3
+
+// Query 3: PIM activation immediately followed by privileged action
+let activations = AuditLogs
+    | where Category == "RoleManagement"
+    | where ActivityDisplayName contains "PIM activation"
+    | extend User = tostring(InitiatedBy.user.userPrincipalName);
+let adminActions = AzureActivity
+    | where OperationNameValue has_any ("delete", "deallocate", "write")
+    | where ActivityStatusValue == "Success";
+activations
+| join kind=inner adminActions on $left.User == $right.Caller
+| project User, PIMTime=TimeGenerated, ActionTime=ActionTime, Action=OperationNameValue
+
+// Query 4: Failed PIM activation attempts (potential attack)
+AuditLogs
+| where Category == "RoleManagement"
+| where ActivityDisplayName contains "PIM activation"
+| where Result == "failure"
+| summarize FailureCount = count() by 
+    User = tostring(InitiatedBy.user.userPrincipalName),
+    bin(TimeGenerated, 1h)
+| where FailureCount > 2
+
+// Query 5: PIM activations from risky users
+let riskyUsers = SigninLogs
+    | where RiskLevelDuringSignIn in ("high", "medium")
+    | distinct UserPrincipalName;
+AuditLogs
+| where Category == "RoleManagement"
+| where ActivityDisplayName contains "PIM activation"
+| extend User = tostring(InitiatedBy.user.userPrincipalName)
+| where User in (riskyUsers)
+| project TimeGenerated, User, TargetResources, RiskLevel="HIGH"

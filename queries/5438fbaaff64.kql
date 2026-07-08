@@ -1,0 +1,45 @@
+// Source: https://github.com/TakumiSeo/AVD-Visualisation-UserUsage-per-SessionHost
+// Collected: 2026-07-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TimeRangeEnd = now();  // 現在の時間  
+let TimeRangeStart = TimeRangeEnd - 24h;  // 現在の時間から24時間前  
+// 仮想マシンの開始イベントを取得  
+let StartEvents =   
+    AzureActivity  
+    | where OperationNameValue == "MICROSOFT.COMPUTE/VIRTUALMACHINES/START/ACTION" and ActivityStatusValue == "Success" and TimeGenerated between (TimeRangeStart .. TimeRangeEnd)  
+    | project ResourceId = tolower(_ResourceId), StartTime = TimeGenerated;  
+// 仮想マシンの停止イベントを取得  
+let StopEvents =   
+    AzureActivity  
+    | where OperationNameValue == "MICROSOFT.COMPUTE/VIRTUALMACHINES/DEALLOCATE/ACTION" and ActivityStatusValue == "Success" and TimeGenerated between (TimeRangeStart .. TimeRangeEnd)  
+    | project ResourceId = tolower(_ResourceId), EndTime = TimeGenerated;  
+// 仮想マシンごとの最新の開始イベントを取得  
+let LatestStartEvents =   
+    StartEvents  
+    | summarize arg_max(StartTime, *) by ResourceId;  
+// 仮想マシンごとの最新の停止イベントを取得  
+let LatestStopEvents =   
+    StopEvents  
+    | summarize arg_max(EndTime, *) by ResourceId;  
+// 停止イベントがあり、再度開始されていないホストのリストを作成  
+let StoppedHosts =   
+    LatestStopEvents  
+    | join kind=anti (LatestStartEvents) on ResourceId  
+    | project StoppedHost = ResourceId;  
+// 最新の開始イベントに対して停止イベントを結合し、稼働時間を計算  
+let RunningTimes =   
+    LatestStartEvents  
+    | join kind=leftouter (LatestStopEvents) on ResourceId  
+    | extend EndTime = iff(isnull(EndTime) or EndTime < StartTime, TimeRangeEnd, EndTime)  // 停止イベントがない場合、または停止イベントが開始イベントより前の場合は現在時刻を使用  
+    | where EndTime > StartTime  // EndTimeがStartTimeより後であることを確認  
+    | extend Duration = EndTime - StartTime  
+    | extend Host = tolower(extract(@"[^/]+$", 0, ResourceId))  
+    | summarize TotalOnTime = sum(Duration) by Host;  
+// 停止イベントがあった後に再度開始されていないホストを除外  
+let FilteredRunningTimes =   
+    RunningTimes  
+    | join kind=anti (StoppedHosts) on $left.Host == $right.StoppedHost;  
+// 結果を時間単位で表示  
+FilteredRunningTimes  
+| project Host, TotalOnTimeHours = round(TotalOnTime / 1h, 2)  
