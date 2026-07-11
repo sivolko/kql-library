@@ -1,0 +1,131 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-07-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackBaseline = 30d;
+let DetectionWindow = 1d;
+let BaselineDevices =
+    SigninLogs
+    | where TimeGenerated between (ago(LookbackBaseline) .. ago(DetectionWindow))
+    | where ResultType == 0
+    | where isnotempty(DeviceDetail.deviceId)
+    | summarize
+        KnownDeviceIds = make_set(tostring(DeviceDetail.deviceId)),
+        KnownIPs = make_set(IPAddress)
+        by UserPrincipalName;
+SigninLogs
+| where TimeGenerated > ago(DetectionWindow)
+| where ResultType == 0
+| where isnotempty(DeviceDetail.deviceId)
+| extend DeviceId = tostring(DeviceDetail.deviceId)
+| join kind=leftouter (BaselineDevices) on UserPrincipalName
+| where DeviceId !in (KnownDeviceIds) or isnull(KnownDeviceIds)
+| project
+    TimeGenerated,
+    UserPrincipalName,
+    DeviceId,
+    IPAddress,
+    AppDisplayName,
+    AuthenticationProtocol,
+    TokenIssuerType = tostring(TokenIssuerType),
+    TrustType = tostring(DeviceDetail.trustType),
+    KnownDeviceIds,
+    IsNewDevice = iff(DeviceId !in (KnownDeviceIds), true, false)
+| where IsNewDevice
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: Sudden scope expansion from a single authentication session
+//
+// Rationale: After replaying a PRT, the attacker calls the token endpoint
+// repeatedly for different resource scopes in quick succession. This "scope
+// expansion" pattern — one identity accessing many different resources within
+// minutes — is unusual for interactive users but typical of automated tooling.
+// ============================================================================
+let ScopeExpansionWindow = 10m;
+let MinUniqueApps = 4;  // Alert when same user accesses this many distinct apps
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where ResultType == 0
+| summarize
+    UniqueApps = dcount(AppDisplayName),
+    AppList = make_set(AppDisplayName),
+    UniqueIPs = dcount(IPAddress),
+    IPList = make_set(IPAddress),
+    AuthMethods = make_set(AuthenticationProtocol),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by UserPrincipalName, bin(TimeGenerated, ScopeExpansionWindow)
+| where UniqueApps >= MinUniqueApps
+| extend
+    SpanMinutes = datetime_diff("minute", LastSeen, FirstSeen),
+    MultipleIPs = iff(UniqueIPs > 1, true, false)
+| project
+    UserPrincipalName,
+    WindowStart = bin(TimeGenerated, ScopeExpansionWindow),
+    UniqueApps,
+    AppList,
+    UniqueIPs,
+    MultipleIPs,
+    IPList,
+    AuthMethods,
+    FirstSeen,
+    LastSeen,
+    SpanMinutes
+| order by UniqueApps desc
+
+
+// ============================================================================
+// Query 3: PRT-sourced token after recent credential reset
+//
+// Rationale: When a user changes their password or MFA method, Entra ID
+// should revoke existing PRTs and refresh tokens. If a sign-in occurs via
+// PRT-style authentication (SSO, no re-auth) shortly after a credential
+// change event, it may indicate a PRT that was not properly revoked —
+// meaning the attacker still has valid access despite the password reset.
+//
+// Note: This is also used to detect "Pass-the-PRT" post-reset persistence.
+// ============================================================================
+let RevocationGap = 30m;  // How long after cred change to watch for stale PRT use
+let CredentialChanges =
+    AuditLogs
+    | where TimeGenerated > ago(7d)
+    | where OperationName in (
+        "Change user password",
+        "Reset user password",
+        "User registered security info",
+        "User deleted security info",
+        "Update user",
+        "Admin updated user"
+      )
+    | extend ActedOnUPN = tostring(TargetResources[0].userPrincipalName)
+    | where isnotempty(ActedOnUPN)
+    | project ChangeTime = TimeGenerated, ActedOnUPN, OperationName;
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where ResultType == 0
+// Focus on SSO-style authentications (no fresh MFA, no password entry)
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| where AuthenticationProtocol in ("none", "deviceCode", "")
+| project
+    SigninTime = TimeGenerated,
+    UserPrincipalName,
+    AppDisplayName,
+    IPAddress,
+    DeviceId = tostring(DeviceDetail.deviceId),
+    TrustType = tostring(DeviceDetail.trustType)
+| join kind=inner (CredentialChanges) on $left.UserPrincipalName == $right.ActedOnUPN
+| where SigninTime between (ChangeTime .. (ChangeTime + RevocationGap))
+| extend MinutesSinceCredChange = datetime_diff("minute", SigninTime, ChangeTime)
+| project
+    UserPrincipalName,
+    ChangeTime,
+    OperationName,
+    SigninTime,
+    MinutesSinceCredChange,
+    AppDisplayName,
+    IPAddress,
+    DeviceId,
+    TrustType
+| order by MinutesSinceCredChange asc

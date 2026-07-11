@@ -1,0 +1,32 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-07-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let id=
+    IdentityInfo
+    | summarize arg_max(TimeGenerated, *) by AccountUPN;
+let signin=
+    SigninLogs
+    | where TimeGenerated > ago (14d)
+    | where RiskLevelDuringSignIn in ('high', 'medium')
+    | join kind=inner id on $left.UserPrincipalName == $right.AccountUPN
+    | extend SigninTime = TimeGenerated
+    | where RiskEventTypes_V2 != "[]";
+AADUserRiskEvents
+| where TimeGenerated > ago (14d)
+| extend RiskTime = TimeGenerated
+| where DetectionTimingType == "realtime"
+| where RiskDetail !has "aiConfirmedSigninSafe"
+| join kind=inner signin on CorrelationId
+| extend TimeDelta = abs(SigninTime - RiskTime)
+| project
+    SigninTime,
+    UserPrincipalName,
+    RiskTime,
+    TimeDelta,
+    RiskEventTypes,
+    RiskLevelDuringSignIn,
+    City,
+    Country,
+    EmployeeId,
+    AssignedRoles

@@ -1,0 +1,9 @@
+// Source: https://github.com/Shriya-Commits/Microsoft-Sentinel-Threat-Detection
+// Collected: 2026-07-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4688
+| where CommandLine has_any ("whoami", "ipconfig", "net user", "net localgroup")
+| project TimeGenerated, Account, CommandLine
+| sort by TimeGenerated desc

@@ -1,0 +1,7 @@
+// Source: https://github.com/topazyo/siem-optimization-toolkit
+// Collected: 2026-07-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| count

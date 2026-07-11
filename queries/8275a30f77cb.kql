@@ -1,0 +1,50 @@
+// Source: https://github.com/AmeenShareif/HomeLab
+// Collected: 2026-07-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+let threshold = 10;
+let timewindow = 5m;
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4625                          // failed logon
+| where LogonType == 10                          // RemoteInteractive (RDP)
+| summarize
+    FailedAttempts = count(),
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated),
+    Accounts = make_set(TargetUserName)
+    by IpAddress, bin(TimeGenerated, timewindow)
+| where FailedAttempts >= threshold
+| extend TimespanMinutes = datetime_diff('minute', LastAttempt, FirstAttempt)
+| project
+    TimeGenerated,
+    IpAddress,
+    FailedAttempts,
+    Accounts,
+    FirstAttempt,
+    LastAttempt,
+    TimespanMinutes
+| order by FailedAttempts desc
+
+// -----------------------------------------------------------------------------
+// Optional: correlate with a successful logon after the failures
+// Uncomment to use as a follow-on query to check if brute force succeeded
+// -----------------------------------------------------------------------------
+
+// let failures =
+//     SecurityEvent
+//     | where TimeGenerated > ago(1h)
+//     | where EventID == 4625 and LogonType == 10
+//     | summarize FailCount = count() by IpAddress, TargetUserName;
+//
+// let successes =
+//     SecurityEvent
+//     | where TimeGenerated > ago(1h)
+//     | where EventID == 4624 and LogonType == 10
+//     | project SuccessTime = TimeGenerated, IpAddress, TargetUserName;
+//
+// failures
+// | join kind=inner successes on IpAddress, TargetUserName
+// | where FailCount >= 5
+// | project IpAddress, TargetUserName, FailCount, SuccessTime

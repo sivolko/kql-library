@@ -1,0 +1,17 @@
+// Source: https://github.com/chadmcox/Azure_Active_Directory
+// Collected: 2026-07-11
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where ResourceTenantId <> HomeTenantId and AADTenantId == HomeTenantId
+| where AppDisplayName == "Azure Portal"
+| distinct UserPrincipalName,ResourceTenantId,AADTenantId,HomeTenantId,AppDisplayName
+| summarize signincount=count() by ResourceTenantId
+
+
+
+//this one provides a list of users and the tenants they are logging into
+SigninLogs
+| where ResourceTenantId <> HomeTenantId and AADTenantId == HomeTenantId
+| where AppDisplayName == "Azure Portal"
+| distinct UserPrincipalName,ResourceTenantId,AADTenantId,HomeTenantId,AppDisplayName
