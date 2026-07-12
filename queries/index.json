@@ -1,5 +1,273 @@
 [
   {
+    "id": "eb1cbf2a117b",
+    "title": "Hunt    : M365 - Guest Accounts Dormant Then Suddenly Reactivated (30d)",
+    "description": "Purpose : Identify external guest (#EXT#) accounts that show zero OfficeActivity during a 30\u201390 day \"dormancy window\" and then generate a burst of events in the most recent 7 days. This pattern signals either: (a) a forgotten guest account whose credentials were compromised, (b) a guest who was re-invited under the same UPN after a long gap, or (c) a legitimate return that nevertheless warrants re-validation. Results include a risk profile of the post-reactivation activity. Tables  : OfficeActivity Period  : P90D lookback",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet DormancyStart    = ago(90d);   // begin of dormancy check\nlet DormancyEnd      = ago(7d);    // end of dormancy / begin of burst window\nlet BurstWindowStart = ago(7d);    // burst observation window\nlet MinBurstEvents   = 3;          // minimum events to surface as reactivated guest\n\n// --- Guests with NO activity during the dormancy window ---\nlet GuestsActiveDuringDormancy = OfficeActivity\n    | where TimeGenerated between (DormancyStart .. DormancyEnd)\n    | where UserId has \"#EXT#\"\n    | summarize count() by UserId;\n\n// --- Guests with any history BEFORE the dormancy window ---\nlet GuestsWithOlderHistory = OfficeActivity\n    | where TimeGenerated < DormancyEnd\n    | where UserId has \"#EXT#\"\n    | summarize LastOldEvent = max(TimeGenerated) by UserId;\n\n// Truly dormant guests = had old history, silent during dormancy window\nlet TrulyDormantGuests = GuestsWithOlderHistory\n    | join kind=leftanti GuestsActiveDuringDormancy on UserId\n    | project UserId, LastOldEvent;\n\n// --- Burst activity in the last 7 days for those same guests ---\nlet RecentBurst = OfficeActivity\n    | where TimeGenerated >= BurstWindowStart\n    | where UserId has \"#EXT#\"\n    | extend\n        ExternalDomain = extract(@\"_([^_#]+)#EXT#\", 1, tolower(UserId)),\n        IsExfilOp = Operation in (\n            \"FileDownloaded\", \"FileSyncDownloadedFull\",\n            \"FileAccessed\", \"AnonymousLinkCreated\",\n            \"SecureLinkCreated\", \"SharingInvitationCreated\",\n            \"Send\", \"MailItemsAccessed\"),\n        IsAfterHours = hourofday(TimeGenerated) < 6 or hourofday(TimeGenerated) >= 22\n    | summarize\n        BurstEvents       = count(),\n        FirstBurstEvent   = min(TimeGenerated),\n        ExfilOpCount      = countif(IsExfilOp),\n        AfterHoursCount   = countif(IsAfterHours),\n        DistinctSites     = dcount(Site_Url),\n        DistinctOps       = dcount(Operation),\n        Workloads         = make_set(RecordType, 5),\n        SampleOps         = make_set(Operation, 10),\n        ExternalDomain    = any(ExternalDomain)\n        by UserId;\n\n// --- Join dormant guests with their burst activity ---\nTrulyDormantGuests\n| join kind=inner RecentBurst on UserId\n| where BurstEvents >= MinBurstEvents\n| extend\n    DormancyDays    = datetime_diff(\"day\", FirstBurstEvent, LastOldEvent),\n    ExfilRatio      = round(todouble(ExfilOpCount) / todouble(BurstEvents), 2)\n| extend RiskScore = toint(\n      iif(DormancyDays  >= 180, 3, iif(DormancyDays  >= 90,  2, 1))\n    + iif(ExfilRatio    >= 0.5, 3, iif(ExfilRatio    >= 0.2, 1, 0))\n    + iif(AfterHoursCount >= 3, 2, 0)\n    + iif(DistinctSites >= 5,   1, 0))\n| project\n    UserId,\n    ExternalDomain,\n    LastOldEvent,\n    DormancyDays,\n    FirstBurstEvent,\n    BurstEvents,\n    ExfilOpCount,\n    ExfilRatio,\n    AfterHoursCount,\n    DistinctSites,\n    DistinctOps,\n    Workloads,\n    RiskScore,\n    SampleOps\n| sort by RiskScore desc, DormancyDays desc",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/758d1abb4b48dcc537a8802bad97dc6ca06b8db2/Use%20Cases%20Threat%20Hunting/M365OfficeActivity/V2_Watchlist/HuntingQueries/HUNT-22_M365-Guest-Dormancy-Reactivation-30d.kql",
+    "filename": "HUNT-22_M365-Guest-Dormancy-Reactivation-30d.kql",
+    "collected_at": "2026-07-12T05:32:34.854503+00:00"
+  },
+  {
+    "id": "8c3b89c01be5",
+    "title": "=============================================================================",
+    "description": "04 - Sign-in active days vs own baseline  [MODEL A - independent proxy] ----------------------------------------------------------------------------- Purpose An engagement proxy independent of OfficeActivity: distinct days with a successful INTERACTIVE sign-in, current period vs the user's own baseline. Useful to corroborate (or question) the OfficeActivity-based picture. Output : one row per user \u2014 baseline vs current sign-in active-day ratio, % change, distinct apps, and review status.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "m365",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/madhuperera/Microsoft_Sentinel\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet ReportPeriod   = 30d;\nlet BaselinePeriod = 30d;\nlet EndTime        = now();\nlet CurrentStart   = EndTime - ReportPeriod;\nlet BaselineStart  = CurrentStart - BaselinePeriod;\nlet NormalBandPct  = 20.0;\nlet MinBaselineDays = 3;           // baseline confidence floor (active sign-in days)\nlet ReportDays     = ReportPeriod / 1d;\nlet BaselineDays   = BaselinePeriod / 1d;\nlet ServiceAccountUPNs = toscalar(\n    // isfuzzy=true: if the watchlist is absent the query still runs (degrades to\n    // no service-account exclusions) instead of failing. UserType filter remains.\n    union isfuzzy=true\n        (datatable(UPN:string)[]),\n        (_GetWatchlist(\"service-accounts\") | project UPN = tostring(UPN))\n    | summarize make_set(tolower(UPN)));\nlet SigninMetrics = (winStart:datetime, winEnd:datetime, days:real) {\n    SigninLogs\n    | where TimeGenerated >= winStart and TimeGenerated < winEnd\n    | where UserType =~ \"Member\"\n    | where ResultType == 0                       // successful sign-ins only\n    | extend UPN = tolower(UserPrincipalName)\n    | where UPN !in (ServiceAccountUPNs)\n    | summarize SignInDays = dcount(bin(TimeGenerated, 1d)),\n                DistinctApps = dcount(AppDisplayName),\n                arg_max(TimeGenerated, UserDisplayName) by UPN\n    | extend SignInDayRatio = round(todouble(SignInDays) / days, 3)\n};\nlet Baseline = SigninMetrics(BaselineStart, CurrentStart, BaselineDays);\nlet Current  = SigninMetrics(CurrentStart, EndTime, ReportDays);\nBaseline\n| join kind=fullouter Current on UPN\n| extend UPN = coalesce(UPN, UPN1),\n         UserDisplayName = coalesce(UserDisplayName1, UserDisplayName)\n| extend B_SignInDays = coalesce(SignInDays, 0), C_SignInDays = coalesce(SignInDays1, 0),\n         B_Ratio = coalesce(SignInDayRatio, 0.0), C_Ratio = coalesce(SignInDayRatio1, 0.0),\n         B_Apps = coalesce(DistinctApps, 0), C_Apps = coalesce(DistinctApps1, 0)\n| extend ChangePct = iff(B_Ratio > 0, round((C_Ratio - B_Ratio) / B_Ratio * 100, 1), real(null))\n| extend Status = case(\n        B_SignInDays < MinBaselineDays,  \"Insufficient baseline (low confidence)\",\n        isnull(ChangePct),               \"No baseline activity\",\n        abs(ChangePct) <= NormalBandPct, \"Within normal range\",\n        ChangePct > NormalBandPct,       \"Increase - review only\",\n                                         \"Decrease - review only\")\n// Exclude accounts with no resolvable display name.\n| where isnotempty(UserDisplayName)\n| project UserDisplayName, UPN, B_SignInDays, C_SignInDays, B_Ratio, C_Ratio,\n          ChangePct, B_Apps, C_Apps, Status\n| order by ChangePct asc\n//\n// -----------------------------------------------------------------------------\n// OPTIONAL: background vs interactive split (only if AADNonInteractiveUserSignInLogs\n// is ingested). This is context, NOT an engagement metric \u2014 do not classify on it.\n// -----------------------------------------------------------------------------\n// union\n//   (SigninLogs | where TimeGenerated >= CurrentStart | extend Kind=\"Interactive\"),\n//   (AADNonInteractiveUserSignInLogs | where TimeGenerated >= CurrentStart | extend Kind=\"NonInteractive\")\n// | where UserType == \"Member\" and ResultType == 0\n// | extend UPN = tolower(UserPrincipalName)\n// | where UPN !in (ServiceAccountUPNs)\n// | summarize Count = count() by UPN, Kind\n// | evaluate pivot(Kind, sum(Count))",
+    "source_repo": "madhuperera/Microsoft_Sentinel",
+    "source_url": "https://github.com/madhuperera/Microsoft_Sentinel/blob/aad371c4e3af6c6cd43f506143f61c405a398b9a/investigations/office-baselines/queries/baseline/04-signin-active-days-baseline.kql",
+    "filename": "04-signin-active-days-baseline.kql",
+    "collected_at": "2026-07-12T05:32:34.154310+00:00"
+  },
+  {
+    "id": "2b7da10b1157",
+    "title": "Source: https://github.com/Gyarbij/Artemis",
+    "description": "Collected: 2026-06-28 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| project LinkCreatedTime=TimeGenerated, Operation, UserWhoShared=UserId, OfficeObjectId\n| where Operation in ('AddedToSecureLink', 'SecureLinkCreated', 'SecureLinkUpdated', 'SharingInvitationCreated')\n| join kind=inner\n    (OfficeActivity\n    | project LinkClickedTime=TimeGenerated, Operation, UserWhoAccessed=UserId, OfficeObjectId)\n    on OfficeObjectId\n| where UserWhoAccessed !endswith \"yourdomain.com\" and UserWhoAccessed != \"app@sharepoint\"\n| extend ExternalOperation=Operation1\n| summarize ExternalUsers=make_set(UserWhoAccessed) by UserWhoShared, OfficeObjectId, ExternalOperation",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/d3a6538d4124d23a6e0fdf0fbdd72464903f53ca/queries/5d1a90e0fece.kql",
+    "filename": "5d1a90e0fece.kql",
+    "collected_at": "2026-07-12T05:32:32.781634+00:00"
+  },
+  {
+    "id": "54a8f7c8f913",
+    "title": "Title:        AiTM kill-chain correlation \u2014 risky sign-in + new device + inbox rule (24h)",
+    "description": "Id:           48e201ef-e6ef-4bc1-ba6f-01010f4bcea0 MITRE:        T1557, T1098.005, T1564.008, T1114.003 Reference:    https://www.microsoft.com/en-us/security/blog/2026/05/04/breaking-the-code-multi-stage-code-of-conduct-phishing-campaign-leads-to-aitm-token-compromise/ Author:       Jarmi Date:         2026-05-06 Tested on:    Sentinel \u2014 SigninLogs, AuditLogs, OfficeActivity / CloudAppEvents FP notes:     BYOD enrollments + legitimate inbox rules on the same day (rare per user). Tune by: - excluding Intune / Endpoint Manager in AuditLogs (filter below)",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "m365",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/javierDAW/detection-diary\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet LookbackHours = 24h;\nlet RiskySignIns =\n    SigninLogs\n    | where TimeGenerated > ago(LookbackHours)\n    | where ResultType == 0\n    | where RiskLevelDuringSignIn in (\"medium\",\"high\")\n        or ConditionalAccessStatus == \"failure\"\n        or AuthenticationDetails has \"phish\"\n    | project SignInTime=TimeGenerated, UserPrincipalName, UserId,\n              IPAddress, Location, AppDisplayName, ResourceDisplayName,\n              ClientAppUsed, UserAgent, CorrelationId, SessionId;\nlet NewDevices =\n    AuditLogs\n    | where TimeGenerated > ago(LookbackHours)\n    | where OperationName in (\"Add device\",\"Add registered owner to device\",\"Register device\")\n    | where Result == \"success\"\n    | where not(tostring(InitiatedBy.app.displayName) has_any (\"Microsoft Intune\",\"Microsoft Endpoint Manager\",\"Microsoft Autopilot\"))\n    | mv-expand TargetResources\n    | extend DeviceId = tostring(TargetResources.id),\n             DeviceDisplayName = tostring(TargetResources.displayName),\n             InitiatorUPN = tostring(InitiatedBy.user.userPrincipalName),\n             InitiatorIP = tostring(InitiatedBy.user.ipAddress)\n    | project DeviceTime=TimeGenerated, InitiatorUPN, InitiatorIP, DeviceId, DeviceDisplayName, CorrelationId;\nlet InboxRules =\n    CloudAppEvents\n    | where TimeGenerated > ago(LookbackHours)\n    | where ActionType in (\"New-InboxRule\",\"Set-InboxRule\",\"UpdateInboxRules\")\n    | extend RawParams = tostring(parse_json(RawEventData).Parameters)\n    | project RuleTime=TimeGenerated, AccountUPN=AccountUpn, ActionType, RawParams, IPAddress;\nRiskySignIns\n| join kind=inner (NewDevices) on $left.UserPrincipalName == $right.InitiatorUPN\n| where DeviceTime between (SignInTime .. SignInTime + 60min)\n| join kind=leftouter (InboxRules) on $left.UserPrincipalName == $right.AccountUPN\n| where isnull(RuleTime) or RuleTime between (SignInTime .. SignInTime + 24h)\n| project SignInTime, UserPrincipalName, IPAddress, Location, AppDisplayName,\n          DeviceTime, DeviceDisplayName, RuleTime, RawParams, CorrelationId\n| sort by SignInTime desc",
+    "source_repo": "javierDAW/detection-diary",
+    "source_url": "https://github.com/javierDAW/detection-diary/blob/1912a8b2fa353e25f521bf6deda1ea0e9cdce671/days/2026/05/2026-05-06_CodeOfConduct-AiTM-Storm-1747/kql/aitm_chain_correlation.kql",
+    "filename": "aitm_chain_correlation.kql",
+    "collected_at": "2026-07-12T05:32:31.987983+00:00"
+  },
+  {
+    "id": "3faf1c57620a",
+    "title": "HEARTH H211 - candidato inicial KQL",
+    "description": "Fonte: https://github.com/THORCollective/HEARTH/blob/main/Flames/H211.md Hip\u00f3tese: os atores da amea\u00e7a est\u00e3o enviando solicita\u00e7\u00f5es HTTP GET n\u00e3o autenticadas para o endpoint WordPress REST API /wp-json/gravitysmtp/v1/tests/mock-data com o par\u00e2metro de consulta ?page=gravitysmtp-settings para exfiltrar Chaves API, OAuth... Padr\u00e3o: correla\u00e7\u00e3o de abuso de identidade token/OAuth Cobertura: Starter KQL - validar em Sentinel Prioridade: P2 (49) Tabelas: SigninLogs, AuditLogs, IdentityInfo, BehaviorAnalytics, UserPeerAnalytics, SecurityEvent, WindowsEvent, TrendMicro_XDR_OAT_CL, TrendMicro_XDR_WORKBENCH_CL, CommonSecurityLog, NetskopeEventsNetwork_CL, NetskopeEventsConnection_CL Valide a disponibilidade da tabela, nomes de campos, limites e falsos positivos antes de usar como detec\u00e7\u00e3o.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "m365",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/kkroth0/threat-hunting-ptbr\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 14d;\nlet huntTerms = dynamic([\"T1213\", \"wordpress\", \"api\", \"credentials\", \"H211\", \"sending\", \"unauthenticated\", \"requests\", \"WordPress\", \"REST\", \"endpoint\", \"wp-json/gravitysmtp/v1/tests/mock-data\", \"query\", \"parameter\", \"page\", \"gravitysmtp-settings\", \"exfiltrate\", \"keys\", \"OAuth\", \"tokens\", \"detailed\", \"system\"]);\nunion withsource=SourceTable isfuzzy=true\n    SigninLogs,\n    AuditLogs,\n    OfficeActivity\n| where TimeGenerated >= ago(lookback)\n| extend SearchBlob = tostring(pack_all())\n| where SearchBlob has_any (huntTerms)\n    or SearchBlob has_any (\"deviceCode\", \"oauth\", \"refresh token\", \"consent\", \"service principal\", \"Microsoft Graph\")\n| extend HuntId = \"H211\", SourceUrl = \"https://github.com/THORCollective/HEARTH/blob/main/Flames/H211.md\"\n| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob\n| order by TimeGenerated desc",
+    "source_repo": "kkroth0/threat-hunting-ptbr",
+    "source_url": "https://github.com/kkroth0/threat-hunting-ptbr/blob/44ac8fa38ebdfbfe78601103421c7e1beaeeb49a/sentinel/kql/hearth/h211.kql",
+    "filename": "h211.kql",
+    "collected_at": "2026-07-12T05:32:31.285861+00:00"
+  },
+  {
+    "id": "330a452af762",
+    "title": " Im Fileevent Microsoftsharepointv03",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/noakup/AzMonLogsAgent\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet _ASIM_ResolveActorUsername = (T: (*), UsernameField: string) { \n  T\n  | extend ActorUsername = column_ifexists(UsernameField, \"\")\n  | extend windows = ActorUsername has '\\\\'\n  | extend \n      ActorUsernameType = iff (windows, \"Windows\", \"UPN\"),\n      ActorUserUpn =  iff (windows, \"\", ActorUsername),\n      ActorWindowsUsername = iff (windows, ActorUsername, \"\")\n};\nlet operations = datatable (Operation: string, EventType: string, EventSubType: string) [\n    \"FileUploaded\", \"FileCreated\", \"Upload\",\n    \"FileAccessedExtended\", \"FileAccessed\", \"Extended\",\n    \"FileRecycled\", \"FileDeleted\", \"Recycle\",\n    \"FileDeleted\", \"FileDeleted\", \"\",\n    \"FileAccessed\", \"FileAccessed\", \"\",\n    \"FolderCreated\", \"FolderCreated\", \"\",\n    \"FilePreviewed\", \"FileAccessed\", \"Preview\",\n    \"FileDownloaded\", \"FileAccessed\", \"Download\",\n    \"FileSyncDownloadedFull\", \"FileAccessed\", \"Download\",\n    \"FolderModified\", \"FolderModified\", \"\",\n    \"FileModifiedExtended\", \"FolderModified\", \"Extended\",\n    \"FileModified\", \"FolderModified\", \"\",\n    \"FileVersionsAllDeleted\", \"FolderDeleted\", \"Versions\",\n    \"FileSyncUploadedFull\", \"FileCreated\", \"Upload\",\n    \"FileSensitivityLabelApplied\", \"FileAttributesUpdated\", \"\",\n    \"FileSensitivityLabelChanged\", \"FileAttributesUpdated\", \"\",\n    \"FileSensitivityLabelRemoved\", \"FileAttributesUpdated\", \"\",\n    \"SiteDeleted\", \"FolderDeleted\", \"Site\",\n    \"FileRenamed\", \"FileRenamed\", \"\",\n    \"FileMoved\", \"FileMoved\", \"\",\n    \"FileCopied\", \"FileCopied\", \"\",\n    \"FolderCopied\", \"FolderCopied\", \"\",\n    \"FolderMoved\", \"FolderMoved\", \"\",\n    \"FolderRenamed\", \"FolderRenamed\", \"\",\n    \"FolderRecycled\", \"FolderDeleted\", \"Recycle\",\n    \"FolderDeleted\", \"FolderDeleted\", \"\",\n    \"FileCheckedIn\", \"FileCreatedOrModified\", \"Checkin\",\n    \"FileCheckedOut\", \"FileAccessed\", \"Checkout\"\n];\nlet multiple_file_operations = dynamic([\n    \"FileRenamed\",\n    \"FileMoved\",\n    \"FileCopied\",\n    \"FolderCopied\",\n    \"FolderMoved\",\n    \"FolderRenamed\"\n    ]);\nlet parser=(\n    starttime: datetime=datetime(null),\n    endtime: datetime=datetime(null),\n    eventtype_in: dynamic=dynamic([]),\n    srcipaddr_has_any_prefix: dynamic=dynamic([]),\n    actorusername_has_any: dynamic=dynamic([]),\n    targetfilepath_has_any: dynamic=dynamic([]),\n    srcfilepath_has_any: dynamic=dynamic([]),\n    hashes_has_any: dynamic=dynamic([]),\n    dvchostname_has_any: dynamic=dynamic([]),\n    disabled: bool=false\n    ) {\n    let OfficeActivityProjected = \n        OfficeActivity\n        | where not(disabled)\n        | where (isnull(starttime) or TimeGenerated >= starttime) \n            and (isnull(endtime) or TimeGenerated <= endtime)\n        | where RecordType == \"SharePointFileOperation\" and Operation != \"FileMalwareDetected\"\n        | where ((array_length(srcipaddr_has_any_prefix) == 0) or (has_any_ipv4_prefix(ClientIP, srcipaddr_has_any_prefix))) and \n            ((array_length(actorusername_has_any) == 0) or (UserId has_any (actorusername_has_any))) and\n            ((array_length(targetfilepath_has_any) == 0) or (OfficeObjectId has_any (targetfilepath_has_any)) or (strcat (Site_Url, DestinationRelativeUrl, \"/\", DestinationFileName) has_any (targetfilepath_has_any))) and\n            ((array_length(srcfilepath_has_any) == 0) or (OfficeObjectId has_any (srcfilepath_has_any))) and\n            (array_length(hashes_has_any) == 0) and\n            (array_length(dvchostname_has_any) == 0)\n        | project\n            Operation,\n            OrganizationId,\n            OrganizationName,\n            SourceRecordId,\n            OfficeWorkload,\n            UserId,\n            ClientIP,\n            UserAgent,\n            Start_Time,\n            TimeGenerated,\n            Type,\n            OfficeObjectId,\n            SourceFileName,\n            SourceFileExtension,\n            DestinationFileName,\n            DestinationFileExtension,\n            Site_Url,\n            DestinationRelativeUrl,\n            UserKey,\n            MachineDomainInfo,\n            MachineId; // ,_ItemId \n    let SingleFileOperationEvents = \n        OfficeActivityProjected\n        | where Operation !in (multiple_file_operations)\n        | project-rename \n            TargetFilePath = OfficeObjectId,\n            TargetFileName = SourceFileName,\n            TargetFileExtension = SourceFileExtension\n        // Post-filtering\n        | where (array_length(srcfilepath_has_any) == 0) and\n            ((array_length(targetfilepath_has_any) == 0) or (TargetFilePath has_any (targetfilepath_has_any)))\n        | extend \n            TargetFilePathType = \"URL\"\n        | project-away DestinationFileName, DestinationFileExtension, DestinationRelativeUrl\n    ;\n    // single in dest: SiteDeleted\n    let MultipleFileOperationsEvents = \n        OfficeActivityProjected\n        | where Operation in (multiple_file_operations)\n        | project-rename \n            SrcFilePath = OfficeObjectId,\n            TargetFileName = DestinationFileName,\n            TargetFileExtension = DestinationFileExtension,\n            SrcFileName = SourceFileName,\n            SrcFileExtension = SourceFileExtension\n        | extend \n            TargetFilePath = strcat (Site_Url, DestinationRelativeUrl, \"/\", TargetFileName),\n            TargetFilePathType = \"URL\",\n            SrcFilePathType = \"URL\"\n        // Post-filtering\n        | where ((array_length(srcfilepath_has_any) == 0) or (SrcFilePath has_any (srcfilepath_has_any))) and\n            ((array_length(targetfilepath_has_any) == 0) or (TargetFilePath has_any (targetfilepath_has_any)))\n        | project-away DestinationRelativeUrl\n    ;\n    union SingleFileOperationEvents, MultipleFileOperationsEvents\n    | lookup operations on Operation\n    | where (array_length(eventtype_in) == 0 or EventType in~ (eventtype_in))\n    | invoke _ASIM_ResolveActorUsername('UserId')\n    | project-away UserId\n    | project-rename \n        EventOriginalType = Operation,\n        ActorScopeId = OrganizationId,\n        ActorScope = OrganizationName,\n        EventOriginalUid = SourceRecordId,\n        EventProduct = OfficeWorkload,\n        ActorUserId = UserKey,\n        HttpUserAgent = UserAgent,\n        SrcIpAddr = ClientIP,\n        EventStartTime = Start_Time,\n        // EvetUid = _ItemId,\n        TargetUrl = Site_Url,\n        SrcDvcId = MachineId,\n        SrcDvcScopeId = MachineDomainInfo\n    | extend\n        EventCount = int(1),\n        EventStartTime = TimeGenerated, \n        EventEndTime = TimeGenerated,\n        EventResult = \"Success\",\n        EventVendor = 'Microsoft',\n        EventSchemaVersion = '0.2.1',\n        EventSchema = \"FileEvent\",\n        ActorUserIdType = 'Other',\n        SrcDvcIdType = 'Other',\n        TargetAppName = EventProduct,\n        TargetAppType = 'SaaS application',\n        Dvc = strcat ('Microsoft ', EventProduct)\n    // Aliases\n    | extend \n        User = ActorUsername,\n        FilePath = TargetFilePath,\n        FileName = TargetFileName,\n        Src = SrcIpAddr,\n        IpAddr = SrcIpAddr,\n        Url = TargetUrl,\n        Dvc = EventProduct,\n        Application = EventProduct\n};\nparser (\n    starttime=starttime, \n    endtime=endtime, \n    eventtype_in=eventtype_in,\n    srcipaddr_has_any_prefix=srcipaddr_has_any_prefix,\n    actorusername_has_any=actorusername_has_any,\n    targetfilepath_has_any=targetfilepath_has_any,\n    srcfilepath_has_any=srcfilepath_has_any,\n    hashes_has_any=hashes_has_any,\n    dvchostname_has_any=dvchostname_has_any,\n    disabled=disabled\n)",
+    "source_repo": "noakup/AzMonLogsAgent",
+    "source_url": "https://github.com/noakup/AzMonLogsAgent/blob/4ffee16f14276a9b0526d468ad3b38b0345ea759/NGSchema/SentinelAsim/KQL/FileEvent/_Im_FileEvent_MicrosoftSharePointV03.kql",
+    "filename": "_Im_FileEvent_MicrosoftSharePointV03.kql",
+    "collected_at": "2026-07-12T05:32:30.384316+00:00"
+  },
+  {
+    "id": "2d554ebfc1a7",
+    "title": "Source: https://github.com/sivolko/kql-library",
+    "description": "Collected: 2026-05-15 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "azure",
+      "m365",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet _SampleSize = 50000;\nlet _analyzeSecurityEvent = SecurityEvent | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"SecurityEvent\";\nlet _analyzeSigninLogs = SigninLogs | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"SigninLogs\";\nlet _analyzeAADNonInteractive = AADNonInteractiveUserSignInLogs | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"AADNonInteractiveUserSignInLogs\";\nlet _analyzeCSL = CommonSecurityLog | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"CommonSecurityLog\";\nlet _analyzeSyslog = Syslog | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"Syslog\";\nlet _analyzeAuditLogs = AuditLogs | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"AuditLogs\";\nlet _analyzeAzureActivity = AzureActivity | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"AzureActivity\";\nlet _analyzeOfficeActivity = OfficeActivity | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"OfficeActivity\";\nlet _analyzeHeartbeat = Heartbeat | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"Heartbeat\";\nlet _analyzeEvent = Event | where TimeGenerated > ago(1d) | take _SampleSize | evaluate narrow() | where isnotempty(tostring(Value)) | summarize AvgLenBytes = round(avg(toreal(strlen(tostring(Value)))), 0), MaxLenBytes = max(strlen(tostring(Value))) by Column | where AvgLenBytes > 0 | extend TableName = \"Event\";\nlet _allColumns = union\n    _analyzeSecurityEvent, _analyzeSigninLogs, _analyzeAADNonInteractive,\n    _analyzeCSL, _analyzeSyslog, _analyzeAuditLogs,\n    _analyzeAzureActivity, _analyzeOfficeActivity, _analyzeHeartbeat, _analyzeEvent;\n_allColumns\n| join kind=inner (\n    _allColumns | summarize TotalAvgLen = sum(AvgLenBytes) by TableName\n) on TableName\n| extend PctOfRowSize = round(AvgLenBytes / toreal(TotalAvgLen) * 100, 1)\n| where PctOfRowSize > 30\n| extend Recommendation = case(\n    PctOfRowSize > 50, \"CRITICAL: >50% of row size - Use project-away in DCR transform\",\n    \"Medium: >30% of row size - Study to use project-away in DCR transform\"\n)\n| project TableName, Column, AvgLenBytes, MaxLenBytes, PctOfRowSize, Recommendation\n| order by TableName asc, PctOfRowSize desc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/d3a6538d4124d23a6e0fdf0fbdd72464903f53ca/queries/078ba84193cf.kql",
+    "filename": "078ba84193cf.kql",
+    "collected_at": "2026-07-12T05:32:29.473969+00:00"
+  },
+  {
+    "id": "60361a1c95ee",
+    "title": "Login Failure Burst",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/CyberShiv-AI/ai-cyber-threat-detections\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where ResultType == \"50053\" or ResultType == \"50126\"\n| summarize Attempts = count() by UserPrincipalName, bin(TimeGenerated, 15m)\n| where Attempts > 3",
+    "source_repo": "CyberShiv-AI/ai-cyber-threat-detections",
+    "source_url": "https://github.com/CyberShiv-AI/ai-cyber-threat-detections/blob/e3de6c326a2cb7dc674612e58e520baff96a23aa/kql/login-failure-burst.kql",
+    "filename": "login-failure-burst.kql",
+    "collected_at": "2026-07-12T05:32:08.100198+00:00"
+  },
+  {
+    "id": "f7c4a2596853",
+    "title": "This is currently configured for Central European Time and European Daylight Saving Times (Madrid, Spain time)",
+    "description": "This should be adapted for each working schedule and time zone (https://docs.microsoft.com/azure/data-explorer/kusto/query/timezone) This is currently configured for Central European Time and European Daylight Saving Times (Madrid, Spain time) Click \"Save as function\", in Parameters write in the fields: \"datetime\" \"date_time\" \"datetime(null)\" If you name the function \"IsWorkingTime\", you can check the function with queries like the following: print IsWorkingTime()",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/MdTauheedAlam/Azure-Sentinel-Query2\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\n    let time_zome = 'Europe/Madrid';\n    // If empty, take current time\n    let parsed_date_time = iff(isnull(date_time), now(), date_time);\n    let corrected_date_time = datetime_utc_to_local(parsed_date_time, time_zome);\n    // Start and end hours of daily work schedule\n    let schedule_start_hour = 8;\n    let schedule_end_hour = 17;\n    let schedule_intensive_end_hour = 15;\n    let schedule_friday_end_hour = 14;\n    // Start date of intensive working time\n    let IntensiveStartTime = make_datetime(getyear(parsed_date_time), 6, 16);\n    // End date of intensive working time\n    let IntensiveEndTime = make_datetime(getyear(parsed_date_time), 9, 16);\n    let hour_of_day = hourofday(corrected_date_time);\n    let day_of_week = dayofweek(corrected_date_time - 1d)/1d + 1;\n    let Intensive = corrected_date_time between (IntensiveStartTime .. IntensiveEndTime);\n    // Return boolean indicating if a date is working time\n    case(\n        day_of_week < 5 and not(Intensive) and hour_of_day between (schedule_start_hour..(schedule_end_hour - 1)), true, // Monday to Thursday\n        day_of_week < 5 and Intensive and hour_of_day between (schedule_start_hour..(schedule_intensive_end_hour - 1)), true, // Intensive Monday to Thursday\n        day_of_week == 5 and hour_of_day between (schedule_start_hour .. (schedule_friday_end_hour - 1)), true, // Friday\n        false\n    )\n//};\n//Function(date_time)",
+    "source_repo": "MdTauheedAlam/Azure-Sentinel-Query2",
+    "source_url": "https://github.com/MdTauheedAlam/Azure-Sentinel-Query2/blob/344bbb44e76c965591c65631c426a93a8a271edd/Functions/CETWorkingTime.kql",
+    "filename": "CETWorkingTime.kql",
+    "collected_at": "2026-07-12T05:32:07.367451+00:00"
+  },
+  {
+    "id": "bb39f432164b",
+    "title": "Failed Signins",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sbkuehn/azure-lighthouse-sentinel\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nunion \n    workspace(\"TenantAWorkspace\").SigninLogs,\n    workspace(\"TenantBWorkspace\").SigninLogs\n| where ResultType != 0\n| summarize FailedSignins = count() by TenantId, UserPrincipalName\n| order by FailedSignins desc",
+    "source_repo": "sbkuehn/azure-lighthouse-sentinel",
+    "source_url": "https://github.com/sbkuehn/azure-lighthouse-sentinel/blob/a4d6955a7a1ba87fb943995b1b8598868e55f599/kql/failed-signins.kql",
+    "filename": "failed-signins.kql",
+    "collected_at": "2026-07-12T05:32:06.685071+00:00"
+  },
+  {
+    "id": "1f6e11d1b3fc",
+    "title": "This query looks for Risky sign in attempt made from first seen IPAddress in 30d after user clicked Url.",
+    "description": "This query looks for Risky sign in attempt made from first seen IPAddress in 30d after user clicked Url.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/hchiphong/KQL\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet searchTimeRange = 14d;\nlet msftFirstPartyApp= externaldata(AppId:string, AppDisplayName:string)\n[\n  h@\"https://raw.githubusercontent.com/hchiphong/KQL/refs/heads/main/data/MicrosoftFirstPartyApp.csv\"\n]\nwith(format=\"csv\");\nlet data =\nunion\n( SigninLogs\n// Exlucde Corp Device\n| where AppDisplayName in (( msftFirstPartyApp | distinct AppDisplayName)) // App in microsoft first party app\n| where UserPrincipalName has \"@\" //ignore uid\n| extend deviceId = tostring(DeviceDetail.deviceId), displayName = tostring(DeviceDetail.displayName)\n| where isempty(deviceId)\n| where RiskEventTypes !='[]' or RiskEventTypes_V2 !='[]' // Risky sign in only, this can be commented but result more FP\n| extend Risks= array_concat(todynamic(RiskEventTypes),todynamic(RiskEventTypes_V2))\n| project TimeGenerated, CreatedDateTime, Type, AccountUpn= tolower(UserPrincipalName), IPAddress,AppDisplayName, ResourceDisplayName ,RiskLevel,Risks,TenantId,CorrelationId, ResultType,ResultDescription \n)\n,(\nUrlClickEvents\n| project TimeGenerated, Timestamp,Type,AccountUpn=tolower( AccountUpn), IPAddress,Url\n)\n| where ingestion_time() >= ago(searchTimeRange)\n| partition hint.strategy=native by AccountUpn\n    (\n    sort by TimeGenerated asc\n    | scan with_match_id=id  declare(ClickTime:datetime, LoginTime:datetime,Url:string,ClickIP:string) with\n    (\n        step UrlClick output=none: Type==\"UrlClickEvents\" => ClickTime = Timestamp ;\n        step Login : Type==\"SigninLogs\"  and  CreatedDateTime- UrlClick.ClickTime between (5s .. 300s ) \n                        and (\n                            not( ipv4_is_in_range(IPAddress,format_ipv4_mask(UrlClick.IPAddress,24))) \n                            or ((IPAddress has \":\" or UrlClick.IPAddress has \":\") and IPAddress != UrlClick.IPAddress)\n                            ) //subnet of click IP different from signin IP, which can be adjusted\n                        => LoginTime= CreatedDateTime, ClickTime=UrlClick.ClickTime, Url=UrlClick.Url,ClickIP=UrlClick.IPAddress ;\n    )\n    | project LoginTime, AccountUpn, ClickTime,  LoginIPAddress= IPAddress,AppDisplayName, ResourceDisplayName, LoginResult=strcat(ResultType,\"-\",ResultDescription), EventGroupNumber=id,RiskLevel,Risks,Url,ClickIP, CorrelationId, TenantId\n    | sort by LoginTime,AccountUpn,EventGroupNumber desc  // EventGroupNumber means how many grouped series events the user has\n);\ndata\n//Exclude previous known signin IP\n| join kind=anti  ( SigninLogs \n| where TimeGenerated between (ago(searchTimeRange+30d) .. ago(searchTimeRange))\n| where UserPrincipalName in (( data | distinct AccountUpn))\n| distinct IPAddress, UserPrincipalName\n ) on $left.AccountUpn == $right.UserPrincipalName, $left.LoginIPAddress==$right.IPAddress",
+    "source_repo": "hchiphong/KQL",
+    "source_url": "https://github.com/hchiphong/KQL/blob/8236c304ac0e6af87a56e63b89d39ea7388e82ad/Signin_AfterUrlClick.kql",
+    "filename": "Signin_AfterUrlClick.kql",
+    "collected_at": "2026-07-12T05:32:05.974982+00:00"
+  },
+  {
+    "id": "2ecff2eb76b7",
+    "title": "Filtersigninlogsperpolicy",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/ChrFrohn/KQL\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| mvexpand ConditionalAccessPolicies\n| extend CAPolicies = todynamic(tostring(ConditionalAccessPolicies))\n| extend SpecificPolicy = tostring(CAPolicies.displayName)\n| where SpecificPolicy == \"NAME OF CA POLICY\"",
+    "source_repo": "ChrFrohn/KQL",
+    "source_url": "https://github.com/ChrFrohn/KQL/blob/0363fd1956974e2651d296d89c1b1c1f8fdc2620/Entra%20ID/FilterSignInLogsPerPolicy.kql",
+    "filename": "FilterSignInLogsPerPolicy.kql",
+    "collected_at": "2026-07-12T05:32:05.258601+00:00"
+  },
+  {
+    "id": "1a8006ee7912",
+    "title": "Author: Microsoft Azure",
+    "description": "Display name: Locked Accounts Description: Counts locked acounts by target account. Categories: security Solutions: SecurityInsights Topic: Security",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/microsoft/AzureMonitorCommunity\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4740\n| summarize count() by TargetAccount",
+    "source_repo": "microsoft/AzureMonitorCommunity",
+    "source_url": "https://github.com/microsoft/AzureMonitorCommunity/blob/1a382bc9b8be899968a04b8252aa16e8c9bdeb1f/Solutions/SecurityInsights/Queries/Security/Locked Accounts.kql",
+    "filename": "Locked Accounts.kql",
+    "collected_at": "2026-07-12T05:31:53.945060+00:00"
+  },
+  {
+    "id": "40d73e428be2",
+    "title": "Data connector required for this query - Windows Security Events via AMA or Security Events via Legacy Agent",
+    "description": "Creates a list of computers that your users have connected to via RDP and the total count of distinct computers each user has connected to",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/EmreOzanMemis/AzureSentinel\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago(7d)\n| where EventID == \"4624\"\n| where LogonType == 10\n//Extend new column that drops Account to lower case so users are correctly summarized, i.e User123 and user123 are combined\n| extend AccountName=tolower(Account)\n| summarize\n    ['Count of Computers']=dcount(Computer),\n    ['List of Computers']=make_set(Computer)\n    by AccountName\n| sort by ['Count of Computers'] desc ",
+    "source_repo": "EmreOzanMemis/AzureSentinel",
+    "source_url": "https://github.com/EmreOzanMemis/AzureSentinel/blob/c04f3c94811e44003267420c1789965797e2c2ea/Sentinel-KQL-Sorgular\u0131/Active Directory/SecurityEvent-SummarizeRDPActivity.kql",
+    "filename": "SecurityEvent-SummarizeRDPActivity.kql",
+    "collected_at": "2026-07-12T05:31:53.237629+00:00"
+  },
+  {
+    "id": "5b2da383a7a4",
+    "title": "A user account was locked out.",
+    "description": "A user account was locked out.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/rod-trent/SentinelKQL\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4740\n| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), LockoutsCount = count() by Activity, Account, TargetSid, TargetDomainName, SourceComputerId, SourceDomainController = Computer\n| extend timestamp = StartTime, AccountCustomEntity = Account, HostCustomEntity = TargetDomainName",
+    "source_repo": "rod-trent/SentinelKQL",
+    "source_url": "https://github.com/rod-trent/SentinelKQL/blob/87a82b94253370e962b907a1a7a2674a6d8b1758/LockedUsers.kql",
+    "filename": "LockedUsers.kql",
+    "collected_at": "2026-07-12T05:31:51.674984+00:00"
+  },
+  {
+    "id": "54817eeebdc4",
+    "title": "Detect when a user connects to 3 or more unique devices via RDP over a 30 minute period",
+    "description": "Detect when a user connects to 3 or more unique devices via RDP over a 30 minute period",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (1d)\n| where EventID == \"4624\"\n| where LogonType == 10\n| where SubjectDomainName == TargetDomainName\n//Account is dropped to lower case to make sure each account is only listed once, i.e Reprise99 and reprise99 are combined\n| summarize\n    ['Distinct device logon count']=dcount(Computer),\n    ['List of devices']=make_set(Computer)\n    by tolower(Account), bin(TimeGenerated, 30m)\n//Find accounts that have logged on to 3 or more unique devices in less than 30 minutes\n| where ['Distinct device logon count'] >= 3",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Windows Security Events/SecEvents-PotentialRDPRecon.kql",
+    "filename": "SecEvents-PotentialRDPRecon.kql",
+    "collected_at": "2026-07-12T05:31:50.980999+00:00"
+  },
+  {
+    "id": "4cf198611073",
+    "title": "BadSuccessor Detection",
+    "description": "Abusing dMSA to escalate privileges in Active Directory https://www.akamai.com/blog/security-research/abusing-dmsa-for-privilege-escalation-in-active-directory",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet QueryPeriod = 1h;\nlet dMSARegKey = dynamic([\"DelegatedMSAEnabled\"]);\nlet dMSAMonitor =\nSecurityEvent\n| where TimeGenerated > ago(QueryPeriod)\n| where EventID == 307 or // dMSA Migration\nEventID == 308 or // dMSA Permission Add\nEventID == 309; // dMSA Key Fetch\nDeviceRegistryEvents\n| where TimeGenerated > ago(QueryPeriod)\n| where ActionType == @\"RegistryKeyCreated\" or ActionType  == @\"RegistryValueSet\"\n| where RegistryKey has_any(dMSARegKey)\n| union dMSAMonitor",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/70113fd866c434300e09f50a352eb6ee24f1fd0f/Sentinel/BadSuccessor Detection.kql",
+    "filename": "BadSuccessor Detection.kql",
+    "collected_at": "2026-07-12T05:31:50.301419+00:00"
+  },
+  {
+    "id": "4104a3553fbe",
+    "title": "Save as a function in your workspace then invoke via its name, i.e if you save as ADFailedLogons",
+    "description": "ADFailedLogons | where TimeGenerated > ago(30d) | where Account == \"DOMAIN\\username\" // will find logon failures by that user ADFailedLogons | where TimeGenerated > ago(30d) | where ResultReason == \"User logon with expired password\" // will find logon failures from accounts with expired passwords This will parse the SecurityEvent log for logon failures and add the descriptive reason.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-12\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == \"4625\"\n| extend ResultReason = case(\n    Status == \"0xc000005e\", strcat(\"There are currently no logon servers available to service the logon request\"),\n    Status == \"0xc0000064\", strcat(\"User logon with misspelled or bad user account\"),\n    Status == \"0xc000006a\", strcat(\"User logon with misspelled or bad password\"),\n    Status == \"0xc000006d\", strcat(\"The cause is either a bad username or authentication information\"),\n    Status == \"0xc000006e\", strcat(\"Indicates a referenced user name and authentication information are valid, but some user account restriction has prevented successful authentication (such as time-of-day restrictions)\"),\n    Status == \"0xc000006f\", strcat(\"User logon outside authorized hours\"),\n    Status == \"0xc0000070\", strcat(\"User logon from unauthorized workstation\"),\n    Status == \"0xc0000071\", strcat(\"User logon with expired password\"),\n    Status == \"0xc0000072\", strcat(\"User logon to account disabled by administrator\"),\n    Status == \"0xc000018b\", strcat(\"Security database on the server does not have a computer account for this workstation trust relationship\"),\n    Status == \"0xc00000dc\", strcat(\"Indicates the Sam Server was in the wrong state to perform the desired operation\"),\n    Status == \"0xc0000133\", strcat(\"Clocks between DC and other computer too far out of sync\"),\n    Status == \"0xc000015b\", strcat(\"The user has not been granted the requested logon type (also called the logon right) at this machine\"),\n    Status == \"0xc000018c\", strcat(\"The logon request failed because the trust relationship between the primary domain and the trusted domain failed\"),\n    Status == \"0xc0000192\", strcat(\"An attempt was made to logon, but the Netlogon service was not started\"),\n    Status == \"0xc0000193\", strcat(\"User logon with expired account\"),\n    Status == \"0xc0000224\", strcat(\"User is required to change password at next logon\"),\n    Status == \"0xc0000225\", strcat(\"Evidently a bug in Windows and not a risk\"),\n    Status == \"0xc0000234\", strcat(\"User logon with account locked\"),\n    Status == \"0xc000015a\", strcat(\"During a logon attempt, the user's security context accumulated too many security IDs\"),\n    Status == \"0xc00002ee\", strcat(\"Failure Reason: An Error occurred during Logon\"),\n    Status == \"0xc0000413\", strcat(\"Logon Failure: The machine you are logging on to is protected by an authentication firewall. The specified account is not allowed to authenticate to the machine\"),\n    Status == \"0x0\", strcat(\"Status OK\"),\n    \"unknown\")\n| project\n    TimeGenerated,\n    Status,\n    ResultReason,\n    Account,\n    AccountType,\n    Computer,\n    AuthenticationPackageName,\n    IpAddress",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Functions/Function-FailedActiveDirectoryLogons.kql",
+    "filename": "Function-FailedActiveDirectoryLogons.kql",
+    "collected_at": "2026-07-12T05:31:49.582046+00:00"
+  },
+  {
     "id": "15e4d6dd4bb9",
     "title": "Aadriskeventcorrelation",
     "description": "This query will hunt for real time risk events flagged as medium or high that aren't confirmed safe by Microsoft and then enrich that data with information from the IdentityInfo table",

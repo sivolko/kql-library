@@ -1,0 +1,8 @@
+// Source: https://github.com/CyberShiv-AI/ai-cyber-threat-detections
+// Collected: 2026-07-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where ResultType == "50053" or ResultType == "50126"
+| summarize Attempts = count() by UserPrincipalName, bin(TimeGenerated, 15m)
+| where Attempts > 3

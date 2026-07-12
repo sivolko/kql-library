@@ -1,0 +1,8 @@
+// Source: https://github.com/rod-trent/SentinelKQL
+// Collected: 2026-07-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4740
+| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), LockoutsCount = count() by Activity, Account, TargetSid, TargetDomainName, SourceComputerId, SourceDomainController = Computer
+| extend timestamp = StartTime, AccountCustomEntity = Account, HostCustomEntity = TargetDomainName

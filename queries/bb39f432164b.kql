@@ -1,0 +1,10 @@
+// Source: https://github.com/sbkuehn/azure-lighthouse-sentinel
+// Collected: 2026-07-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+union 
+    workspace("TenantAWorkspace").SigninLogs,
+    workspace("TenantBWorkspace").SigninLogs
+| where ResultType != 0
+| summarize FailedSignins = count() by TenantId, UserPrincipalName
+| order by FailedSignins desc

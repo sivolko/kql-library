@@ -1,0 +1,17 @@
+// Source: https://github.com/kkroth0/threat-hunting-ptbr
+// Collected: 2026-07-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 14d;
+let huntTerms = dynamic(["T1213", "wordpress", "api", "credentials", "H211", "sending", "unauthenticated", "requests", "WordPress", "REST", "endpoint", "wp-json/gravitysmtp/v1/tests/mock-data", "query", "parameter", "page", "gravitysmtp-settings", "exfiltrate", "keys", "OAuth", "tokens", "detailed", "system"]);
+union withsource=SourceTable isfuzzy=true
+    SigninLogs,
+    AuditLogs,
+    OfficeActivity
+| where TimeGenerated >= ago(lookback)
+| extend SearchBlob = tostring(pack_all())
+| where SearchBlob has_any (huntTerms)
+    or SearchBlob has_any ("deviceCode", "oauth", "refresh token", "consent", "service principal", "Microsoft Graph")
+| extend HuntId = "H211", SourceUrl = "https://github.com/THORCollective/HEARTH/blob/main/Flames/H211.md"
+| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob
+| order by TimeGenerated desc

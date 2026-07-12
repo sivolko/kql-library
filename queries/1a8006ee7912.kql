@@ -1,0 +1,7 @@
+// Source: https://github.com/microsoft/AzureMonitorCommunity
+// Collected: 2026-07-12
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4740
+| summarize count() by TargetAccount
