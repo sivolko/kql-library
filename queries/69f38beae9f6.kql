@@ -1,0 +1,55 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackWindow = 1h;
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackWindow)
+| where Operation in (
+    "FileMalwareDetected",
+    "MalwareDetected",
+    "VirusDetected")
+| extend
+    Workload      = case(
+        RecordType in ("SharePoint","SharePointFileOperation"), "SharePoint",
+        RecordType in ("OneDrive","OneDriveFileOperation"),     "OneDrive",
+        RecordType == "MicrosoftTeams",                        "Teams",
+        "Other"),
+    IsGuest       = UserId has "#EXT#",
+    // EventData carries malware name in some tenants
+    MalwareName   = tostring(parse_json(EventData).MalwareName),
+    MalwareFamily = tostring(parse_json(EventData).MalwareFamily),
+    FileHash      = tostring(parse_json(EventData).FileHash)
+// Aggregate within window to detect same malware seen by multiple users
+| summarize
+    EventCount    = count(),
+    AffectedUsers = make_set(UserId, 20),
+    UserCount     = dcount(UserId),
+    AffectedSites = make_set(SiteUrl, 10),
+    SiteCount     = dcount(SiteUrl),
+    GuestCount    = countif(IsGuest),
+    FileNames     = make_set(SourceFileName, 10),
+    FirstSeen     = min(TimeGenerated),
+    LastSeen      = max(TimeGenerated)
+    by MalwareName, MalwareFamily, FileHash, Workload
+| extend AlertSeverity = case(
+    UserCount >= 5 or GuestCount >= 1,  "High",
+    UserCount >= 2 or SiteCount >= 2,   "High",
+    "High")    // every malware detection is at least High
+| project
+    MalwareName,
+    MalwareFamily,
+    FileHash,
+    Workload,
+    FirstSeen,
+    LastSeen,
+    EventCount,
+    UserCount,
+    GuestCount,
+    SiteCount,
+    AlertSeverity,
+    FileNames,
+    AffectedUsers,
+    AffectedSites
+| sort by UserCount desc, SiteCount desc

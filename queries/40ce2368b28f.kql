@@ -1,0 +1,156 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceDnsEvents
+| where Timestamp > ago(7d)
+| where QueryName contains "telegram.org"
+| where InitiatingProcessFileName !in~ (
+    "Telegram.exe", "telegram.exe",
+    // Browsers legitimately visit telegram.org for web client
+    "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"
+)
+| project
+    Timestamp,
+    DeviceName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName,
+    QueryName,
+    RemoteIP
+| order by Timestamp desc
+
+// ----------------------------------------------------------------------------
+// Query 2: HTTPS Connections to api.telegram.org from Non-Browser Processes
+//
+// Rationale: Complements the DNS query — catches cases where the IP is
+// hardcoded or DNS is cached. Filters to port 443 HTTPS connections.
+// ----------------------------------------------------------------------------
+DeviceNetworkEvents
+| where Timestamp > ago(7d)
+| where RemoteUrl contains "telegram.org"
+    or RemoteIP in ("149.154.160.0", "149.154.164.0", "91.108.4.0",
+                    "91.108.56.0", "91.108.8.0", "95.161.64.0")  // Telegram ASN ranges
+| where RemotePort == 443
+| where InitiatingProcessFileName !in~ (
+    "Telegram.exe", "telegram.exe",
+    "chrome.exe", "msedge.exe", "firefox.exe"
+)
+| project
+    Timestamp,
+    DeviceName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    RemoteIP,
+    RemoteUrl,
+    RemotePort,
+    InitiatingProcessAccountName,
+    InitiatingProcessParentFileName
+| order by Timestamp desc
+
+// ----------------------------------------------------------------------------
+// Query 3: Periodic Telegram Connection Pattern (getUpdates Polling)
+//
+// Rationale: Telegram Bot C2 beacons poll getUpdates at regular intervals.
+// This query identifies processes with repeated Telegram connections within
+// defined time windows, consistent with beacon check-in cadence.
+// ----------------------------------------------------------------------------
+let lookback = 24h;
+let min_connections = 5;
+DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where RemoteUrl contains "telegram"
+    or RemotePort == 443
+| where InitiatingProcessFileName !in~ (
+    "Telegram.exe", "chrome.exe", "msedge.exe", "firefox.exe"
+)
+| summarize
+    ConnectionCount = count(),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp),
+    DistinctUrls = dcount(RemoteUrl),
+    TimeSpanMinutes = datetime_diff('minute', max(Timestamp), min(Timestamp))
+    by bin(Timestamp, 1h),
+       DeviceName,
+       InitiatingProcessFileName,
+       RemoteIP
+| where ConnectionCount >= min_connections
+| extend ConnectionsPerHour = ConnectionCount
+| project
+    Timestamp,
+    DeviceName,
+    InitiatingProcessFileName,
+    RemoteIP,
+    ConnectionCount,
+    ConnectionsPerHour,
+    DistinctUrls,
+    FirstSeen,
+    LastSeen,
+    TimeSpanMinutes
+| order by ConnectionCount desc
+
+// ----------------------------------------------------------------------------
+// Query 4: Scripted Process File Upload Behavior (sendDocument Pattern)
+//
+// Rationale: sendDocument uses multipart POST. MDE can log process network
+// events with byte counts. A scripted process sending large outbound payloads
+// to Telegram-associated IPs is consistent with document exfiltration.
+// ----------------------------------------------------------------------------
+DeviceNetworkEvents
+| where Timestamp > ago(7d)
+| where RemotePort == 443
+| where InitiatingProcessFileName has_any (
+    "python.exe", "python3.exe", "py.exe",
+    "pwsh.exe", "powershell.exe",
+    "wscript.exe", "cscript.exe",
+    "cmd.exe", "mshta.exe"
+)
+| where RemoteUrl contains "telegram"
+    or RemoteIP startswith "149.154"
+    or RemoteIP startswith "91.108"
+| summarize
+    TotalBytesSent = sum(SentBytes),
+    TotalBytesReceived = sum(ReceivedBytes),
+    EventCount = count(),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceName, InitiatingProcessFileName, RemoteIP, RemoteUrl
+| where TotalBytesSent > 10000   // >10KB sent — consistent with file upload
+| project
+    DeviceName,
+    InitiatingProcessFileName,
+    RemoteIP,
+    RemoteUrl,
+    TotalBytesSent,
+    TotalBytesReceived,
+    EventCount,
+    FirstSeen,
+    LastSeen
+| order by TotalBytesSent desc
+
+// ----------------------------------------------------------------------------
+// Query 5: Microsoft Defender for Cloud Apps — Telegram Data Transfer Events
+//
+// Rationale: MCAS / Defender for Cloud Apps monitors SaaS traffic at the
+// cloud app level. This query surfaces Telegram upload events from managed
+// endpoints, useful when proxy logs don't capture full URL paths.
+// ----------------------------------------------------------------------------
+CloudAppEvents
+| where Timestamp > ago(7d)
+| where Application == "Telegram"
+| where ActionType in ("Upload", "FileUpload", "Send", "Post")
+| where AccountObjectId != ""   // Exclude service accounts with no object ID
+| project
+    Timestamp,
+    AccountDisplayName,
+    AccountObjectId,
+    DeviceName,
+    Application,
+    ActionType,
+    ActivityType,
+    IPAddress,
+    IPCategory,
+    ObjectName,
+    ObjectType,
+    FileSize
+| order by Timestamp desc

@@ -1,0 +1,19 @@
+// Source: https://github.com/wahidhendrawan/Detection-Rules
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 5m;
+let threshold = 10;
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4625                       // Failed logon
+| where AccountType == "User"
+// Bin per 5 menit, group by source + target
+| summarize
+    FailCount = count(),
+    AccountsTargeted = dcount(TargetAccount),
+    SampleAccounts = make_set(TargetAccount, 10),
+    SampleStatus = make_set(SubStatus, 5)
+    by bin(TimeGenerated, lookback), Computer, IpAddress
+| where FailCount >= threshold
+| order by FailCount desc, TimeGenerated desc

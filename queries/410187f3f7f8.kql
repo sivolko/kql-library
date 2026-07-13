@@ -1,0 +1,180 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let KnownRMMTools = dynamic([
+    "ScreenConnect", "AnyDesk", "TeamViewer", "Splashtop",
+    "LogMeIn", "GoToMyPC", "RemotePC", "Zoho Assist",
+    "Atera", "NinjaRMM", "Datto", "Kaseya", "ConnectWise"
+]);
+
+let SensitiveHostGroups = dynamic([
+    "DC01", "DC02", "PDC", "ADDC",       // Domain controllers (tune to environment)
+    "SQLPAY", "POSTERM", "ATMSRV",        // Payment systems (tune)
+    "PHISERVER", "HIPAA"                  // PHI/HIPAA systems (tune)
+]);
+
+
+// ============================================================================
+// Query 1: RMM Service Installed Outside Business Hours
+//
+// Rationale: Attackers install RMM tools immediately after initial access,
+// which often occurs outside business hours. Any RMM service installation
+// before 07:00 or after 19:00 UTC warrants review.
+// ============================================================================
+SecurityEvent
+| where EventID == 7045  // New service installed
+| where ServiceName has_any (KnownRMMTools)
+| extend HourOfDay = hourofday(TimeGenerated)
+| where HourOfDay < 7 or HourOfDay > 19
+| extend
+    IsWeekend    = dayofweek(TimeGenerated) in (0d, 6d),
+    InstallPath  = ImagePath,
+    RMMTool      = ServiceName
+| project TimeGenerated, Computer, Account, RMMTool, InstallPath,
+          HourOfDay, IsWeekend
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 2: RMM Install → BYOVD Driver Load (Pre-Ransomware Kill Chain)
+//
+// Rationale: The highest-fidelity pre-ransomware signal is RMM installation
+// followed within 2 hours by a .sys driver loaded from a non-system path.
+// This sequence is observed in Akira, Qilin, and ALPHV affiliate campaigns.
+// ============================================================================
+let RMMInstalls = SecurityEvent
+    | where EventID == 7045
+    | where ServiceName has_any (KnownRMMTools)
+    | project RMMTime = TimeGenerated, Computer, RMMService = ServiceName,
+              RMMPath = ImagePath;
+let SuspiciousDriverLoads = SecurityEvent
+    | where EventID == 7045
+    | where ImagePath endswith ".sys"
+    | where ImagePath !has "Windows\\System32\\drivers\\"
+        and ImagePath !has "Windows\\SysWOW64\\drivers\\"
+        and ImagePath !has "\\DriverStore\\"
+    | project DriverTime = TimeGenerated, Computer, DriverService = ServiceName,
+              DriverPath = ImagePath;
+RMMInstalls
+| join kind=inner SuspiciousDriverLoads on Computer
+| where DriverTime between (RMMTime .. RMMTime + 2h)
+| extend TimeDeltaMinutes = datetime_diff('minute', DriverTime, RMMTime)
+| project RMMTime, DriverTime, TimeDeltaMinutes, Computer,
+          RMMService, RMMPath, DriverService, DriverPath
+| order by TimeDeltaMinutes asc
+
+
+// ============================================================================
+// Query 3: Multiple RMM Tools Installed on Same Host Within 24 Hours
+//
+// Rationale: Threat actors install redundant RMM tools for persistence resilience.
+// Two or more distinct RMM services installed on the same host within a day
+// is a strong indicator of attacker-controlled multi-tool persistence.
+// ============================================================================
+SecurityEvent
+| where EventID == 7045
+| where ServiceName has_any (KnownRMMTools)
+| summarize
+    RMMInstallCount = dcount(ServiceName),
+    RMMTools        = make_set(ServiceName),
+    FirstInstall    = min(TimeGenerated),
+    LastInstall     = max(TimeGenerated)
+    by Computer, bin(TimeGenerated, 24h)
+| where RMMInstallCount > 1
+| extend InstallSpanMinutes = datetime_diff('minute', LastInstall, FirstInstall)
+| project FirstInstall, LastInstall, Computer, RMMInstallCount,
+          RMMTools, InstallSpanMinutes
+| order by RMMInstallCount desc
+
+
+// ============================================================================
+// Query 4: RMM Tool on Sensitive Host Class
+//
+// Rationale: Domain controllers, payment systems, and PHI repositories should
+// never have ad-hoc RMM tools installed. Any RMM service installation on these
+// host classes requires immediate investigation.
+// ============================================================================
+SecurityEvent
+| where EventID == 7045
+| where ServiceName has_any (KnownRMMTools)
+| where Computer has_any (SensitiveHostGroups)
+    or Computer startswith "DC"
+    or Computer startswith "PDC"
+    or Computer contains "-DC-"
+| extend
+    InstallPath  = ImagePath,
+    RMMTool      = ServiceName,
+    HostClass    = case(
+        Computer startswith "DC" or Computer contains "-DC-", "Domain Controller",
+        Computer has_any (SensitiveHostGroups),                "Sensitive System",
+        "Unknown"
+    )
+| project TimeGenerated, Computer, Account, RMMTool, InstallPath, HostClass
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 5: RMM Process Spawning Domain Discovery Commands
+//
+// Rationale: Attacker hands-on-keyboard activity via any RMM tool produces
+// domain discovery commands as the attacker maps the environment for lateral
+// movement targets. These commands are uncommon in legitimate IT support.
+// ============================================================================
+DeviceProcessEvents
+| where InitiatingProcessFileName has_any (
+    "ScreenConnect.ClientService.exe",
+    "ScreenConnect.WindowsClient.exe",
+    "AnyDesk.exe",
+    "quickassist.exe",
+    "TeamViewer.exe",
+    "tvAgent.exe"
+)
+| where ProcessCommandLine has_any (
+    "domain admins",
+    "nltest",
+    "domain_trusts",
+    "Get-ADUser",
+    "Get-NetDomain",
+    "SharpHound",
+    "bloodhound",
+    "net group",
+    "dsquery",
+    "ldifde",
+    "csvde"
+)
+| extend
+    RMMTool        = InitiatingProcessFileName,
+    ReconCommand   = ProcessCommandLine
+| project TimeGenerated, DeviceName, AccountName, RMMTool, ReconCommand
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 6: RMM Service Not in Expected Software Inventory Baseline
+//
+// Rationale: Compare current RMM service installations against a known baseline.
+// This query produces a delta report of hosts with RMM services that were not
+// present in the prior 30-day baseline period. Requires historical data.
+//
+// Note: The "baseline" here is approximated by comparing counts in two time
+// windows. For production use, integrate with SCCM/Intune software inventory.
+// ============================================================================
+let BaselineWindow = 30d;
+let CurrentWindow  = 1d;
+let RMMBaseline = SecurityEvent
+    | where TimeGenerated between (ago(BaselineWindow) .. ago(CurrentWindow))
+    | where EventID == 7045
+    | where ServiceName has_any (KnownRMMTools)
+    | summarize BaselineInstalls = count() by Computer, ServiceName;
+let RecentInstalls = SecurityEvent
+    | where TimeGenerated > ago(CurrentWindow)
+    | where EventID == 7045
+    | where ServiceName has_any (KnownRMMTools)
+    | project InstallTime = TimeGenerated, Computer, ServiceName, ImagePath;
+RecentInstalls
+| join kind=leftanti RMMBaseline on Computer, ServiceName
+// Left anti-join: keeps only recent installs NOT seen in baseline
+| project InstallTime, Computer, ServiceName, ImagePath
+| extend IsNewToHost = true
+| order by InstallTime desc

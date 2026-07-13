@@ -1,0 +1,50 @@
+// Source: https://github.com/Blackvectra/nextlayersec-guides
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 1d;
+let pairWindow = 10m;
+let RiskySignins =
+    SigninLogs
+    | where TimeGenerated > ago(lookback)
+    | where ResultType == 0                              // sign-in succeeded
+    | where RiskLevelDuringSignIn in~ ("medium", "high")
+            or RiskLevelAggregated in~ ("medium", "high")
+            or RiskState !in~ ("none", "")
+    | project SigninTime           = TimeGenerated,
+              Upn                  = tolower(UserPrincipalName),
+              SigninIP             = IPAddress,
+              SigninLocation       = strcat(tostring(LocationDetails.city), ", ", tostring(LocationDetails.countryOrRegion)),
+              SigninApp            = AppDisplayName,
+              SigninCorrelationId  = CorrelationId,
+              SigninRiskLevel      = coalesce(RiskLevelDuringSignIn, RiskLevelAggregated),
+              SigninDeviceCompliant = tostring(DeviceDetail.isCompliant);
+let RuleOps =
+    OfficeActivity
+    | where TimeGenerated > ago(lookback)
+    | where Operation in~ (
+        "New-InboxRule", "Set-InboxRule", "UpdateInboxRules", "Enable-InboxRule"
+    )
+    | project RuleTime  = TimeGenerated,
+              Upn       = tolower(UserId),
+              RuleClientIP = ClientIP,
+              Operation,
+              Parameters;
+RiskySignins
+| join kind=inner RuleOps on Upn
+| where datetime_diff('second', RuleTime, SigninTime) between (0 .. (10 * 60))
+| extend MinutesAfterSignin = round(datetime_diff('second', RuleTime, SigninTime) / 60.0, 1)
+// Pull out the most damning rule attributes for fast triage.
+| extend ParamsJson = parse_json(Parameters)
+| extend MovesTo        = tostring(ParamsJson.[?Name=='MoveToFolder'].Value),
+         MarksAsRead    = tostring(ParamsJson.[?Name=='MarkAsRead'].Value),
+         DeletesMessage = tostring(ParamsJson.[?Name=='DeleteMessage'].Value),
+         ForwardsTo     = tostring(ParamsJson.[?Name=='ForwardTo'].Value),
+         RedirectsTo    = tostring(ParamsJson.[?Name=='RedirectTo'].Value)
+| project SigninTime, RuleTime, MinutesAfterSignin, Upn,
+          SigninIP, SigninLocation, SigninApp,
+          SigninRiskLevel, SigninDeviceCompliant,
+          RuleClientIP, Operation,
+          MovesTo, MarksAsRead, DeletesMessage, ForwardsTo, RedirectsTo,
+          Parameters
+| sort by SigninTime desc

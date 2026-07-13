@@ -1,0 +1,18 @@
+// Source: https://github.com/Robinzor/magma
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let downloadThreshold = 1000;
+let sizeThreshold = 5368709120; // 5GB in bytes
+let timeframe = 1h;
+OfficeActivity
+| where TimeGenerated > ago(timeframe)
+| where Operation in ("FileDownloaded", "FileSyncDownloadedFull", "FileAccessed")
+| summarize 
+    FileCount = count(),
+    TotalSize = sum(Size),
+    Files = make_set(OfficeObjectId, 100)
+    by UserId, ClientIP, bin(TimeGenerated, 5m)
+| where FileCount > downloadThreshold or TotalSize > sizeThreshold
+| extend Severity = "Critical", ThreatType = "DataExfiltration"
+| project TimeGenerated, UserId, ClientIP, FileCount, TotalSizeGB = TotalSize / 1073741824.0, Severity

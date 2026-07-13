@@ -1,0 +1,15 @@
+// Source: https://github.com/dCloser/SentinelAnalyticRules
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.COMPUTE/DISKS/BEGINGETACCESS/ACTION"
+| where ActivityStatusValue == "Success"
+| extend DiskName = tostring(Properties_d.resource)
+| project
+    TimeGenerated,
+    Actor=Caller,
+    ['Actor IP Address']=CallerIpAddress,
+    ['Azure Subscription Id']=SubscriptionId,
+    ['Azure Resource Group']=ResourceGroup,
+    DiskName

@@ -1,0 +1,6 @@
+// Source: https://github.com/jkerai1/KQL-Queries
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.CONSUMPTION/BUDGETS/DELETE" or OperationNameValue == "MICROSOFT.COSTMANAGEMENT/BUDGETS/DELETE"

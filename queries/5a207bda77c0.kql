@@ -1,0 +1,17 @@
+// Source: https://github.com/kkroth0/threat-hunting-ptbr
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 7d;
+let huntTerms = dynamic(["T1003.007", "credential access", "linux", "proc filesystem", "ci cd", "github actions", "memory scraping", "supply chain", "secret theft", "H176", "malicious", "process", "Linux", "CI/CD", "runner", "harvesting", "in-memory", "secrets", "GitHub", "Actions", "Runner.Worker", "locating"]);
+union withsource=SourceTable isfuzzy=true
+    SigninLogs,
+    AuditLogs,
+    OfficeActivity
+| where TimeGenerated >= ago(lookback)
+| extend SearchBlob = tostring(pack_all())
+| where SearchBlob has_any (huntTerms)
+    or SearchBlob has_any ("deviceCode", "oauth", "refresh token", "consent", "service principal", "Microsoft Graph")
+| extend HuntId = "H176", SourceUrl = "https://github.com/THORCollective/HEARTH/blob/main/Flames/H176.md"
+| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob
+| order by TimeGenerated desc

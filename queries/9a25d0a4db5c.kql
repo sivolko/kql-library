@@ -1,0 +1,20 @@
+// Source: https://github.com/quocbao210/sentinel-detection-pack
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe = 1h;
+let distinctHostsThreshold = 3;
+SecurityEvent
+| where TimeGenerated >= ago(timeframe)
+| where EventID == 4624
+| where LogonType == 10  // RemoteInteractive (RDP)
+| where isnotempty(IpAddress) and IpAddress !in ("127.0.0.1", "::1", "-")
+| summarize
+    Logons = count(),
+    DistinctHosts = dcount(Computer),
+    Hosts = make_set(Computer, 50),
+    Accounts = make_set(Account, 25)
+  by IpAddress, bin(TimeGenerated, 10m)
+| where DistinctHosts >= distinctHostsThreshold
+| extend IPCustomEntity = IpAddress
+| project TimeGenerated, IpAddress, Logons, DistinctHosts, Hosts, Accounts, IPCustomEntity

@@ -1,0 +1,11 @@
+// Source: https://github.com/Contoso-State/azure-sentinel-analytics-rules
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(30d)
+| where ResourceProviderValue =~ "MICROSOFT.COGNITIVESERVICES"
+| where OperationNameValue has_any ("WRITE", "DELETE", "ACTION")
+| project TimeGenerated, OperationNameValue, ActivityStatusValue, Caller, ResourceGroup, _ResourceId
+| order by TimeGenerated desc
+| take 200

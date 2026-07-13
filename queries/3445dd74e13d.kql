@@ -1,0 +1,13 @@
+// Source: https://github.com/KanenasCS/MicrosoftStudentAmbassador-Security
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Workload == "Microsoft Flow"
+| where Operation in ("CreatedFlow", "EditedFlow")
+| extend Connector = tostring(AdditionalDetails.ConnectorName)
+| where Connector has_any ("Dropbox", "Gmail", "HTTP", "GoogleDrive", "Twitter")
+| project TimeGenerated, UserId, Operation, Connector, ClientIP, AdditionalDetails
+| summarize FlowCount = count() by UserId, Connector
+| where FlowCount > 2 // multiple flows using same external connector
+| order by FlowCount desc

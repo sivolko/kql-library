@@ -1,0 +1,46 @@
+// Source: https://github.com/cyr6x/azure-soc-honeypot
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+let GeoIPData = _GetWatchlist('geoip')
+    | project
+        network         = column_ifexists('network', ''),
+        country_name    = column_ifexists('country_name', 'Unknown'),
+        city_name       = column_ifexists('city_name', 'Unknown'),
+        latitude        = toreal(column_ifexists('latitude', '0')),
+        longitude       = toreal(column_ifexists('longitude', '0'));
+
+SecurityEvent
+| where TimeGenerated > ago(24h)                  // Adjust window as needed
+| where EventID == 4625                           // Failed logon events only
+| where AccountType == "User"                     // Filter out computer accounts
+| extend
+    AttackerIP   = tostring(IpAddress),
+    LogonType_n  = tostring(LogonType),
+    TargetUser   = tostring(TargetUserName),
+    HostMachine  = tostring(Computer)
+| summarize
+    FailedAttempts  = count(),
+    FirstSeen       = min(TimeGenerated),
+    LastSeen        = max(TimeGenerated),
+    DistinctUsers   = dcount(TargetUser)
+    by AttackerIP, HostMachine, LogonType_n
+| where FailedAttempts > 5                        // Reduce noise, focus on brute-force
+| join kind=leftouter GeoIPData
+    on $left.AttackerIP == $right.network
+| project
+    AttackerIP,
+    HostMachine,
+    LogonType_n,
+    FailedAttempts,
+    DistinctUsers,
+    FirstSeen,
+    LastSeen,
+    country_name,
+    city_name,
+    latitude,
+    longitude
+| extend
+    // For Sentinel Workbook map visualisation — must be string
+    GeoLocation = strcat(latitude, ",", longitude)
+| order by FailedAttempts desc

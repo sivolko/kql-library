@@ -1,0 +1,34 @@
+// Source: https://github.com/wahidhendrawan/Detection-Rules
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(24h)
+| where ActionType == "OpenProcessApiCall"
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend
+    TargetProcess = tostring(ParsedFields.TargetFileName),
+    DesiredAccess = tostring(ParsedFields.DesiredAccess)
+| where TargetProcess endswith "lsass.exe"
+// Permission yang memungkinkan memory dump:
+// 0x1010 = PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION
+// 0x1410 = +PROCESS_DUP_HANDLE
+// 0x1F0FFF = PROCESS_ALL_ACCESS
+| where DesiredAccess in (
+    "0x1010", "0x1410", "0x143A", "0x1FFFFF", "0x1F0FFF",
+    "0x1f0fff", "0x1fffff"
+)
+// Whitelist trusted callers (TUNE PER ENV)
+| where InitiatingProcessFileName !in~ (
+    "MsSense.exe",                  // Defender for Endpoint
+    "MsMpEng.exe",                  // Defender AV
+    "csagent.exe",                  // CrowdStrike
+    "SentinelAgent.exe",            // SentinelOne
+    "wermgr.exe",                   // Windows Error Reporting
+    "WerFault.exe",
+    "svchost.exe"                   // tune more carefully in real env
+)
+| project Timestamp, DeviceName, AccountName, TargetProcess, DesiredAccess,
+          InitiatingProcessFileName, InitiatingProcessFolderPath,
+          InitiatingProcessCommandLine
+| order by Timestamp desc

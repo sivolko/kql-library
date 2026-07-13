@@ -1,0 +1,8 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue contains "purge"
+| where ActivityStatusValue == "Start"
+| project TimeGenerated, OperationNameValue, ActivityStatusValue, ResourceGroup, Caller, CallerIpAddress

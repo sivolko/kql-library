@@ -1,0 +1,22 @@
+// Source: https://github.com/javierDAW/detection-diary
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+Syslog
+| where TimeGenerated > ago(14d)
+| extend Msg = tolower(SyslogMessage)
+| where Msg has "esxcli vm process kill"
+    or Msg has "vm process kill"
+    or Msg has "/etc/motd"
+    or Msg has "/usr/lib/vmware/hostd/docroot/index.html"
+    or Msg has "/usr/lib/vmware/hostd/docroot/ui/index.html"
+| extend Signal = case(
+    Msg has "vm process kill", "esxcli_vm_kill",
+    Msg has "motd" or Msg has "docroot", "esxi_management_deface",
+    "other")
+| summarize Events = count(), Signals = make_set(Signal, 5),
+            FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+            Samples = make_list(SyslogMessage, 20)
+        by HostName, bin(TimeGenerated, 30m)
+| where Events >= 3 or array_length(Signals) >= 2
+| order by Events desc, LastSeen desc

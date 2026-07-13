@@ -1,0 +1,21 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-07-13
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "UsbDriveMounted"
+| project DeviceName, UsbTime = Timestamp
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName == "powershell.exe"
+    | where ProcessCommandLine contains_any ("DownloadString", "IEX", "-enc")
+    | project DeviceName, PSCommand = ProcessCommandLine, PSTime = Timestamp
+) on DeviceName
+| join kind=inner (
+    DeviceNetworkEvents
+    | where RemoteIP startswith "169.254."
+    | project DeviceName, RemoteIP, NetTime = Timestamp
+) on DeviceName
+| where PSTime between (UsbTime .. UsbTime + 2m)
+| where NetTime between (UsbTime .. UsbTime + 2m)
+| project DeviceName, UsbTime, PSTime, NetTime, RemoteIP, PSCommand
