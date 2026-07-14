@@ -1,0 +1,22 @@
+// Source: https://github.com/Ethan-Andrews/Exploitarium-Detections
+// Collected: 2026-07-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+let RustDeskRelayPorts = dynamic([21115, 21116, 21117]);
+CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where DestinationPort in (RustDeskRelayPorts)
+| extend AccountName = SourceUserName
+| summarize
+    ConnectionCount = count(),
+    DistinctDestinations = dcount(DestinationIP),
+    Ports = make_set(DestinationPort),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    SourceIPs = make_set(SourceIP)
+    by DeviceName, AccountName
+| extend SessionDurationSeconds = datetime_diff('Second', LastSeen, FirstSeen)
+| where ConnectionCount > 3 or DistinctDestinations > 1
+| project FirstSeen, LastSeen, DeviceName, AccountName, ConnectionCount,
+    DistinctDestinations, Ports, SourceIPs, SessionDurationSeconds
+| order by ConnectionCount desc

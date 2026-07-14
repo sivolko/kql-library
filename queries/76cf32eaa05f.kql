@@ -1,0 +1,21 @@
+// Source: https://github.com/mikepalitto/socautomators
+// Collected: 2026-07-14
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(365d)
+| where DeviceAction == "Allow"
+| where DestinationPort in (443, 80, 53, 8080)
+| summarize
+    ConnectionCount = count(),
+    BytesSent = sum(SentBytes),
+    BytesReceived = sum(ReceivedBytes),
+    FirstConnection = min(TimeGenerated),
+    LastConnection = max(TimeGenerated),
+    DistinctSourceDevices = dcount(DeviceName)
+    by DestinationIP, DestinationPort
+| extend DurationDays = datetime_diff('day', LastConnection, FirstConnection)
+| where DurationDays > 90
+| where DistinctSourceDevices <= 3
+| where ConnectionCount > 500
+| sort by DurationDays desc, ConnectionCount desc
