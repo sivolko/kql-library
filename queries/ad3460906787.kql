@@ -1,0 +1,9 @@
+// Source: https://github.com/troytrojan01/ot-cybersecurity-with-sentinel
+// Collected: 2026-07-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where DeviceVendor in~ ("Dragos", "Forescout")
+| summarize Events = count() by DeviceVendor, DeviceProduct, Activity
+| order by Events desc

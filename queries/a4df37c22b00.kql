@@ -1,0 +1,18 @@
+// Source: https://github.com/javierDAW/detection-diary
+// Collected: 2026-07-15
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DeviceServerIPs = dynamic(["<add_known_eds5000_ip_1>", "<add_known_eds5000_ip_2>"]);
+let PrivateRanges = dynamic(["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]);
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DestinationIP in (DeviceServerIPs)
+| where not(ipv4_is_in_any_range(SourceIP, PrivateRanges))
+| summarize
+    Attempts = count(),
+    DistinctPorts = dcount(DestinationPort),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by SourceIP, DestinationIP
+| where Attempts > 5
+| order by Attempts desc
