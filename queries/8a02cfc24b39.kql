@@ -1,0 +1,47 @@
+// Source: https://github.com/Otrivin/strata-secure-jumphost
+// Collected: 2026-07-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(90d)
+| where OperationNameValue endswith "/keys/rotate/action"
+   or  OperationNameValue endswith "/keys/create/action"
+   or  OperationNameValue endswith "/keys/update/action"
+| where ResourceId contains "tier0" or ResourceId contains "tier-0"
+| project TimeGenerated, Caller, OperationNameValue, ResourceId, ActivityStatus
+| order by TimeGenerated desc
+
+// ── 2. krbtgt password rotation (4742 against krbtgt)
+SecurityEvent
+| where TimeGenerated > ago(90d)
+| where EventID == 4742
+| where TargetUserName == "krbtgt"
+| project TimeGenerated, SubjectAccount, TargetUserName, RenderedDescription
+
+// ── 3. BitLocker recovery information reads (4662 on msFVE-RecoveryInformation)
+//    Each hit is an admin reading a recovery key — should be rare and traceable.
+SecurityEvent
+| where TimeGenerated > ago(90d)
+| where EventID == 4662
+| where ObjectServer == "DS"
+| where Properties contains "msFVE-RecoveryInformation"
+| project TimeGenerated, SubjectAccount, ObjectName, ObjectType
+| order by TimeGenerated desc
+
+// ── 4. Resource lock changes on Tier-0 resources
+//    Lock removal is a precondition for delete; investigate every entry.
+AzureActivity
+| where TimeGenerated > ago(90d)
+| where OperationNameValue endswith "/locks/write" or OperationNameValue endswith "/locks/delete"
+| where ResourceId contains "tier0" or ResourceId contains "tier-0"
+| project TimeGenerated, Caller, OperationNameValue, ResourceId, ActivityStatus
+| order by TimeGenerated desc
+
+// ── 5. Defender for Cloud regulatory compliance score trend (Tier-0 sub)
+//    Pair with the quarterly compliance review.
+SecurityRecommendation
+| where TimeGenerated > ago(90d)
+| summarize arg_max(TimeGenerated, *) by RecommendationName, ResourceId
+| where ResourceId contains "tier0" or ResourceId contains "tier-0"
+| where RecommendationState != "Healthy"
+| project RecommendationName, RecommendationSeverity, ResourceId, RecommendationState

@@ -1,5 +1,165 @@
 [
   {
+    "id": "7008a2a5cbf9",
+    "title": "Attack Map",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/hVie1314/azure-sentinel-honeypot-soc-lab\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet GeoIPDB_FULL = _GetWatchlist(\"geoip\");\n\nlet WindowsEvents = SecurityEvent\n| where EventID == 4625\n| where IpAddress !in (\"-\",\"127.0.0.1\")\n| project TimeGenerated, Computer, IpAddress\n| evaluate ipv4_lookup(GeoIPDB_FULL, IpAddress, network);\n\nlet LinuxEvents = Syslog\n| where SyslogMessage contains \"Failed password\"\n| extend IpAddress = extract(@\"\\\\d+\\\\.\\\\d+\\\\.\\\\d+\\\\.\\\\d+\",0,SyslogMessage)\n| where isnotempty(IpAddress)\n| project TimeGenerated, Computer, IpAddress\n| evaluate ipv4_lookup(GeoIPDB_FULL, IpAddress, network);\n\nunion WindowsEvents, LinuxEvents\n| where not(ipv4_is_private(IpAddress))\n| where isnotempty(latitude) and isnotempty(longitude)\n| summarize AttackCount=count(), Targets=make_set(Computer,5)\nby IpAddress, latitude, longitude, cityname, countryname\n| extend Location=strcat(cityname,\" (\",countryname,\")\")\n| project AttackCount, IpAddress, latitude, longitude, Location",
+    "source_repo": "hVie1314/azure-sentinel-honeypot-soc-lab",
+    "source_url": "https://github.com/hVie1314/azure-sentinel-honeypot-soc-lab/blob/cff9046a93889ebfd5cca70e8e0584bed5b22133/queries/attack-map.kql",
+    "filename": "attack-map.kql",
+    "collected_at": "2026-07-17T05:16:35.950837+00:00"
+  },
+  {
+    "id": "941634d27f16",
+    "title": "Lateral Movement",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/mattiapertusati/SPLUNK-SOC-LAB\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID in (7045, 4697)\n| where EventData has \"PSEXESVC\" or EventData has \"PsExec execution service\"\n| project TimeGenerated, Computer, EventID, Account, EventData",
+    "source_repo": "mattiapertusati/SPLUNK-SOC-LAB",
+    "source_url": "https://github.com/mattiapertusati/SPLUNK-SOC-LAB/blob/9597beb9ea8bfe303e0e1f74164339acbecd3c26/kql/lateral_movement.kql",
+    "filename": "lateral_movement.kql",
+    "collected_at": "2026-07-17T05:16:35.248901+00:00"
+  },
+  {
+    "id": "8a02cfc24b39",
+    "title": "============================================================",
+    "description": "QUARTERLY \u2014 strata-secure-jumphost Key rotation, krbtgt rotation, BitLocker recovery reads, lock changes Pair these queries with: re-sign risks.md (rotate approver + GPG key). ============================================================",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "azure"
+    ],
+    "content": "// Source: https://github.com/Otrivin/strata-secure-jumphost\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| where TimeGenerated > ago(90d)\n| where OperationNameValue endswith \"/keys/rotate/action\"\n   or  OperationNameValue endswith \"/keys/create/action\"\n   or  OperationNameValue endswith \"/keys/update/action\"\n| where ResourceId contains \"tier0\" or ResourceId contains \"tier-0\"\n| project TimeGenerated, Caller, OperationNameValue, ResourceId, ActivityStatus\n| order by TimeGenerated desc\n\n// \u2500\u2500 2. krbtgt password rotation (4742 against krbtgt)\nSecurityEvent\n| where TimeGenerated > ago(90d)\n| where EventID == 4742\n| where TargetUserName == \"krbtgt\"\n| project TimeGenerated, SubjectAccount, TargetUserName, RenderedDescription\n\n// \u2500\u2500 3. BitLocker recovery information reads (4662 on msFVE-RecoveryInformation)\n//    Each hit is an admin reading a recovery key \u2014 should be rare and traceable.\nSecurityEvent\n| where TimeGenerated > ago(90d)\n| where EventID == 4662\n| where ObjectServer == \"DS\"\n| where Properties contains \"msFVE-RecoveryInformation\"\n| project TimeGenerated, SubjectAccount, ObjectName, ObjectType\n| order by TimeGenerated desc\n\n// \u2500\u2500 4. Resource lock changes on Tier-0 resources\n//    Lock removal is a precondition for delete; investigate every entry.\nAzureActivity\n| where TimeGenerated > ago(90d)\n| where OperationNameValue endswith \"/locks/write\" or OperationNameValue endswith \"/locks/delete\"\n| where ResourceId contains \"tier0\" or ResourceId contains \"tier-0\"\n| project TimeGenerated, Caller, OperationNameValue, ResourceId, ActivityStatus\n| order by TimeGenerated desc\n\n// \u2500\u2500 5. Defender for Cloud regulatory compliance score trend (Tier-0 sub)\n//    Pair with the quarterly compliance review.\nSecurityRecommendation\n| where TimeGenerated > ago(90d)\n| summarize arg_max(TimeGenerated, *) by RecommendationName, ResourceId\n| where ResourceId contains \"tier0\" or ResourceId contains \"tier-0\"\n| where RecommendationState != \"Healthy\"\n| project RecommendationName, RecommendationSeverity, ResourceId, RecommendationState",
+    "source_repo": "Otrivin/strata-secure-jumphost",
+    "source_url": "https://github.com/Otrivin/strata-secure-jumphost/blob/a732d21a7cd6d93ec4b3a8d39a04cc723d4f67b2/policies/audit/queries/quarterly.kql",
+    "filename": "quarterly.kql",
+    "collected_at": "2026-07-17T05:16:34.526374+00:00"
+  },
+  {
+    "id": "4f0843b4da30",
+    "title": "1. Local SAM deletions on endpoints",
+    "description": "1. Local SAM deletions on endpoints",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "defender"
+    ],
+    "content": "// Source: https://github.com/louisgiles/KQL\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet win = 4h;\nlet actorSid = \"<ACTOR_SID_FROM_ALERT>\";\n// 1. Local SAM deletions on endpoints\nlet DevDels =\n    DeviceEvents\n    | where Timestamp > ago(win)\n    | where ActionType == \"UserAccountDeleted\"\n    | where InitiatingProcessAccountSid == actorSid\n    | extend Source = \"DeviceEvents\",\n             ActorName = strcat(InitiatingProcessAccountDomain, @\"\\\", InitiatingProcessAccountName),\n             ProcKey = strcat(tostring(InitiatingProcessId), \"|\", tostring(InitiatingProcessCreationTime))\n    | project Timestamp, Source, ActorSid = InitiatingProcessAccountSid, ActorName,\n              TargetSid = AccountSid, TargetName = AccountName, TargetDomain = AccountDomain,\n              Host = DeviceName, Tool = InitiatingProcessFileName, CmdLine = InitiatingProcessCommandLine, ProcKey;\n// 2. DC-side AD deletions, actor anchored\nlet SecDels =\n    SecurityEvent\n    | where TimeGenerated > ago(win)\n    | where EventID in (4726, 4743)\n    | where SubjectUserSid == actorSid\n    | extend Source = \"SecurityEvent\"\n    | project Timestamp = TimeGenerated, Source, ActorSid = SubjectUserSid, ActorName = SubjectAccount,\n              TargetSid, TargetName = TargetUserName, TargetDomain = TargetDomainName,\n              Host = Computer, Tool = \"\", CmdLine = \"\", ProcKey = \"\";\n// 3. MDI confirmation pass (no clean actor field; surfaces same-window AD deletions for cross-check)\nlet IdDels =\n    IdentityDirectoryEvents\n    | where Timestamp > ago(win)\n    | where ActionType has \"deleted\" and ActionType has_any (\"Account\", \"User\")\n    | extend Source = \"IdentityDirectoryEvents\"\n    | project Timestamp, Source, ActorSid = \"\", ActorName = \"(cross-ref SecurityEvent)\",\n              TargetSid = AccountSid, TargetName = AccountName, TargetDomain = AccountDomain,\n              Host = TargetDeviceName, Tool = \"\", CmdLine = \"\", ProcKey = \"\";\nunion DevDels, SecDels, IdDels\n| join kind=leftouter (\n    IdentityInfo\n    | where TimeGenerated > ago(30d)\n    | summarize arg_max(TimeGenerated, IsAccountEnabled, OnPremisesDistinguishedName, AccountUPN) by AccountSID\n) on $left.TargetSid == $right.AccountSID\n| extend ADSynced = isnotempty(OnPremisesDistinguishedName)\n| extend BenignFlag = case(\n    ADSynced and IsAccountEnabled == false, \"AD-synced + disabled-in-Entra -> stale cleanup\",\n    ADSynced and IsAccountEnabled == true,  \"AD-synced + enabled in Entra (atypical)\",\n    not(ADSynced) and isnotempty(AccountUPN), \"Cloud-only Entra account\",\n    \"Local/SAM or aged out of IdentityInfo\")\n| project Timestamp, Source, ActorSid, ActorName, Host, TargetName, TargetDomain, TargetSid,\n          ADSynced, EntraEnabled = IsAccountEnabled, BenignFlag, Tool, CmdLine, ProcKey, AccountUPN\n| sort by Timestamp asc",
+    "source_repo": "louisgiles/KQL",
+    "source_url": "https://github.com/louisgiles/KQL/blob/aa8447d070f2ed338f552fd07c3f059309260e83/scratchpad/mass-account-deletion.kql",
+    "filename": "mass-account-deletion.kql",
+    "collected_at": "2026-07-17T05:16:33.619096+00:00"
+  },
+  {
+    "id": "a6f325201aaf",
+    "title": "Failed Logons",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/teremuhamblin/BLUETeam\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4625\n| summarize FailedLogons = count() by IPAddress, Account\n| where FailedLogons > 10",
+    "source_repo": "teremuhamblin/BLUETeam",
+    "source_url": "https://github.com/teremuhamblin/BLUETeam/blob/941582e7e82bd8356a7f795b3abc081b11165421/detection-rules/kql/failed_logons.kql",
+    "filename": "failed_logons.kql",
+    "collected_at": "2026-07-17T05:16:32.485191+00:00"
+  },
+  {
+    "id": "a85cd510b187",
+    "title": "Function Name: ASimNetworkSessionMicrosoftSecurityEventFirewall",
+    "description": "Description: This ASIM parser supports normalizing Microsoft Windows Firewall Events logs ingested in 'SecurityEvent' table to the ASIM Network Session schema. Event IDs which are parsed as part of this parser: 5150, 5151, 5152, 5153, 5154, 5155, 5156, 5167, 5158, 5159",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "network"
+    ],
+    "content": "// Source: https://github.com/LaurieRhodes/PUBLIC-adx-basic\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff//\n// Function Name: ASimNetworkSessionMicrosoftSecurityEventFirewall\n// Description: This ASIM parser supports normalizing Microsoft Windows Firewall Events logs ingested in 'SecurityEvent' table to the ASIM Network Session schema. Event IDs which are parsed as part of this parser: 5150, 5151, 5152, 5153, 5154, 5155, 5156, 5167, 5158, 5159\n\n// Version: \n// Last Updated: \n//\n.create-or-alter function with (skipvalidation=true) ASimNetworkSessionMicrosoftSecurityEventFirewall(    ['disabled']:bool=false)\n{\n// Data tables for mapping raw values into string\nlet LayerCodeTable = datatable (LayerCode:string,LayerName:string)[\n  '%%14596', 'IP Packet',\n  '%%14597', 'Transport',\n  '%%14598', 'Forward',\n  '%%14599', 'Stream',\n  '%%14600', 'Datagram Data',\n  '%%14601', 'ICMP Error',\n  '%%14602', 'MAC 802.3',\n  '%%14603', 'MAC Native',\n  '%%14604', 'vSwitch',\n  '%%14608', 'Resource Assignment',\n  '%%14609', 'Listen',\n  '%%14610', 'Receive/Accept',\n  '%%14611', 'Connect',\n  '%%14612', 'Flow Established',\n  '%%14614', 'Resource Release',\n  '%%14615', 'Endpoint Closure',\n  '%%14616', 'Connect Redirect',\n  '%%14617', 'Bind Redirect',\n  '%%14624', 'Stream Packet'];\nlet ProtocolTable = datatable (Protocol:int, NetworkProtocol: string)[\n  1, 'ICMP',\n  3, 'GGP',\n  6, 'TCP',\n  8, 'EGP',\n  12, 'PUP',\n  17, 'UDP',\n  20, 'HMP',\n  27, 'RDP',\n  46, 'RSVP',\n  47, 'PPTP data over GRE',\n  50, 'ESP',\n  51, 'AH',\n  66, 'RVD',\n  88, 'IGMP',\n  89, 'OSPF'];\nlet Directions = datatable (DirectionCode:string,NetworkDirection:string, isOutBound:bool)[\n  '%%14592', 'Inbound', false,\n  '%%14593', 'Outbound', true,\n  '%%14594', 'Forward',false,\n  '%%14595', 'Bidirectional', false,\n  '%%14609', 'Listen', false];\n///////////////////////////////////////////////////////\n// this query extract data fields from EventData column from SecurityEvent table\n///////////////////////////////////////////////////////\nlet parser = (disabled: bool=false) {\nlet WindowsFirewall_SecurityEvent=(){ // Event IDs between (5151 .. 5159)\n// will be extracting Event specific fields from 'EventData' field\n  let SecurityEventProjected =\n      SecurityEvent\n      | project EventID, EventData, Computer, TimeGenerated, _ResourceId, _SubscriptionId, Type\n  ;\n  let SecurityEvent_5152 = \n      SecurityEventProjected | where not(disabled)\n      | where EventID==5152\n      | parse EventData with * '<Data Name=\"ProcessId\">'ProcessId:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"Application\">'Application'</Data>'\n          '\\x0d\\x0a  <Data Name=\"Direction\">'DirectionCode'</Data>'\n          '\\x0d\\x0a  <Data Name=\"SourceAddress\">'SrcIpAddr:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"SourcePort\">'SrcPortNumber:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"DestAddress\">'DstIpAddr:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"DestPort\">'DstPortNumber:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"Protocol\">'Protocol:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"FilterRTID\">'NetworkRuleNumber:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"LayerName\">'LayerCode'</Data>'\n          '\\x0d\\x0a  <Data Name=\"LayerRTID\">'LayerRTID'</Data>'*\n      | project-away EventData;\n  let SecurityEvent_5154_5155_5158_5159 =\n      SecurityEventProjected | where not(disabled)\n      | where EventID in (5154, 5155, 5158, 5159)\n      | parse EventData with * '<Data Name=\"ProcessId\">'ProcessId:string'</Data>' \n          '\\x0d\\x0a  <Data Name=\"Application\">'Application'</Data>'\n          '\\x0d\\x0a  <Data Name=\"SourceAddress\">'SrcIpAddr:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"SourcePort\">'SrcPortNumber:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"Protocol\">'Protocol:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"FilterRTID\">'NetworkRuleNumber:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"LayerName\">'LayerCode'</Data>'\n          '\\x0d\\x0a  <Data Name=\"LayerRTID\">'LayerRTID'</Data>'*\n      | extend DirectionCode = \"%%14609\"\n      | project-away EventData;\n  let SecurityEvent_5156_5157 =\n      SecurityEventProjected | where not(disabled)\n      | where EventID in (5156, 5157)\n      | parse EventData with * '<Data Name=\"ProcessID\">'ProcessId:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"Application\">'Application:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"Direction\">'DirectionCode:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"SourceAddress\">'SrcIpAddr:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"SourcePort\">'SrcPortNumber:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"DestAddress\">'DstIpAddr:string'</Data>'\n          '\\x0d\\x0a  <Data Name=\"DestPort\">'DstPortNumber:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"Protocol\">'Protocol:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"FilterRTID\">'NetworkRuleNumber:int'</Data>'\n          '\\x0d\\x0a  <Data Name=\"LayerName\">'LayerCode'</Data>'\n          '\\x0d\\x0a  <Data Name=\"LayerRTID\">'LayerRTID'</Data>'\n          '\\x0d\\x0a  <Data Name=\"RemoteUserID\">'RemoteUserID'</Data>'\n          '\\x0d\\x0a  <Data Name=\"RemoteMachineID\">'RemoteMachineID'</Data>'*\n      | project-away EventData;\n  union SecurityEvent_5152, SecurityEvent_5156_5157, SecurityEvent_5154_5155_5158_5159\n      | lookup Directions on DirectionCode\n      | project-rename DvcHostname = Computer\n      | extend\n          SrcAppName = iff(isOutBound, Application, \"\"),\n          DstAppName = iff(not(isOutBound), Application, \"\"),\n          SrcDvcId = iff(isOutBound, RemoteMachineID, \"\"),\n          DstDvcId = iff(not(isOutBound), RemoteMachineID, \"\"),\n          SrcProcessId =  iff(isOutBound, tostring(ProcessId), \"\"),\n          DstProcessId =  iff(not(isOutBound), tostring(ProcessId), \"\"),\n          DstUserId = iff(isOutBound, RemoteUserID, \"\"),\n          SrcUserId = iff(not(isOutBound), RemoteUserID, \"\"),\n          DstHostname = iff(isOutBound, \"\", DvcHostname),\n          SrcHostname = iff(isOutBound, DvcHostname, \"\")\n      | project-away Application, RemoteMachineID, RemoteUserID, ProcessId\n};\nWindowsFirewall_SecurityEvent \n     | extend \n            DvcAction = iff(EventID in (5154, 5156, 5158), \"Allow\", \"Deny\"),\n            DvcOs = 'Windows',\n            DstAppType = \"Process\",\n            SrcUserIdType = iff (SrcUserId <> \"S-1-0-0\", \"SID\", \"\"),\n            SrcUserId = iff (SrcUserId <> \"S-1-0-0\", SrcUserId, \"\"),\n            DstUserIdType = iff (DstUserId <> \"S-1-0-0\", \"SID\", \"\"),\n            DstUserId = iff (DstUserId <> \"S-1-0-0\", DstUserId, \"\"),\n            SrcAppType = \"Process\",\n            EventType = \"NetworkSession\",\n            EventSchema = \"NetworkSession\",\n            EventSchemaVersion=\"0.2.0\",\n            EventCount=toint(1),\n            EventVendor = \"Microsoft\",\n            EventProduct = \"Windows Firewall\",\n            EventResult = iff(EventID in (5154, 5156, 5158), \"Success\", \"Failure\"),\n            EventStartTime = TimeGenerated,\n            EventEndTime = TimeGenerated,\n            EventSeverity = iff(EventID  in (5154, 5156, 5158), \"Informational\", \"Low\"),\n            EventOriginalType = tostring(EventID),\n            DstDvcIdType = iff (DstDvcId != \"\", \"SID\", \"\"),\n            SrcDvcIdType = iff (SrcDvcId != \"\", \"SID\", \"\")\n   // aliases\n    | extend\n            Dvc = DvcHostname,\n            Hostname = DstHostname,\n            IpAddr = SrcIpAddr,\n            Src = SrcIpAddr,\n            Dst = DstIpAddr,\n            Rule = tostring (NetworkRuleNumber)\n    | lookup LayerCodeTable on LayerCode\n    | lookup ProtocolTable on Protocol\n    | project-away LayerCode, DirectionCode, Protocol, isOutBound, LayerName, EventID, LayerRTID,_ResourceId,_SubscriptionId\n    };\n    parser(disabled=disabled)\n}",
+    "source_repo": "LaurieRhodes/PUBLIC-adx-basic",
+    "source_url": "https://github.com/LaurieRhodes/PUBLIC-adx-basic/blob/f3caf87f4eed4093d3ddbdd688e6fde74e71c48f/schema/ASIM/Parsers/ASimNetworkSession/ASimNetworkSessionMicrosoftSecurityEventFirewall.kql",
+    "filename": "ASimNetworkSessionMicrosoftSecurityEventFirewall.kql",
+    "collected_at": "2026-07-17T05:16:31.770114+00:00"
+  },
+  {
+    "id": "7f6d0947537f",
+    "title": "Geoip Attack Map",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/SebastianReal/azure-honeypot-log-analysis\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\n{\n\t\"type\": 3,\n\t\"content\": {\n\t\"version\": \"KqlItem/1.0\",\n\t\"query\": \"let GeoIPDB_FULL = _GetWatchlist(\\\"geoip\\\");\\nlet WindowsEvents = SecurityEvent;\\nWindowsEvents | where EventID == 4625\\n| order by TimeGenerated desc\\n| evaluate ipv4_lookup(GeoIPDB_FULL, IpAddress, network)\\n| summarize FailureCount = count() by IpAddress, latitude, longitude, cityname, countryname\\n| project FailureCount, AttackerIp = IpAddress, latitude, longitude, city = cityname, country = countryname,\\nfriendly_location = strcat(cityname, \\\" (\\\", countryname, \\\")\\\");\",\n\t\"size\": 3,\n\t\"timeContext\": {\n\t\t\"durationMs\": 2592000000\n\t},\n\t\"queryType\": 0,\n\t\"resourceType\": \"microsoft.operationalinsights/workspaces\",\n\t\"visualization\": \"map\",\n\t\"mapSettings\": {\n\t\t\"locInfo\": \"LatLong\",\n\t\t\"locInfoColumn\": \"countryname\",\n\t\t\"latitude\": \"latitude\",\n\t\t\"longitude\": \"longitude\",\n\t\t\"sizeSettings\": \"FailureCount\",\n\t\t\"sizeAggregation\": \"Sum\",\n\t\t\"opacity\": 0.8,\n\t\t\"labelSettings\": \"friendly_location\",\n\t\t\"legendMetric\": \"FailureCount\",\n\t\t\"legendAggregation\": \"Sum\",\n\t\t\"itemColorSettings\": {\n\t\t\"nodeColorField\": \"FailureCount\",\n\t\t\"colorAggregation\": \"Sum\",\n\t\t\"type\": \"heatmap\",\n\t\t\"heatmapPalette\": \"greenRed\"\n\t\t}\n\t}\n\t},\n\t\"name\": \"query - 0\"\n}",
+    "source_repo": "SebastianReal/azure-honeypot-log-analysis",
+    "source_url": "https://github.com/SebastianReal/azure-honeypot-log-analysis/blob/fcf2c95405fe63b8105c7207896d0dbb65e494ec/src/geoip_attack_map.kql",
+    "filename": "geoip_attack_map.kql",
+    "collected_at": "2026-07-17T05:16:31.035578+00:00"
+  },
+  {
+    "id": "08f9339ad501",
+    "title": "=============================================================================",
+    "description": "r_2026_05_04__rubeus_s4u_tgs_burst Source: days/2026-05-04_C0063-Poland-Wiper/kql/rubeus_s4u_tgs_burst.kql Generated by tools/generate_adx_tests_full.py \u2014 do not edit. Paste this whole file into the ADX query window and Run. The trailing '| summarize hits = count()' returns the number of rows the rule fired on. Expected: hits > 0 against the seed in tools/adx_seed.kql. =============================================================================",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "defender"
+    ],
+    "content": "// Source: https://github.com/javierDAW/detection-diary\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceProcessEvents\n| where Timestamp >= ago(30d)\n| where (FileName =~ \"rubeus.exe\"\n         or ProcessCommandLine has_any (\" asktgt \", \" s4u \", \" s4u2self \", \" kerberoast \", \" /impersonateuser:\"))\n   and ProcessCommandLine has_any (\"/ticket:\",\"/user:\",\"/service:\",\"/msdsspn:\")\n| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName\n| join kind=leftouter (\n    SecurityEvent\n    | where EventID == 4769 and TicketEncryptionType in (\"0x12\",\"0x17\") // AES256, RC4\n    | summarize TGSCount=count() by Account, bin(TimeGenerated,5m), Computer\n    | where TGSCount > 50\n    | project TimeGenerated, Account, Computer, TGSCount\n  ) on $left.AccountName == $right.Account\n| summarize hits = count()",
+    "source_repo": "javierDAW/detection-diary",
+    "source_url": "https://github.com/javierDAW/detection-diary/blob/4aaab930d62bd42aaeca5ad2ece10f7fd8cf05bc/tools/adx_rules/r_2026_05_04__rubeus_s4u_tgs_burst.kql",
+    "filename": "r_2026_05_04__rubeus_s4u_tgs_burst.kql",
+    "collected_at": "2026-07-17T05:16:30.305821+00:00"
+  },
+  {
+    "id": "fd6d199f8809",
+    "title": "Correct Example:",
+    "description": "Correct Example:",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/ava-orange-education/Ultimate-Microsoft-XDR-for-Full-Spectrum-Cyber-Defence\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4624\n| summarize count() by Account \n\n//Incorrect Example: \nSecurityEvent\n| summarize count() by Account\n| where EventID == 4624  ",
+    "source_repo": "ava-orange-education/Ultimate-Microsoft-XDR-for-Full-Spectrum-Cyber-Defence",
+    "source_url": "https://github.com/ava-orange-education/Ultimate-Microsoft-XDR-for-Full-Spectrum-Cyber-Defence/blob/e4d4c8585e9c3d6af53e10be32171a562113cd9f/Chapter%2010/27-Correct-and-Incorrect-Filter-Application-Examples.kql",
+    "filename": "27-Correct-and-Incorrect-Filter-Application-Examples.kql",
+    "collected_at": "2026-07-17T05:16:29.322741+00:00"
+  },
+  {
+    "id": "81408ed9b6df",
+    "title": "HEARTH H209 - candidato inicial KQL",
+    "description": "Fonte: https://github.com/THORCollective/HEARTH/blob/main/Flames/H209.md Hip\u00f3tese: um advers\u00e1rio abusa de uma sess\u00e3o t\u00e9cnica SimpleHelp para lan\u00e7ar jquery.js por meio de Node.js e, em seguida, l\u00ea os armazenamentos de credenciais de desenvolvedor e de nuvem antes de C2 de sa\u00edda. Padr\u00e3o: Rede, DNS e correla\u00e7\u00e3o de anomalia de sa\u00edda Cobertura: Starter KQL - validar em Sentinel Prioridade: P1 (74) Tabelas: CommonSecurityLog, NetskopeEventsNetwork_CL, NetskopeEventsConnection_CL, Cloudflare_CL, NetskopeAlerts_CL, SecurityEvent, WindowsEvent, TrendMicro_XDR_OAT_CL, TrendMicro_XDR_WORKBENCH_CL, SigninLogs, AuditLogs, IdentityInfo Valide a disponibilidade da tabela, nomes de campos, limites e falsos positivos antes de usar como detec\u00e7\u00e3o.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/kkroth0/threat-hunting-ptbr\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 14d;\nlet huntTerms = dynamic([\"T1190\", \"T1219\", \"T1059.007\", \"T1105\", \"T1552.001\", \"T1555\", \"T1005\", \"T1041\", \"simplehelp\", \"cve 2026 48558\", \"djinn stealer\", \"rmm abuse\", \"credential access\", \"nodejs\", \"SimpleHelp\", \"technician\", \"session\", \"launches\", \"TaskWeaver\", \"reads\", \"developer\", \"secrets\", \"dns\", \"http\", \"https\", \"ssh\", \"rdp\", \"smb\", \"tunnel\", \"beacon\", \"c2\", \"block\", \"deny\"]);\nunion withsource=SourceTable isfuzzy=true\n    CommonSecurityLog,\n    Cloudflare_CL,\n    NetskopeEventsNetwork_CL,\n    NetskopeEventsConnection_CL,\n    NetskopeAlerts_CL\n| where TimeGenerated >= ago(lookback)\n| extend SearchBlob = tostring(pack_all())\n| where SearchBlob has_any (huntTerms)\n| extend HuntId = \"H209\", SourceUrl = \"https://github.com/THORCollective/HEARTH/blob/main/Flames/H209.md\"\n| summarize\n    Events = count(),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated),\n    Samples = make_set(SearchBlob, 3)\n    by HuntId, SourceUrl, SourceTable\n| order by Events desc",
+    "source_repo": "kkroth0/threat-hunting-ptbr",
+    "source_url": "https://github.com/kkroth0/threat-hunting-ptbr/blob/44ac8fa38ebdfbfe78601103421c7e1beaeeb49a/sentinel/kql/hearth/h209.kql",
+    "filename": "h209.kql",
+    "collected_at": "2026-07-17T05:16:28.612112+00:00"
+  },
+  {
+    "id": "555b1ada06fa",
+    "title": "Source: https://github.com/tomwechsler/Microsoft_Certified_Windows_Server_Hybrid_Administrator_Associate",
+    "description": "Collected: 2026-06-02 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-07-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n//| where Computer in (DCServersList)\n| where EventID == 4662 and ObjectServer == 'DS'\n| where AccountType != 'Machine'\n| where Properties has '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2' //DS-Replication-Get-Changes\n    or Properties has '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2' //DS-Replication-Get-Changes-All\n    or Properties has '89e95b76-444d-4c62-991a-0facbeda640c' //DS-Replication-Get-Changes-In-Filtered-Set\n| project TimeGenerated, Account, Activity, Properties, SubjectLogonId, Computer\n| join kind=leftouter\n(\n    SecurityEvent\n    //| where Computer in (DCServersList)\n    | where EventID == 4624 and LogonType == 3\n    | where AccountType != 'Machine'\n    | project TargetLogonId, IpAddress\n)\non $left.SubjectLogonId == $right.TargetLogonId\n| project-reorder TimeGenerated, Computer, Account, IpAddress\n| extend timestamp = TimeGenerated, AccountCustomEntity = Account, HostCustomEntity = Computer, SourceAddress = IpAddress",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/d0b72edbf4ae509932b69f520a9c2638ddec8f01/queries/df21a666a343.kql",
+    "filename": "df21a666a343.kql",
+    "collected_at": "2026-07-17T05:16:27.868043+00:00"
+  },
+  {
     "id": "cc89ed53f967",
     "title": "=====================================================================================",
     "description": "syslog_backfill.kql  --  one-time backfill of PRE-POLICY Palo Alto data from Syslog ===================================================================================== WHY Update policies are FORWARD-ONLY: they only route data ingested AFTER you attached them. Palo Alto data already sitting in Syslog from BEFORE that cutover never reached the PaloAlto_* tables. This backfills that gap by re-running the SAME live parsers (PaloAlto_*_parse) over the historical window and appending the result, tagged so it is fully reversible.",

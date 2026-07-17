@@ -1,0 +1,8 @@
+// Source: https://github.com/mattiapertusati/SPLUNK-SOC-LAB
+// Collected: 2026-07-17
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID in (7045, 4697)
+| where EventData has "PSEXESVC" or EventData has "PsExec execution service"
+| project TimeGenerated, Computer, EventID, Account, EventData
