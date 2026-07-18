@@ -1,0 +1,15 @@
+// Source: https://github.com/DancinDinoo/KQL
+// Collected: 2026-07-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+  SecurityEvent
+  | where EventID == "7045"
+  | extend ParsedEventData = parse_xml(EventData)
+  | extend ImagePath = tostring(parse_json(tostring(parse_json(tostring(ParsedEventData.EventData)).Data))[1].["#text"])
+  | extend ServiceName = tostring(parse_json(tostring(parse_json(tostring(ParsedEventData.EventData)).Data))[0].["#text"])
+  | extend Account = tostring(parse_json(tostring(parse_json(tostring(ParsedEventData.EventData)).Data))[4].["#text"])
+  | where strlen(ServiceName) == "8" and ImagePath has_all ("/Q", "/c", "echo", "%COMSPEC%", ".bat")
+
+  // Identifies known indicators of SmbExec.py after execution.
+  // https://github.com/fortra/impacket/blob/master/examples/smbexec.py 
+  // https://github.com/fortra/impacket/tree/master

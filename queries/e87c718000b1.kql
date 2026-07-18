@@ -1,0 +1,59 @@
+// Source: https://github.com/MBCloudTeck/NTLM-Must-Die
+// Collected: 2026-07-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID in (4624, 4776)
+| extend PackageName = tostring(parse_json(EventData).PackageName)
+| where PackageName contains "NTLM" or EventID == 4776
+| extend 
+    NTLMVersion = case(
+        PackageName contains "NTLM V1", "NTLMv1",
+        PackageName contains "NTLM V2", "NTLMv2",
+        "Unknown"
+    ),
+    AccountName = coalesce(
+        tostring(parse_json(EventData).TargetUserName),
+        Account
+    ),
+    SourceSystem = tostring(parse_json(EventData).WorkstationName)
+| where isnotempty(AccountName)
+| summarize 
+    TotalAuthentications = count(),
+    NTLMv1Count = countif(NTLMVersion == "NTLMv1"),
+    NTLMv2Count = countif(NTLMVersion == "NTLMv2"),
+    UniqueSources = dcount(SourceSystem),
+    UniqueTargets = dcount(Computer),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Sources = make_set(SourceSystem, 10),
+    Targets = make_set(Computer, 10)
+    by AccountName
+| extend 
+    AccountType = case(
+        AccountName endswith "$", "Computer Account",
+        AccountName contains "svc" or AccountName contains "service", "Service Account",
+        AccountName contains "admin", "Administrative Account",
+        "User Account"
+    )
+| extend Priority = case(
+    NTLMv1Count > 0, "P0 - Critical: NTLMv1 usage",
+    AccountType in ("Service Account", "Administrative Account"), "P1 - High: Privileged account",
+    TotalAuthentications > 500, "P2 - Medium: High volume",
+    "P3 - Low"
+)
+| project 
+    AccountName,
+    AccountType,
+    Priority,
+    TotalAuthentications,
+    NTLMv1Count,
+    NTLMv2Count,
+    UniqueSources,
+    UniqueTargets,
+    FirstSeen,
+    LastSeen,
+    TopSources = Sources,
+    TopTargets = Targets
+| order by NTLMv1Count desc, TotalAuthentications desc

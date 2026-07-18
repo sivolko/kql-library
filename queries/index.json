@@ -1,5 +1,133 @@
 [
   {
+    "id": "2b97b129974a",
+    "title": "Smbexec.Py Execution",
+    "description": "https://github.com/fortra/impacket/blob/master/examples/smbexec.py",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/DancinDinoo/KQL\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\n  SecurityEvent\n  | where EventID == \"7045\"\n  | extend ParsedEventData = parse_xml(EventData)\n  | extend ImagePath = tostring(parse_json(tostring(parse_json(tostring(ParsedEventData.EventData)).Data))[1].[\"#text\"])\n  | extend ServiceName = tostring(parse_json(tostring(parse_json(tostring(ParsedEventData.EventData)).Data))[0].[\"#text\"])\n  | extend Account = tostring(parse_json(tostring(parse_json(tostring(ParsedEventData.EventData)).Data))[4].[\"#text\"])\n  | where strlen(ServiceName) == \"8\" and ImagePath has_all (\"/Q\", \"/c\", \"echo\", \"%COMSPEC%\", \".bat\")\n\n  // Identifies known indicators of SmbExec.py after execution.\n  // https://github.com/fortra/impacket/blob/master/examples/smbexec.py \n  // https://github.com/fortra/impacket/tree/master",
+    "source_repo": "DancinDinoo/KQL",
+    "source_url": "https://github.com/DancinDinoo/KQL/blob/a4180812a84694c253e26434d03ed607a9f9eac7/Windows%20Security%20Events/Smbexec.py%20Execution.kql",
+    "filename": "Smbexec.py Execution.kql",
+    "collected_at": "2026-07-18T04:51:13.551178+00:00"
+  },
+  {
+    "id": "f48f1177c8d8",
+    "title": "Failed login attempts (Windows)",
+    "description": "Failed login attempts (Windows)",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/LearningGallery/Azure-Monitor-AI-Analytics\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago(24h)\n| where EventID == 4625  // Failed login\n| summarize \n    FailedAttempts = count(),\n    Accounts = make_set(Account),\n    IPs = make_set(IpAddress)\n    by Computer, bin(TimeGenerated, 1h)\n| where FailedAttempts > 5\n| order by FailedAttempts desc",
+    "source_repo": "LearningGallery/Azure-Monitor-AI-Analytics",
+    "source_url": "https://github.com/LearningGallery/Azure-Monitor-AI-Analytics/blob/6598a4c6cac597bbe7f672d754a4691055c51847/kql/queries/vm-insights/failed-logins.kql",
+    "filename": "failed-logins.kql",
+    "collected_at": "2026-07-18T04:51:12.900739+00:00"
+  },
+  {
+    "id": "758d773cee63",
+    "title": "Function Name: ASimUserManagementMicrosoftSecurityEvent",
+    "description": "Description: This ASIM parser supports normalizing Microsoft Security Event logs ingested in 'SecurityEvent' table delivered using AMA to the ASIM UserManagement normalized schema.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/LaurieRhodes/PUBLIC-adx-basic\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff//\n// Function Name: ASimUserManagementMicrosoftSecurityEvent\n// Description: This ASIM parser supports normalizing Microsoft Security Event logs ingested in 'SecurityEvent' table delivered using AMA to the ASIM UserManagement normalized schema.\n\n// Version: \n// Last Updated: \n//\n.create-or-alter function with (skipvalidation=true) ASimUserManagementMicrosoftSecurityEvent(    ['disabled']:bool=false)\n{\nlet parser = (\n    disabled:bool = false\n) {\n    let EventIDLookup = datatable(EventID:int, EventType:string, EventSubType:string, GroupType:string)\n    [   \n        \"4720\", \"UserCreated\", \"UserCreated\", \"\", \n        \"4722\", \"UserEnabled\", \"UserModified\", \"\", \n        \"4723\", \"PasswordChanged\", \"UserModified\", \"\", \n        \"4724\", \"PasswordReset\", \"UserModified\", \"\", \n        \"4725\", \"UserDisabled\", \"UserModified\", \"\", \n        \"4726\", \"UserDeleted\", \"UserModified\", \"\", \n        \"4727\", \"GroupCreated\", \"GroupCreated\", \"Global Security Enabled\", \n        \"4728\", \"UserAddedToGroup\", \"GroupModified\", \"Global Security Enabled\", \n        \"4729\", \"UserRemovedFromGroup\", \"GroupModified\", \"Global Security Enabled\", \n        \"4730\", \"GroupDeleted\", \"GroupModified\", \"Global Security Enabled\", \n        \"4731\", \"GroupCreated\", \"GroupCreated\", \"Local Security Enabled\", \n        \"4732\", \"UserAddedToGroup\", \"GroupModified\", \"Local Security Enabled\", \n        \"4733\", \"UserRemovedFromGroup\", \"GroupModified\", \"Local Security Enabled\", \n        \"4734\", \"GroupDeleted\", \"GroupModified\", \"Local Security Enabled\", \n        \"4738\", \"UserModified\", \"UserModified\", \"\", \n        \"4740\", \"UserLocked\", \"UserModified\", \"\", \n        \"4744\", \"GroupCreated\", \"GroupCreated\", \"Local Distribution\", \n        \"4748\", \"GroupDeleted\", \"GroupModified\", \"Local Distribution\", \n        \"4749\", \"GroupCreated\", \"GroupCreated\", \"Global Distribution\", \n        \"4753\", \"GroupDeleted\", \"GroupModified\", \"Global Distribution\", \n        \"4754\", \"GroupCreated\", \"GroupCreated\", \"Universal Security Enabled\", \n        \"4756\", \"UserAddedToGroup\", \"GroupModified\", \"Universal Security Enabled\", \n        \"4757\", \"UserRemovedFromGroup\", \"GroupModified\", \"Universal Security Enabled\", \n        \"4758\", \"GroupDeleted\", \"GroupModified\", \"Universal Security Enabled\", \n        \"4759\", \"GroupCreated\", \"GroupCreated\", \"Universal Distribution\", \n        \"4763\", \"GroupDeleted\", \"GroupModified\", \"Universal Distribution\", \n        \"4767\", \"UserLocked\", \"UserModified\", \"\", \n        \"4781\", \"UserModified\", \"UserModified\", \"\" \n    ];\n    let UserTypeLookup = datatable (ActorOriginalUserType:string, ActorUserType:string)\n    [\n        'Machine', 'Machine',\n        'User', 'Regular'\n    ]; \n    let UserEventID = toscalar(\n        EventIDLookup\n        | where not(disabled)\n        | where EventSubType in(\"UserCreated\",\"UserModified\") \n        | summarize make_set(EventID)\n    );\n    let GroupEventID = toscalar(\n        EventIDLookup\n        | where not(disabled)\n        | where EventSubType in(\"GroupCreated\",\"GroupModified\")  \n        | summarize make_set(EventID)\n    );\n    union (\n        SecurityEvent\n        | where not(disabled)\n        | where EventID in(UserEventID)\n        | project-rename \n            ActorOriginalUserType = AccountType,\n            ActorSessionId = SubjectLogonId,\n            ActorUserId = SubjectUserSid,\n            TargetDomain = TargetDomainName,\n            TargetUserId = TargetSid,\n            TargetUsername = TargetUserName,\n            EventMessage = Activity\n        | parse-kv EventData as \n            (\n                OldTargetUserName:string,\n                NewTargetUserName:string\n            ) \n            with (regex=@'<Data Name=\"(\\w+)\">{?([^<]*?)}?</Data>')\n        | project-rename\n            NewPropertyValue = NewTargetUserName,\n            PreviousPropertyValue = OldTargetUserName\n        | extend \n            TargetUsername = coalesce(TargetUsername, PreviousPropertyValue)\n        | project TimeGenerated, EventID, Computer, _ResourceId, _ItemId, TargetDomain, TargetUserId, TargetUsername, ActorUserId, SubjectDomainName, SubjectUserName, ActorOriginalUserType, ActorSessionId, NewPropertyValue, PreviousPropertyValue, SourceComputerId, EventMessage\n        | extend\n            TargetUserIdType = iif(isnotempty(TargetUserId), \"SID\",\"\"),\n            TargetUsername = iff (TargetDomain == \"\", TargetUsername, strcat (TargetDomain, '\\\\', TargetUsername))\n        | project-away TargetDomain\n    ),(\n        SecurityEvent\n        | where not(disabled)\n        | where not (EventID in (4744, 4748, 4749, 4753, 4759, 4763))\n        | where EventID in(GroupEventID)\n        | project-rename \n            ActorOriginalUserType = AccountType,\n            ActorSessionId = SubjectLogonId,\n            ActorUserId = SubjectUserSid,\n            GroupDomain = TargetDomainName,\n            GroupId = TargetSid,\n            GroupName = TargetUserName,\n            EventMessage = Activity\n        | extend GroupName = iff (GroupDomain == \"\", GroupName, strcat (GroupDomain, \"\\\\\" ,GroupName))\n        | parse-kv EventData as \n            (\n                MemberName:string,\n                MemberSid:string\n            ) \n            with (regex=@'<Data Name=\"(\\w+)\">{?([^<]*?)}?</Data>')\n        | project-rename \n            TargetUserId = MemberSid,\n            TargetUsername = MemberName\n        | project TimeGenerated, EventID, Computer, _ResourceId, _ItemId, GroupId, GroupName, ActorUserId, SubjectDomainName, SubjectUserName, ActorOriginalUserType, ActorSessionId, TargetUsername, TargetUserId, SourceComputerId, EventMessage\n        | extend \n            GroupIdType = iif(isnotempty(GroupId), \"SID\",\"\")\n    ),(\n        SecurityEvent\n        | where not(disabled)\n        | where EventID in (4744, 4748, 4749, 4753, 4759, 4763)\n        | parse-kv EventData as \n          (\n              TargetUserName:string,\n              TargetDomainName:string,\n              TargetSid:string,\n              SubjectUserSid:string,\n              AccountType:string,\n              SubjectLogonId:string,\n              SubjectDomainName:string,\n              SubjectUserName:string\n          ) \n          with (regex=@'<Data Name=\"(\\w+)\">{?([^<]*?)}?</Data>')\n        | project-rename \n            ActorOriginalUserType = AccountType,\n            ActorSessionId = SubjectLogonId,\n            ActorUserId = SubjectUserSid,\n            GroupDomain = TargetDomainName,\n            GroupId = TargetSid,\n            GroupName = TargetUserName,\n            EventMessage = Activity\n        | extend GroupName = iff (GroupDomain == \"\", GroupName, strcat (GroupDomain, \"\\\\\" ,GroupName))\n        | parse-kv EventData as \n            (\n                MemberName:string,\n                MemberSid:string\n            ) \n            with (regex=@'<Data Name=\"(\\w+)\">{?([^<]*?)}?</Data>')\n        | project-rename \n            TargetUserId = MemberSid,\n            TargetUsername = MemberName\n        | project TimeGenerated, EventID, Computer, _ResourceId, _ItemId, GroupId, GroupName, ActorUserId, SubjectDomainName, SubjectUserName, ActorOriginalUserType, ActorSessionId, TargetUsername, TargetUserId, SourceComputerId, EventMessage\n        | extend \n            GroupIdType = iif(isnotempty(GroupId), \"SID\",\"\")\n    )\n| lookup EventIDLookup on EventID\n| extend UpdatedPropertyName = EventSubType\n| invoke _ASIM_ResolveDvcFQDN (\"Computer\")\n| lookup UserTypeLookup on ActorOriginalUserType\n| extend \n    DvcId = coalesce(_ResourceId, SourceComputerId),\n    EventOriginalType = tostring(EventID)\n| project-rename \n    EventUid = _ItemId\n| extend \n    ActorUsername = iff (SubjectDomainName == \"\", SubjectUserName, strcat (SubjectDomainName, '\\\\', SubjectUserName)),\n    Dvc = DvcHostname,\n    DvcIdType = iff (isnotempty(_ResourceId), \"AzureResourceID\", \"\"),\n    DvcOs = \"Windows\",\n    EventCount = int(1),\n    EventEndTime = TimeGenerated,\n    EventProduct = 'Security Events',\n    EventResult = \"Success\",\n    EventSchema = \"UserManagement\",\n    EventSchemaVersion = \"0.1.1\",\n    EventSeverity = \"Informational\",\n    EventStartTime = TimeGenerated,\n    EventVendor = 'Microsoft',\n    Hostname = DvcHostname, \n    ActorUserIdType=\"SID\"\n| project-away Subject*, Computer, _ResourceId, SourceComputerId,EventID\n| extend\n    ActorUsernameType = _ASIM_GetUsernameType(ActorUsername),\n    ActorUserType = _ASIM_GetUserType(ActorUsername,ActorUserId),\n    GroupNameType = _ASIM_GetUsernameType(GroupName),\n    TargetUsernameType = _ASIM_GetUsernameType(TargetUsername),\n    TargetUserType = _ASIM_GetUserType(TargetUsername,TargetUserId),\n    User = ActorUsername\n};\n  parser (\n      disabled                 = disabled\n  )\n}",
+    "source_repo": "LaurieRhodes/PUBLIC-adx-basic",
+    "source_url": "https://github.com/LaurieRhodes/PUBLIC-adx-basic/blob/f3caf87f4eed4093d3ddbdd688e6fde74e71c48f/schema/ASIM/Parsers/ASimUserManagement/ASimUserManagementMicrosoftSecurityEvent.kql",
+    "filename": "ASimUserManagementMicrosoftSecurityEvent.kql",
+    "collected_at": "2026-07-18T04:51:12.248091+00:00"
+  },
+  {
+    "id": "aecb86b2ce9f",
+    "title": "============================================================",
+    "description": "MICROSOFT SENTINEL \u2014 ANALYTIC RULE QUERIES Project: Microsoft Sentinel SIEM Lab ============================================================",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/cyb-sehgal/Microsoft-Sentinel-SIEM\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where OperationName == \"Add user\"\n\n\n// \u2500\u2500 2. Scheduled Rule: New Processes Created (Windows) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Rule Name: NewProcesses\n// Rule Type: Scheduled\n// Data Source: SecurityEvent (Windows)\n// Trigger: Any new process creation event\n// MITRE ATT&CK: Persistence\n// Alert Grouping: Enabled\nSecurityEvent\n| where EventID == \"4688\"\n| where TimeGenerated > ago(5m)\n\n\n// \u2500\u2500 3. Near-Real-Time (NRT) Rule: Entra ID Sign-In \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Rule Type: NRT (runs every 1 minute)\n// Data Source: Entra ID\n// Note: Limit of 50 NRT rules per workspace\nAuditLogs\n| where OperationName == \"Add user\"\n| where TimeGenerated > ago(1h)\n\n\n// \u2500\u2500 4. Watchlist-Integrated Rule: High Connection Count \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Rule: High count of connection by client IP on many ports\n// Integrates the PentestingIPAddresses watchlist\n// Enriches the rule to flag known pentest IPs\nlet PentestingIPAddresses = _GetWatchlist('PentestingIPAddresses') | project IPAddress;\n// NOTE: Append this 'let' statement to the top of the\n// \"High count of connection by client IP on many ports\" rule template\n// from the Content Hub to integrate watchlist filtering.",
+    "source_repo": "cyb-sehgal/Microsoft-Sentinel-SIEM",
+    "source_url": "https://github.com/cyb-sehgal/Microsoft-Sentinel-SIEM/blob/0c3865034f8ea2a35da01cf8618b32a81ca0330b/queries/analytic-rules.kql",
+    "filename": "analytic-rules.kql",
+    "collected_at": "2026-07-18T04:51:11.450480+00:00"
+  },
+  {
+    "id": "9bac5e8cb81f",
+    "title": "Detects when unconstrained kerberos delegation is enabled on a user object",
+    "description": "Detects when unconstrained kerberos delegation is enabled on a user object",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/petitess/kusto\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == \"4738\"\n| parse EventData with * 'NewUacValue\">' NewUacValue '</Data>' *\n| parse EventData with * 'TargetUserName\">' UserName '</Data>' *\n| parse EventData with * 'SubjectUserName\">' Actor '</Data>' *\n| where NewUacValue == \"0x2010\"\n| project TimeGenerated, Activity, UserName, Actor",
+    "source_repo": "petitess/kusto",
+    "source_url": "https://github.com/petitess/kusto/blob/71fd9d18d82e7e3ebb81df0cbbb9895c29a95853/Sentinel-Queries/Active%20Directory/SecurityEvent-UnconstrainedDelegationtoUser.kql",
+    "filename": "SecurityEvent-UnconstrainedDelegationtoUser.kql",
+    "collected_at": "2026-07-18T04:51:10.804815+00:00"
+  },
+  {
+    "id": "0e05af1a467f",
+    "title": "Identify Common Windows Security Event Ingestion :: 5/12/2024 RF",
+    "description": "Identify Common Windows Security Event Ingestion :: 5/12/2024 RF",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/agent4t2/microsoft-sentinel\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timerange=7d;\nSecurityEvent\n| where TimeGenerated > ago(timerange)\n//| where Computer startswith \"GTM\" // Uncomment to specify host group. \n| summarize CountPerGroup = count() by EventID\n| extend TotalCount = toscalar(Syslog | where TimeGenerated > ago(timerange) | summarize count())\n| extend Percentage = round((CountPerGroup * 100.0) / TotalCount, 2)\n| order by Percentage desc",
+    "source_repo": "agent4t2/microsoft-sentinel",
+    "source_url": "https://github.com/agent4t2/microsoft-sentinel/blob/ecc31c65b8154b545544f7691875e49066dc7cc8/kql_queries/win_security_events.kql",
+    "filename": "win_security_events.kql",
+    "collected_at": "2026-07-18T04:51:10.145727+00:00"
+  },
+  {
+    "id": "e87c718000b1",
+    "title": "Analyze NTLM Usage by Account",
+    "description": "This query identifies which accounts are using NTLM authentication Focus on service accounts and privileged users for remediation",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/MBCloudTeck/NTLM-Must-Die\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago(7d)\n| where EventID in (4624, 4776)\n| extend PackageName = tostring(parse_json(EventData).PackageName)\n| where PackageName contains \"NTLM\" or EventID == 4776\n| extend \n    NTLMVersion = case(\n        PackageName contains \"NTLM V1\", \"NTLMv1\",\n        PackageName contains \"NTLM V2\", \"NTLMv2\",\n        \"Unknown\"\n    ),\n    AccountName = coalesce(\n        tostring(parse_json(EventData).TargetUserName),\n        Account\n    ),\n    SourceSystem = tostring(parse_json(EventData).WorkstationName)\n| where isnotempty(AccountName)\n| summarize \n    TotalAuthentications = count(),\n    NTLMv1Count = countif(NTLMVersion == \"NTLMv1\"),\n    NTLMv2Count = countif(NTLMVersion == \"NTLMv2\"),\n    UniqueSources = dcount(SourceSystem),\n    UniqueTargets = dcount(Computer),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated),\n    Sources = make_set(SourceSystem, 10),\n    Targets = make_set(Computer, 10)\n    by AccountName\n| extend \n    AccountType = case(\n        AccountName endswith \"$\", \"Computer Account\",\n        AccountName contains \"svc\" or AccountName contains \"service\", \"Service Account\",\n        AccountName contains \"admin\", \"Administrative Account\",\n        \"User Account\"\n    )\n| extend Priority = case(\n    NTLMv1Count > 0, \"P0 - Critical: NTLMv1 usage\",\n    AccountType in (\"Service Account\", \"Administrative Account\"), \"P1 - High: Privileged account\",\n    TotalAuthentications > 500, \"P2 - Medium: High volume\",\n    \"P3 - Low\"\n)\n| project \n    AccountName,\n    AccountType,\n    Priority,\n    TotalAuthentications,\n    NTLMv1Count,\n    NTLMv2Count,\n    UniqueSources,\n    UniqueTargets,\n    FirstSeen,\n    LastSeen,\n    TopSources = Sources,\n    TopTargets = Targets\n| order by NTLMv1Count desc, TotalAuthentications desc",
+    "source_repo": "MBCloudTeck/NTLM-Must-Die",
+    "source_url": "https://github.com/MBCloudTeck/NTLM-Must-Die/blob/dc84e7bfabec4d81208386227af205fc83507e61/NTLM%20resources/KQL/analyze-ntlm-by-account.kql",
+    "filename": "analyze-ntlm-by-account.kql",
+    "collected_at": "2026-07-18T04:51:09.343314+00:00"
+  },
+  {
+    "id": "bf8043217bfc",
+    "title": "HEARTH H144 - candidato inicial KQL",
+    "description": "Fonte: https://github.com/THORCollective/HEARTH/blob/main/Flames/H144.md Hip\u00f3tese: os atores da amea\u00e7a est\u00e3o abusando da estrutura de automa\u00e7\u00e3o Windows UI para ler a barra de endere\u00e7os do navegador em primeiro plano de um processo host n\u00e3o AT e acionar o sequestro de sess\u00e3o banc\u00e1ria quando dom\u00ednios direcionados aparecem. Padr\u00e3o: IOC e varredura do indicador Cobertura: Starter KQL - validar em Sentinel Prioridade: P2 (59) Tabelas: SecurityEvent, WindowsEvent, TrendMicro_XDR_OAT_CL, TrendMicro_XDR_WORKBENCH_CL, ThreatIntelIndicators, Watchlist, SecurityAlert, SecurityIncident, Anomalies, Syslog, Heartbeat, CommonSecurityLog Valide a disponibilidade da tabela, nomes de campos, limites e falsos positivos antes de usar como detec\u00e7\u00e3o.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "network"
+    ],
+    "content": "// Source: https://github.com/kkroth0/threat-hunting-ptbr\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 14d;\nlet huntId = \"H144\";\nlet sourceUrl = \"https://github.com/THORCollective/HEARTH/blob/main/Flames/H144.md\";\nlet huntTerms = dynamic([\"T1056.003\", \"T1185\", \"ui automation\", \"coyote\", \"browser session hijacking\", \"H144\", \"abusing\", \"Windows\", \"Automation\", \"framework\", \"read\", \"foreground\", \"browser\", \"address\", \"non-AT\", \"process\", \"trigger\", \"banking-session\", \"hijacking\", \"when\", \"targeted\", \"domains\"]);\nunion withsource=SourceTable isfuzzy=true\n    SecurityEvent,\n    WindowsEvent,\n    TrendMicro_XDR_OAT_CL,\n    TrendMicro_XDR_WORKBENCH_CL,\n    ThreatIntelIndicators,\n    Watchlist,\n    SecurityAlert,\n    SecurityIncident,\n    Anomalies,\n    Syslog,\n    Heartbeat,\n    CommonSecurityLog\n| where TimeGenerated >= ago(lookback)\n| extend SearchBlob = tostring(pack_all())\n| where SearchBlob has_any (huntTerms)\n| extend HuntId = huntId, SourceUrl = sourceUrl\n| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob\n| order by TimeGenerated desc",
+    "source_repo": "kkroth0/threat-hunting-ptbr",
+    "source_url": "https://github.com/kkroth0/threat-hunting-ptbr/blob/44ac8fa38ebdfbfe78601103421c7e1beaeeb49a/sentinel/kql/hearth/h144.kql",
+    "filename": "h144.kql",
+    "collected_at": "2026-07-18T04:51:08.696489+00:00"
+  },
+  {
+    "id": "6ff3527b3922",
+    "title": "Source: https://github.com/Gyarbij/Artemis",
+    "description": "Collected: 2026-06-29 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-07-18\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (30d)\n| project TimeGenerated, EventID, Account, AccountType, PrivilegeList, Computer\n| where EventID == \"4672\"\n| where Account != \"NT AUTHORITY\\\\SYSTEM\" and Account !has \"Window Manager\"\n| where AccountType == \"User\"\n//The privilege list is stored in a string of text that we need to split\n| extend Privs=extract_all(@\"Se(.*?)Privilege\", PrivilegeList)\n//Once we retrieve the privileges from the string of text we can recreate the proper naming\n| mv-expand Privs\n| extend Privilege=strcat('Se', Privs, 'Privilege')\n| project TimeGenerated, Account, Computer, Privilege\n| summarize ['List of Privileges']=make_set(Privilege) by Computer, Account\n| sort by Computer asc  ",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/d44d7af1c2af6eb14feea1bbdddd36d013f5792a/queries/88ebc206906e.kql",
+    "filename": "88ebc206906e.kql",
+    "collected_at": "2026-07-18T04:51:08.054546+00:00"
+  },
+  {
     "id": "7008a2a5cbf9",
     "title": "Attack Map",
     "description": "KQL query collected from public GitHub repositories.",

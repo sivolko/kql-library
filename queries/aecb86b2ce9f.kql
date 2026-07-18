@@ -1,0 +1,37 @@
+// Source: https://github.com/cyb-sehgal/Microsoft-Sentinel-SIEM
+// Collected: 2026-07-18
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where OperationName == "Add user"
+
+
+// ── 2. Scheduled Rule: New Processes Created (Windows) ────────
+// Rule Name: NewProcesses
+// Rule Type: Scheduled
+// Data Source: SecurityEvent (Windows)
+// Trigger: Any new process creation event
+// MITRE ATT&CK: Persistence
+// Alert Grouping: Enabled
+SecurityEvent
+| where EventID == "4688"
+| where TimeGenerated > ago(5m)
+
+
+// ── 3. Near-Real-Time (NRT) Rule: Entra ID Sign-In ────────────
+// Rule Type: NRT (runs every 1 minute)
+// Data Source: Entra ID
+// Note: Limit of 50 NRT rules per workspace
+AuditLogs
+| where OperationName == "Add user"
+| where TimeGenerated > ago(1h)
+
+
+// ── 4. Watchlist-Integrated Rule: High Connection Count ────────
+// Rule: High count of connection by client IP on many ports
+// Integrates the PentestingIPAddresses watchlist
+// Enriches the rule to flag known pentest IPs
+let PentestingIPAddresses = _GetWatchlist('PentestingIPAddresses') | project IPAddress;
+// NOTE: Append this 'let' statement to the top of the
+// "High count of connection by client IP on many ports" rule template
+// from the Content Hub to integrate watchlist filtering.
