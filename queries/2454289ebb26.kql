@@ -1,0 +1,39 @@
+// Source: https://github.com/BasicOneCruisider/aks-cluster-mongodb-monitoring
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+union withsource=TableName *
+| where TimeGenerated > ago(1h)
+| summarize count() by TableName
+| order by count_ desc
+| take 10
+
+// ÉTAPE 2 - Chercher spécifiquement des données Kubernetes (toutes), requete ok 
+search "kubernetes" or "kube" or "aks" or "container"
+| where TimeGenerated > ago(24h)
+| summarize count() by $table
+| order by count_ desc
+
+// ÉTAPE 3 - Vérifier l'activité des agents Azure Monitor
+KubeMonAgentEvents
+| where TimeGenerated > ago(24h)
+| order by TimeGenerated desc
+| take 10
+
+// ÉTAPE 4 - Chercher des données par resource group
+search "aks-restored-rg"
+| where TimeGenerated > ago(24h)
+| summarize count() by $table
+
+// ÉTAPE 5 - Vérifier Heartbeat des machines
+Heartbeat
+| where TimeGenerated > ago(2h)
+| summarize max(TimeGenerated) by Computer
+| order by max_TimeGenerated desc
+
+// ÉTAPE 6 - Activité Azure générale
+AzureActivity
+| where TimeGenerated > ago(2h)
+| where ResourceGroup contains "aks" or OperationName contains "kubernetes"
+| summarize count() by OperationName
+| order by count_ desc

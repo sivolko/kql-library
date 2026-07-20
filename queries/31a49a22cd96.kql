@@ -1,0 +1,110 @@
+// Source: https://github.com/hassiomqtt/sentinel
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let time_window = 24h;
+
+// Mass Resource Deletion
+let mass_deletions = AzureActivity
+| where TimeGenerated > ago(time_window)
+| where OperationNameValue endswith "delete"
+| where ActivityStatusValue == "Success"
+| summarize
+    DeleteCount = count(),
+    ResourceTypes = make_set(ResourceProviderValue),
+    DeletedResources = make_set(Resource, 20)
+    by Caller, CallerIpAddress, SubscriptionId, bin(TimeGenerated, 1h)
+| where DeleteCount > 10
+| project
+    TimeGenerated,
+    AnomalyType = "Mass Deletion",
+    Caller,
+    CallerIpAddress,
+    SubscriptionId,
+    Count = DeleteCount,
+    AffectedResourceTypes = ResourceTypes,
+    Details = DeletedResources,
+    Severity = case(
+        DeleteCount > 50, "Critical",
+        DeleteCount > 20, "High",
+        "Medium"
+    );
+
+// Suspicious VM Deployments (crypto mining indicators)
+let suspicious_vms = AzureActivity
+| where TimeGenerated > ago(time_window)
+| where OperationNameValue == "Microsoft.Compute/virtualMachines/write"
+| where ActivityStatusValue == "Success"
+| extend VMSize = tostring(parse_json(Properties).responseBody.properties.hardwareProfile.vmSize)
+| where VMSize has_any ("Standard_NC", "Standard_ND", "Standard_NV", "Standard_H", "Standard_G") // GPU/HPC VMs
+    or VMSize has_any ("96", "128") // Large core counts
+| project
+    TimeGenerated,
+    AnomalyType = "Suspicious VM Deployment",
+    Caller,
+    CallerIpAddress,
+    SubscriptionId,
+    Count = 1,
+    AffectedResourceTypes = dynamic(["Virtual Machine"]),
+    Details = strcat("VM Size: ", VMSize, " | Resource: ", Resource),
+    Severity = "High";
+
+// Unusual Resource Provider Registration
+let provider_registration = AzureActivity
+| where TimeGenerated > ago(time_window)
+| where OperationNameValue == "Microsoft.Resources/providers/register/action"
+| where ActivityStatusValue == "Success"
+| project
+    TimeGenerated,
+    AnomalyType = "Provider Registration",
+    Caller,
+    CallerIpAddress,
+    SubscriptionId,
+    Count = 1,
+    AffectedResourceTypes = dynamic(["Resource Provider"]),
+    Details = ResourceProviderValue,
+    Severity = "Medium";
+
+// Key Vault Secret Access Anomalies
+let keyvault_anomalies = AzureDiagnostics
+| where TimeGenerated > ago(time_window)
+| where ResourceType == "VAULTS"
+| where OperationName in ("SecretGet", "SecretList", "KeyGet", "KeyList")
+| summarize
+    AccessCount = count(),
+    UniqueSecrets = dcount(id_s),
+    Operations = make_set(OperationName)
+    by CallerIPAddress, identity_claim_upn_s, Resource, bin(TimeGenerated, 1h)
+| where AccessCount > 50
+| project
+    TimeGenerated,
+    AnomalyType = "Key Vault Mass Access",
+    Caller = identity_claim_upn_s,
+    CallerIpAddress = CallerIPAddress,
+    SubscriptionId = "",
+    Count = AccessCount,
+    AffectedResourceTypes = dynamic(["Key Vault"]),
+    Details = strcat("Vault: ", Resource, " | Secrets accessed: ", UniqueSecrets),
+    Severity = "High";
+
+// Storage Account Public Access Changes
+let storage_public_access = AzureActivity
+| where TimeGenerated > ago(time_window)
+| where ResourceProviderValue == "Microsoft.Storage"
+| where OperationNameValue has "write"
+| extend Properties_d = parse_json(Properties)
+| where tostring(Properties_d.requestBody) has "publicAccess"
+| project
+    TimeGenerated,
+    AnomalyType = "Storage Public Access Change",
+    Caller,
+    CallerIpAddress,
+    SubscriptionId,
+    Count = 1,
+    AffectedResourceTypes = dynamic(["Storage Account"]),
+    Details = Resource,
+    Severity = "High";
+
+// Combine all anomalies
+union mass_deletions, suspicious_vms, provider_registration, keyvault_anomalies, storage_public_access
+| order by TimeGenerated desc

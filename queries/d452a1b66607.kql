@@ -1,0 +1,10 @@
+// Source: https://github.com/threatsignal/Intel
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where DeviceVendor == "Check Point"
+| where DeviceAction in ("Log In", "Sign In", "Key Install") or Message has "certificate"
+| where Message has_any ("CN=Default", "CN=Defautl", "CN=usertest") 
+   or AdditionalExtensions has_any ("CN=Default", "CN=Defautl", "CN=usertest")
+   or SourceUserName in~ ("Default", "Defautl", "usertest")

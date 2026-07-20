@@ -1,0 +1,23 @@
+// Source: https://github.com/le0li9ht/Microsoft-Sentinel-Queries
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated >= startofday(ago(1d)) and TimeGenerated <= startofday(now())
+| where _isBillable=true
+| summarize BillableSizeGB=sum(_BilledSize)/1000000000 by DeviceVendor,DeviceProduct
+| extend BillableSizeGB=round(BillableSizeGB,3)
+
+
+
+
+
+
+
+//Past 31 days trend
+//Data Ingestion Volume For Each Network Security Resources.
+CommonSecurityLog
+| where TimeGenerated>ago(31d)
+| where _isBillable=true
+| summarize BillableSizeGB=sum(_BilledSize)/1000000000 by bin(TimeGenerated,1d), DeviceProduct
+| extend BillableSizeGB=round(BillableSizeGB,3)

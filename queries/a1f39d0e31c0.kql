@@ -1,0 +1,30 @@
+// Source: https://github.com/javierDAW/detection-diary
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "git.push"
+    or (Properties has "git.push" and Properties has "forced")
+| extend
+    forced = tostring(parse_json(tostring(Properties)).forced),
+    ref = tostring(parse_json(tostring(Properties)).ref),
+    actor = tostring(parse_json(tostring(Properties)).actor),
+    repo = tostring(parse_json(tostring(Properties)).repo),
+    before_sha = tostring(parse_json(tostring(Properties)).before),
+    after_sha = tostring(parse_json(tostring(Properties)).after)
+| where forced == "true"
+    and ref startswith "refs/tags/"
+| extend
+    TagName = extract(@"refs/tags/(.+)", 1, ref),
+    IsFloatingMajor = iff(TagName matches regex @"^v\d+$", "YES", "no")
+| project
+    TimeGenerated,
+    repo,
+    actor,
+    TagName,
+    IsFloatingMajor,
+    before_sha,
+    after_sha,
+    forced
+| order by TimeGenerated desc

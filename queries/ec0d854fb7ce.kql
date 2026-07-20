@@ -1,0 +1,12 @@
+// Source: https://github.com/johnB007/Defender_XDR
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let spikeStart = datetime(2026-06-09);
+let spikeEnd   = datetime(2026-06-12);
+DeviceEvents
+| where TimeGenerated between (spikeStart - 7d .. spikeEnd + 1d)
+| summarize Events = count() by bin(TimeGenerated, 1h)
+| render timechart
+    with (title = "Hourly volume (spike window plus 7d baseline)",
+          ytitle = "Events per hour")

@@ -1,0 +1,57 @@
+// Source: https://github.com/Dayachowdry/detection-rules
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timeframe = 24h;
+union
+  // Procdump targeting LSASS
+  (DeviceProcessEvents
+  | where Timestamp > ago(timeframe)
+  | where FileName in~ ("procdump.exe", "procdump64.exe", "sqldumper.exe")
+    and ProcessCommandLine has "lsass"
+  | extend DumpTechnique = "Procdump"
+  ),
+  // Comsvcs.dll MiniDump via rundll32
+  (DeviceProcessEvents
+  | where Timestamp > ago(timeframe)
+  | where FileName =~ "rundll32.exe"
+    and ProcessCommandLine has "comsvcs"
+    and ProcessCommandLine has "MiniDump"
+  | extend DumpTechnique = "Comsvcs.dll MiniDump"
+  ),
+  // Task Manager LSASS dump
+  (DeviceProcessEvents
+  | where Timestamp > ago(timeframe)
+  | where FileName =~ "taskmgr.exe"
+    and ProcessCommandLine has "lsass"
+  | extend DumpTechnique = "Task Manager Dump"
+  ),
+  // Direct LSASS process access with suspicious access masks
+  (DeviceEvents
+  | where Timestamp > ago(timeframe)
+  | where ActionType == "OpenProcessApiCall"
+  | where FileName =~ "lsass.exe"
+  | where not(InitiatingProcessFileName in~ (
+      "csrss.exe", "wininit.exe", "wmiprvse.exe", "svchost.exe",
+      "MsMpEng.exe", "MsSense.exe", "SecurityHealthService.exe"
+    ))
+  | extend DumpTechnique = "Direct Process Access"
+  ),
+  // LSASS dump file creation
+  (DeviceFileEvents
+  | where Timestamp > ago(timeframe)
+  | where FileName endswith ".dmp"
+    and FolderPath has "lsass"
+  | extend DumpTechnique = "LSASS Dump File Created"
+  )
+| extend Severity = "Critical"
+| project Timestamp, DeviceName, AccountName, FileName,
+    InitiatingProcessFileName, ProcessCommandLine, DumpTechnique, Severity
+| summarize Count = count(),
+    Techniques = make_set(DumpTechnique),
+    Commands = make_set(ProcessCommandLine),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceName, AccountName
+| extend AlertContext = "LSASS credential dumping detected — immediate investigation required"
+| sort by Count desc

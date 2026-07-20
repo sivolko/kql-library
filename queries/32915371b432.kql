@@ -1,0 +1,54 @@
+// Source: https://github.com/RamiMustafa/Advanced-Hunting
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ScheduledDayOfWeek = 3; 
+let ScheduledHour = 17;  
+let ScheduledMinute = 0;
+let GracePeriod = 4h;     
+let DetectionWindow = 4h;   
+let EventLookback = 30d;    
+
+let CurrentDayNum = toint(dayofweek(now()) / 1d);
+let DaysSinceScheduled =
+    iff(CurrentDayNum >= ScheduledDayOfWeek,
+        CurrentDayNum - ScheduledDayOfWeek,
+        7 - (ScheduledDayOfWeek - CurrentDayNum));
+let LastScheduledSlot =
+    startofday(now() - DaysSinceScheduled * 1d)
+    + ScheduledHour * 1h
+    + ScheduledMinute * 1m;
+let EffectiveScheduledSlot =
+    iff(LastScheduledSlot > now(), LastScheduledSlot - 7d, LastScheduledSlot);
+
+let ReconnectedDevices =
+    DeviceInfo
+    | where ingestion_time() > ago(DetectionWindow)
+    | summarize arg_max(Timestamp, ReportId, DeviceName, OSPlatform, SensorHealthState, OnboardingStatus) by DeviceId
+    | where OnboardingStatus == "Onboarded"
+    | where Timestamp > EffectiveScheduledSlot + GracePeriod
+    | project Timestamp, ReportId, DeviceId, DeviceName, OSPlatform, SensorHealthState;
+
+let FullScansAfterSlot =
+    DeviceEvents
+    | where Timestamp >= ago(EventLookback)
+    | where ActionType == "AntivirusScanCompleted"
+    | extend AF = parse_json(AdditionalFields)
+    | extend ScanType = tostring(AF["ScanTypeIndex"])
+    | where ScanType =~ "Full"
+    | where Timestamp >= EffectiveScheduledSlot
+    | summarize LastFullScanAfterSlot = max(Timestamp) by DeviceId;
+
+ReconnectedDevices
+| join kind=leftouter FullScansAfterSlot on DeviceId
+| where isnull(LastFullScanAfterSlot)
+| extend DetectionReason = "Device reconnected after missed scheduled weekly Full AV scan and has not completed a Full scan yet"
+| project
+    Timestamp,
+    ReportId,
+    DeviceId,
+    DeviceName,
+    OSPlatform,
+    SensorHealthState,
+    LastFullScanAfterSlot,
+    DetectionReason

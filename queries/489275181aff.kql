@@ -1,0 +1,100 @@
+// Source: https://github.com/Malwarehunts/Malchain
+// Collected: 2026-07-20
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where FileName in~ ("psexec.exe","psexesvc.exe","wmic.exe","winrs.exe") or (FileName in~ ("powershell.exe","pwsh.exe") and ProcessCommandLine has_any ("Invoke-Command","New-PSSession","-ComputerName","Enter-PSSession"))
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+
+// ==================================================================
+// MC-EXP-02 — Credential Reuse & Relay
+// ==================================================================
+// Credential Reuse & Relay: same account authenticating to many hosts quickly
+DeviceLogonEvents
+| where Timestamp > ago(1d)
+| where ActionType == "LogonSuccess" and LogonType in ("Network","RemoteInteractive")
+| summarize Hosts=dcount(DeviceName), HostSet=make_set(DeviceName,20) by AccountName, bin(Timestamp, 15m)
+| where Hosts >= 5
+| project Timestamp, AccountName, Hosts, HostSet
+
+// ==================================================================
+// MC-EXP-03 — Pass-the-Hash / Pass-the-Ticket
+// ==================================================================
+// Pass-the-Hash / Pass-the-Ticket: NTLM/Kerberos logon anomalies from lsass access
+DeviceLogonEvents
+| where Timestamp > ago(3d)
+| where LogonType == "Network" and ActionType == "LogonSuccess"
+| where isempty(RemoteIP) == false
+| join kind=inner (DeviceEvents | where ActionType == "OpenProcessApiCall" and FileName =~ "lsass.exe" | project DeviceName, Timestamp) on DeviceName
+| project Timestamp, DeviceName, AccountName, RemoteIP, LogonType
+
+// ==================================================================
+// MC-EXP-04 — Remote Service & Protocol Abuse
+// ==================================================================
+// Remote Service & Protocol Abuse: remote service creation over the network
+DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where FileName =~ "sc.exe" and ProcessCommandLine has_any (@"\\", "\\") and ProcessCommandLine has "create"
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+
+// ==================================================================
+// MC-EXP-05 — Network Share Propagation
+// ==================================================================
+// Network Share Propagation: writes of executables to admin/hidden shares
+DeviceFileEvents
+| where Timestamp > ago(7d)
+| where FolderPath matches regex @"\\\\[^\\]+\\(ADMIN\$|C\$|IPC\$)"
+| where FileName endswith ".exe" or FileName endswith ".dll" or FileName endswith ".bat"
+| project Timestamp, DeviceName, FolderPath, FileName, InitiatingProcessFileName, SHA256
+
+// ==================================================================
+// MC-EXP-06 — Worm-like Self-Propagation
+// ==================================================================
+// Worm-like Self-Propagation: one process writing identical binary to many hosts/shares
+DeviceFileEvents
+| where Timestamp > ago(2d)
+| where ActionType == "FileCreated" and (FileName endswith ".exe" or FileName endswith ".dll")
+| summarize Targets=dcount(DeviceName), Paths=dcount(FolderPath) by SHA256, InitiatingProcessFileName
+| where Targets > 5 or Paths > 20
+| project SHA256, InitiatingProcessFileName, Targets, Paths
+
+// ==================================================================
+// MC-EXP-07 — Privilege Escalation Across Hosts
+// ==================================================================
+// Privilege Escalation Across Hosts: token/UAC bypass & elevation tooling
+DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where ProcessCommandLine has_any ("SeDebugPrivilege","fodhelper.exe","eventvwr.exe","computerdefaults.exe","sdclt.exe","Invoke-TokenManipulation","getsystem")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
+
+// ==================================================================
+// MC-EXP-08 — Identity & Trust Relationship Abuse
+// ==================================================================
+// Identity & Trust Relationship Abuse: golden/silver ticket & delegation abuse recon
+DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where ProcessCommandLine has_any ("kerberos::golden","kerberos::ptt","Add-KrbtgtKey","asktgt","s4u","/impersonateuser","Rubeus")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+
+// ==================================================================
+// MC-EXP-09 — Directory Services Targeting
+// ==================================================================
+// Directory Services Targeting: DCSync / mass LDAP enumeration
+union
+(DeviceProcessEvents
+ | where ProcessCommandLine has_any ("lsadump::dcsync","dcsync","GetNCChanges","Get-ADReplAccount")
+ | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine),
+(IdentityDirectoryEvents
+ | where ActionType == "Directory Services replication"
+ | project Timestamp, DeviceName=TargetDeviceName, AccountName=AccountUpn, ActionType)
+
+// ==================================================================
+// MC-EXP-10 — Cloud & Hybrid Lateral Movement
+// ==================================================================
+// Cloud & Hybrid Lateral Movement: on-prem host reaching cloud IMDS / token endpoints
+DeviceNetworkEvents
+| where Timestamp > ago(7d)
+| where RemoteUrl has_any ("169.254.169.254","login.microsoftonline.com","sts.amazonaws.com","metadata.google.internal")
+| where InitiatingProcessFileName in~ ("powershell.exe","pwsh.exe","curl.exe","python.exe","cmd.exe")
+| project Timestamp, DeviceName, RemoteUrl, InitiatingProcessFileName, InitiatingProcessCommandLine
