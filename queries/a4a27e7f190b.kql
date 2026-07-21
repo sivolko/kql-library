@@ -1,0 +1,9 @@
+// Source: https://github.com/ncrtc/b2c-monitoring
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated  > ago(60d)
+| where OperationName contains ""issue""
+| extend  UserId=extractjson(""$.[0].id"",tostring(TargetResources))
+| extend Policy=extractjson(""$.[1].value"",tostring(AdditionalDetails))

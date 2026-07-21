@@ -1,0 +1,8 @@
+// Source: https://github.com/academy-observability/repoOBS-2
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(7d)
+| summarize operazioni=count() by ActivityStatusValue
+| order by operazioni desc

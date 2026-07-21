@@ -1,0 +1,35 @@
+// Source: https://github.com/javierDAW/detection-diary
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+CloudAuditEvents
+| where Timestamp > ago(7d)
+| where DataSource == "Azure Resource Manager"
+| where OperationName in~ (
+    "microsoft.web/sites/publishxml/action",
+    "microsoft.keyvault/vaults/accesspolicies/write",
+    "microsoft.keyvault/vaults/secrets/read",
+    "microsoft.storage/storageaccounts/listkeys/action",
+    "microsoft.storage/storageaccounts/write",
+    "microsoft.sql/servers/firewallrules/write",
+    "microsoft.sql/servers/firewallrules/delete")
+| extend Caller = tostring(parse_json(RawEventData).caller)
+| extend CallerIp = tostring(parse_json(RawEventData).callerIpAddress)
+| extend ResourceId = tostring(parse_json(RawEventData).resourceId)
+| summarize
+    DistinctOps      = dcount(OperationName),
+    OpsList          = make_set(OperationName, 32),
+    EventCount       = count(),
+    FirstSeen        = min(Timestamp),
+    LastSeen         = max(Timestamp),
+    DistinctIps      = dcount(CallerIp),
+    IpList           = make_set(CallerIp, 16),
+    DistinctResources = dcount(ResourceId)
+  by Caller, bin(Timestamp, 30m)
+| where DistinctOps >= 3
+| where OpsList has_any (dynamic([
+    "microsoft.keyvault/vaults/secrets/read",
+    "microsoft.storage/storageaccounts/listkeys/action",
+    "microsoft.web/sites/publishxml/action"]))
+| order by EventCount desc, FirstSeen asc
+| project Caller, CallerIps = IpList, OpsObserved = OpsList, DistinctOps, EventCount, DistinctResources, FirstSeen, LastSeen

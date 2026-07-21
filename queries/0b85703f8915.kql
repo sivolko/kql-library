@@ -1,0 +1,10 @@
+// Source: https://github.com/str4int/KQL-Repository
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where AppDisplayName contains "OfficeHome" and IsInteractive
+| where ResultType == 0
+| project Identity, Location, IPAddress
+| summarize IPs= dcount(IPAddress), Locations = make_set(Location) by Identity
+| where isnotempty(Locations[1])

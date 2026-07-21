@@ -1,0 +1,11 @@
+// Source: https://github.com/VashrithVinodh/Azure-SOAR
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Created = SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4720; // user creation
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4732 // added to administrator group
+| join Created on SubjectUserName

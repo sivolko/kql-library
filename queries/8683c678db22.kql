@@ -1,0 +1,18 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+let applications = dynamic(["Azure Active Directory PowerShell", "Microsoft Azure PowerShell", "Graph Explorer", "ACOM Azure Website"]);
+IdentityInfo
+| where TimeGenerated > ago(21d)
+| where isnotempty(AssignedRoles)
+| where AssignedRoles != "[]"
+| summarize arg_max(TimeGenerated, *) by AccountUPN
+| join kind=leftanti (
+    SigninLogs
+    | where TimeGenerated > ago(30d)
+    | where AppDisplayName in (applications)
+    | where ResultType == "0"
+    )
+    on $left.AccountUPN == $right.UserPrincipalName
+| project AccountUPN, AssignedRoles

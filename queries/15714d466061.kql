@@ -1,0 +1,54 @@
+// Source: https://github.com/jsa2/AADLegacyFork
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+let data =
+union AADNonInteractiveUserSignInLogs, SigninLogs 
+| extend StatusNonInteractive = parse_json(Status_string) 
+| extend StatusInteractive = Status_dynamic
+| extend errorCodeInterActive = toint(StatusInteractive.errorCode)
+| extend errorCodeNonInterActive = toint(StatusNonInteractive.errorCode)
+| extend SigninStatus = case(
+errorCodeNonInterActive == 0, "Success",
+errorCodeInterActive != 0, "Failure",      
+isempty(errorCodeNonInterActive), "Success","Failure"
+) 
+| where SigninStatus == '*' or '*' == '*' or '*' == 'All Sign-ins'
+| extend ClientAppUsed = iff(isempty(ClientAppUsed) == true, "Unknown", ClientAppUsed)  
+| extend isLegacyAuth = case(ClientAppUsed contains "Browser", "No", ClientAppUsed contains "Mobile Apps and Desktop clients", "No", ClientAppUsed contains "Exchange ActiveSync", "Yes", ClientAppUsed contains "Unknown", "Unknown", "Yes") 
+| where isLegacyAuth == "Yes"
+| where AppDisplayName in ('*') or '*' in ('*');
+let caData = data
+| summarize TotalCount = count(), SuccessCount = countif(SigninStatus == "Success"), FailureCount = countif(SigninStatus == "Failure") by AppDisplayName
+| join kind=inner
+        (
+        data
+| make-series Trend = count() default = 0 on TimeGenerated in range(ago(14d), now(), 6h) by AppDisplayName
+| project-away TimeGenerated
+        )
+        on AppDisplayName
+| project AppDisplayName, TotalCount, SuccessCount, FailureCount, Trend
+| order by TotalCount desc, AppDisplayName asc
+| extend Id = AppDisplayName;
+data
+| summarize TotalCount = count(), SuccessCount = countif(SigninStatus == "Success"), FailureCount = countif(SigninStatus == "Failure") by AppDisplayName, ClientAppUsed
+| join kind=inner
+    (
+    data    
+| make-series Trend = count() default = 0 on TimeGenerated in range(ago(14d), now(), 6h) by AppDisplayName, ClientAppUsed
+| project-away TimeGenerated
+    )
+    on AppDisplayName, ClientAppUsed
+| order by TotalCount desc, AppDisplayName asc
+| project AppDisplayName, ClientAppUsed, TotalCount, SuccessCount, FailureCount, Trend
+| serialize Id = strcat(AppDisplayName, '/', ClientAppUsed)
+| join kind=inner
+    (
+    caData
+    )
+    on AppDisplayName
+| project Id, Name = ClientAppUsed, Type = 'Protocol', ['Sign-in Count'] = TotalCount, Trend, ['Failure Count'] = FailureCount,  ParentId = Id1
+| union (
+    caData
+| project Id, Name = AppDisplayName, Type = 'App', ['Sign-in Count'] = TotalCount, Trend, ['Failure Count'] = FailureCount,  ParentId = '')
+| order by ['Sign-in Count'] desc, Name asc

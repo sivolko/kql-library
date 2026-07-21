@@ -1,0 +1,9 @@
+// Source: https://github.com/ChrFrohn/KQL
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago(30d)
+| where AuthenticationProtocol == "deviceCode"
+| project TimeGenerated, AuthenticationProtocol, UserPrincipalName, Identity, IPAddress, Location, NetworkLocationDetails, DeviceDetail
+, ConditionalAccessStatus

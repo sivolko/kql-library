@@ -1,0 +1,12 @@
+// Source: https://github.com/hchiphong/KQL
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated >ago(90d)
+| where AppDisplayName has 'Azure AD Application Proxy'
+
+// When PTA established, following audit event will be logged.
+AuditLogs
+| where TimeGenerated >ago(90d)
+| where OperationName == "Register connector"

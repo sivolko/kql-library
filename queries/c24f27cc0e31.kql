@@ -1,0 +1,11 @@
+// Source: https://github.com/ChrFrohn/KQL
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago(5m)  // 5-minute window for real-time alerting
+| where Result == "failure"
+| where ActivityDisplayName contains "license"
+| extend UserAffected = tostring(TargetResources[0].userPrincipalName)
+| project TimeGenerated, ActivityDisplayName, UserAffected, ResultReason
+| order by TimeGenerated desc

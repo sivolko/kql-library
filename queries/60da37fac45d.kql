@@ -1,0 +1,23 @@
+// Source: https://github.com/iesussan/tf-appgw-apim-demos
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(7d)
+| where ResourceProvider in ("Microsoft.ApiManagement", "Microsoft.Network")
+| where OperationNameValue has_any ("Scale", "Update", "Resize")
+| where ActivityStatusValue == "Success"
+| extend 
+    Service = case(
+        ResourceProvider == "Microsoft.ApiManagement", "APIM",
+        ResourceProvider == "Microsoft.Network" and _ResourceId contains "applicationGateways", "AppGW",
+        "Other"
+    ),
+    ResourceName = tostring(split(_ResourceId, "/")[-1])
+| project 
+    TimeGenerated,
+    Service,
+    ResourceName,
+    OperationNameValue,
+    Caller
+| order by TimeGenerated desc

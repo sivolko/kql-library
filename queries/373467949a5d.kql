@@ -1,0 +1,20 @@
+// Source: https://github.com/AdarshPandey-dev/Awesome-KQL
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated >= startofday(ago(14d))                           // Filter for sign-ins in the last 14 days
+| where Identity contains "adarsh"                                      // Filter for the specific user
+| extend city            = tostring(parse_json(LocationDetails).city)            // Extract City
+| extend countryOrRegion = tostring(parse_json(LocationDetails).countryOrRegion) // Extract Country/Region
+| extend state           = tostring(parse_json(LocationDetails).state)           // Extract State
+| project 
+    TimeGenerated, 
+    Identity, 
+    IPAddress, 
+    city, 
+    countryOrRegion, 
+    state, 
+    Location                                                                 // Select relevant fields
+| summarize SignInCount = count() by bin(TimeGenerated, 1h)                      // Aggregate sign-ins by hour
+| render columnchart                                                            // Visualize as a column chart

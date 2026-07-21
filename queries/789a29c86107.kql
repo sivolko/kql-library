@@ -1,0 +1,17 @@
+// Source: https://github.com/kkroth0/threat-hunting-ptbr
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 14d;
+let huntTerms = dynamic(["T1566.001", "T1553.005", "initial access", "defense evasion", "mshtml", "motw bypass", "lnk", "apt28", "H083", "exploiting", "MSHTML", "framework", "flaws", "crafted", "Windows", "Shortcut", "files", "embedded", "HTML", "bypass", "Mark-of-the-Web", "browser", "roleAssignments", "delete", "write", "storage", "bucket", "iam", "diagnosticSettings", "critical", "high"]);
+union withsource=SourceTable isfuzzy=true
+    AzureActivity,
+    AzureDiagnostics,
+    OrcaAlerts_CL,
+    NetskopeEventsNetwork_CL
+| where TimeGenerated >= ago(lookback)
+| extend SearchBlob = tostring(pack_all())
+| where SearchBlob has_any (huntTerms)
+| extend HuntId = "H083", SourceUrl = "https://github.com/THORCollective/HEARTH/blob/main/Flames/H083.md"
+| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob
+| order by TimeGenerated desc

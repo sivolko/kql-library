@@ -1,0 +1,13 @@
+// Source: https://github.com/Coalfire-CF/terraform-azurerm-sentinel
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+let rate = 4.30;
+SecurityEvent		             		        //<-- Query the SecurityEvent table
+| where TimeGenerated > ago(1h)		            	//<-- Query the last hour
+| where EventID == 8002			                //<-- Query for EventID 8002
+| summarize GB=sum(_BilledSize)/1000/1000/1000	        //<-- Summarize billable volume in GB using the _BilledSize table column
+| extend cost = GB*rate                           //<-- Multiply total GBs for the month by the effective rate (defined in first line of query)
+
+//You can change the last line in the above query to the following if you’re a stickler for Gibibytes versus Gigabytes: 
+| summarize GB=sum(_BilledSize)/1024/1024/1024	

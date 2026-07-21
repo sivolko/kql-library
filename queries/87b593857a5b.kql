@@ -1,0 +1,37 @@
+// Source: https://github.com/javierDAW/detection-diary
+// Collected: 2026-07-21
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where DeviceProduct has_any ("Veeder-Root","ATG","TankMonitor","TLS-4","TLS4B","FuelsManager")
+    or DeviceVendor has_any ("Veeder-Root","OPW","Franklin Fueling","Leighton")
+| where Activity has_any (
+    "ALARM_DISABLED",
+    "ALERT_SUPPRESS",
+    "LEAK_DETECTION_OFF",
+    "CONFIG_CHANGE",
+    "SETPOINT_MODIFIED",
+    "THRESHOLD_CHANGED",
+    "USER_ADDED",
+    "PASSWORD_CHANGED",
+    "ADMIN_LOGIN"
+    )
+| extend SourceContext = strcat(SourceIP, " -> ", DestinationIP)
+| summarize
+    EventCount = count(),
+    EventTypes = make_set(Activity, 20),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    SourceIPs = make_set(SourceIP, 10)
+    by DeviceName, DeviceProduct, DestinationIP, DestinationPort
+| where EventCount > 0
+| extend RiskScore = case(
+    EventTypes has "LEAK_DETECTION_OFF", "CRITICAL",
+    EventTypes has "ALARM_DISABLED", "HIGH",
+    EventTypes has "SETPOINT_MODIFIED", "HIGH",
+    EventTypes has "USER_ADDED", "MEDIUM",
+    "LOW")
+| extend Alert = "ATG_OPERATIONAL_CHANGE_DETECTED"
+| project Alert, RiskScore, DeviceName, DeviceProduct, DestinationIP, EventCount, EventTypes, FirstSeen, LastSeen, SourceIPs
+| order by RiskScore asc, EventCount desc
