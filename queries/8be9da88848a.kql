@@ -1,0 +1,12 @@
+// Source: https://github.com/chadmcox/Azure_Active_Directory
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago (30d)
+| project TimeGenerated, ConditionalAccessPolicies
+| mv-expand ConditionalAccessPolicies
+| extend CAResult = tostring(ConditionalAccessPolicies.result)
+| extend CAPolicyName = tostring(ConditionalAccessPolicies.displayName)
+| summarize CAResults=make_set(CAResult) by CAPolicyName
+| where CAResults !has "success" and CAResults !has "failure"

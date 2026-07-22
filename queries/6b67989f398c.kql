@@ -1,0 +1,11 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timerange=90d;
+OfficeActivity
+| where TimeGenerated > ago(timerange)
+| where Operation in ("SecureLinkCreated", "AddedToSecureLink")
+| where TargetUserOrGroupType == "Guest"
+| summarize Count=count()by bin(TimeGenerated, 1d)
+| render timechart with (ytitle="File Count", title="Files shared with guests over time")

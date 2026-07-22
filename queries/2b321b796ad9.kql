@@ -1,0 +1,29 @@
+// Source: https://github.com/str4int/KQL-Repository
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "SmartScreenUrlWarning"
+| extend ParsedFields=parse_json(AdditionalFields)
+| project DeviceName, ActionType, Timestamp, RemoteUrl, InitiatingProcessFileName, Experience=tostring(ParsedFields.Experience)
+| where Experience == "CustomPolicy"
+
+
+// query to list all WCF blocks originating from Network Protection
+DeviceEvents
+| where ActionType == "ExploitGuardNetworkProtectionBlocked"
+| extend ParsedFields=parse_json(AdditionalFields)
+| project DeviceName, ActionType, Timestamp, RemoteUrl, InitiatingProcessFileName, ResponseCategory=tostring(ParsedFields.ResponseCategory)
+| where ResponseCategory == "CustomPolicy"
+
+
+DeviceEvents
+| where ActionType contains "ExploitGuardNetworkProtection"
+| extend ParsedFields=parse_json(AdditionalFields)
+| project DeviceName, ActionType, Timestamp, RemoteUrl, InitiatingProcessFileName, IsAudit=tostring(ParsedFields.IsAudit), ResponseCategory=tostring(ParsedFields.ResponseCategory), DisplayName=tostring(ParsedFields.DisplayName)
+
+
+DeviceEvents
+| where Timestamp >= ago(1d)
+| where ActionType ==  "ExploitGuardNetworkProtectionBlocked"
+| project Timestamp, DeviceName, InitiatingProcessAccountName, RemoteUrl, RemoteIP,  InitiatingProcessFileName, InitiatingProcessId

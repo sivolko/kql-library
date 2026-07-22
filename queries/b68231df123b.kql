@@ -1,0 +1,8 @@
+// Source: https://github.com/levnnaz/siem-home-lab
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| project TimeGenerated, Account, IpAddress, Activity
+| sort by TimeGenerated desc

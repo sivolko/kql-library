@@ -1,0 +1,11 @@
+// Source: https://github.com/CyberSpooon/Random-KQL
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let UsbDriveMount = DeviceEvents
+| where ActionType=="UsbDriveMounted" or ActionType == "UsbDriveUnmounted"
+| extend ParsedFields=parse_json(AdditionalFields)
+| project DeviceId, DeviceName, ActionType, DriveLetter=ParsedFields.DriveLetter, MountTime=Timestamp,
+ProductName=ParsedFields.ProductName,SerialNumber=ParsedFields.SerialNumber,Manufacturer=ParsedFields.Manufacturer
+| order by DeviceId asc, MountTime desc;
+UsbDriveMount

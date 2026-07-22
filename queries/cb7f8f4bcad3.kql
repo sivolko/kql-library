@@ -1,0 +1,11 @@
+// Source: https://github.com/3ch0p01nt/RedSun_Undefend
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(14d)
+| where ActionType == "AntivirusDefinitionsUpdateFailed"
+| summarize FailCount = count(), FirstFail = min(Timestamp),
+            LastFail = max(Timestamp) by DeviceId, DeviceName
+| where FailCount > 3
+| project DeviceName, FailCount, FirstFail, LastFail

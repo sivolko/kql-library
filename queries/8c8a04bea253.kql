@@ -1,0 +1,20 @@
+// Source: https://github.com/reversinglabs/reversinglabs-siem-rules
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+SysmonParser
+| where EventID == 1
+| where OriginalFileName == "schtasks.exe"
+| where CommandLine contains "/create"
+| summarize count() by bin(TimeGenerated, 1m), Computer
+// modify threshold as necessary
+| where count_ > 5
+| join (SysmonParser | where EventID == 1 and OriginalFileName == "schtasks.exe") on Computer
+| union (SecurityEvent
+| where EventID == 4688
+| where Process == "schtasks.exe"
+| where CommandLine contains "/create"
+| summarize count() by bin(TimeGenerated, 1m), Computer
+// modify threshold as necessary
+| where count_ > 5
+| join (SecurityEvent | where EventID == 4688 and Process == "schtasks.exe") on Computer)

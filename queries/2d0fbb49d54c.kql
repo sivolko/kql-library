@@ -1,0 +1,8 @@
+// Source: https://github.com/Vyxus/it-support-portfolio
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| summarize FailedLogons = count() by bin(TimeGenerated, 15m), Computer
+| render timechart

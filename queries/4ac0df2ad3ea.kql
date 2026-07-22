@@ -1,0 +1,85 @@
+// Source: https://github.com/shuohchen/AzureBootCamp
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+Perf 
+| where TimeGenerated > ago(3d)
+| where CounterName == "Available MBytes"
+| make-series  AverageMegabytesAvailable = avg(CounterValue) default=0
+    on TimeGenerated in range(ago(3d),now(),1h) by Computer
+| project Computer, AverageMegabytesAvailable, TimeGenerated;
+
+//mxexpand is used so that each value in the collection of array gets expanded into separate rows 
+let startTime = ago(2h);
+let endTime = now();
+Perf
+| where TimeGenerated between (startTime .. endTime)
+| where ObjectName == "Processor"
+    and  Computer == "DC10.na.contosohotels.com"
+| make-series avg(CounterValue) default = 0
+    on TimeGenerated in range(startTime, endTime,10m) by Computer
+| mv-expand TimeGenerated to typeof(datetime),
+    avg_CounterValue to typeof(double);
+
+//series_stats takes a dynamic series of values and produces a list of all the statistical functions for them in one output 
+Perf 
+| where TimeGenerated > ago(3d)
+| where CounterName == "Available MBytes"
+| make-series  AverageMegabytesAvailable = avg(CounterValue) default=0
+    on TimeGenerated in range(ago(3d),now(),1h) by Computer
+| project Computer, AverageMegabytesAvailable, TimeGenerated
+| extend var= AverageMegabytesAvailable
+| project Computer, AverageMegabytesAvailable, TimeGenerated, series_stats(var);
+
+//series_stats_dynamic, work like series_stats but combine all the statistical values into one column
+Perf 
+| where TimeGenerated > ago(3d)
+| where CounterName == "Available MBytes"
+| make-series  AverageMegabytesAvailable = avg(CounterValue) default=0
+    on TimeGenerated in range(ago(3d),now(),1h) by Computer
+| project Computer, AverageMegabytesAvailable, TimeGenerated
+| extend var= AverageMegabytesAvailable
+| project Computer, AverageMegabytesAvailable, TimeGenerated, series_stats_dynamic(var);
+
+Perf 
+| where TimeGenerated > ago(3d)
+| where CounterName == "Available MBytes"
+| make-series  AverageMegabytesAvailable = avg(CounterValue) default=0
+    on TimeGenerated in range(ago(3d),now(),1h) by Computer
+| project Computer, AverageMegabytesAvailable, TimeGenerated
+| extend var= series_stats_dynamic(AverageMegabytesAvailable)
+| project Computer, AverageMegabytesAvailable, TimeGenerated, var.max, var.min;
+
+//Series-outlier
+//The function takes an expression with a dynamic numerical array as input, and generates a dynamic numeric array of the same length. Each 
+//value of the array indicates a score of a possible anomaly, using "Tukey's test". A value greater than 1.5 in the same element of the input 
+//indicates a rise or decline anomaly. A value less than -1.5, indicates a decline anomaly.
+
+let startDate = ago(5d);
+let endDate = now();
+let basedata = materialize (
+    SecurityEvent
+    | where EventID == 8002
+    | where AccountType  == "User"
+    | make-series dcount(Computer) default = 0
+        on TimeGenerated in range(startDate,endDate,1d) by Account
+);
+let AnomAccount = ( 
+    basedata
+    | extend outliers = series_outliers(dcount_Computer)
+    | mvexpand outliers to typeof(double), TimeGenerated, dcount_Computer
+    | sort by outliers desc
+);
+AnomAccount;
+
+let startTime = ago(1d);
+let endTime = now();
+Perf
+| where TimeGenerated between (startTime .. endTime)
+| where ObjectName == "Processor"
+    and  Computer == "DC10.na.contosohotels.com"
+| make-series CPUUsage = avg(CounterValue) default = 0
+    on TimeGenerated in range(startTime, endTime,10m) by Computer
+| extend outliers = series_outliers(CPUUsage), series_stats(CPUUsage)
+| mv-expand TimeGenerated to typeof(datetime), CPUUsage to typeof(double), outliers to typeof(double)
+| project TimeGenerated, CPUUsage, outliers_removed = iff(outliers > 1.5 or outliers < -1.5,series_stats_CPUUsage_avg,CPUUsage);

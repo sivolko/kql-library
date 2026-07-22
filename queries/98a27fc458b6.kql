@@ -1,0 +1,15 @@
+// Source: https://github.com/petitess/kusto
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.OPERATIONALINSIGHTS/WORKSPACES/SHAREDKEYS/ACTION"
+| extend WorkspaceName = tostring(parse_json(Properties).resource)
+| where ActivityStatusValue == "Success"
+| project
+    TimeGenerated,
+    Actor=Caller,
+    ActorIPAddress=CallerIpAddress,
+    WorkspaceName,
+    SubscriptionId,
+    ResourceGroup

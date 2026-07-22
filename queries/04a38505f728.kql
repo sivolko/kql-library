@@ -1,0 +1,16 @@
+// Source: https://github.com/Ethan-Andrews/Exploitarium-Detections
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DestinationPort in (3000, 3001, 8080)
+| where RequestURL has_any ("/api/v1/", "/flowise/", "/chatflows/", "/predictions/")
+| where RequestMethod in ("POST", "PUT", "DELETE")
+| where isempty(SourceUserName) or SourceUserName == "-"
+| extend SrcIP = SourceIP, Endpoint = RequestURL
+| summarize RequestCount = count(), DistinctEndpoints = dcount(Endpoint),
+    Endpoints = make_set(Endpoint, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+    by SrcIP, DeviceName
+| where RequestCount > 10
+| order by RequestCount desc

@@ -1,0 +1,15 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let PIMRoles = dynamic([
+    "Global Administrator", "Privileged Authentication Administrator", "Privileged Role Administrator",
+    "Security Administrator", "Conditional Access Administrator"]);
+AuditLogs
+| where TimeGenerated > ago (30d)
+| where OperationName == "Add member to role completed (PIM activation)"
+| where TargetResources[6].displayName contains "<YOUR GROUP NAME>"
+| where parse_json(tostring(TargetResources[0].displayName)) has_any (PIMRoles)
+| extend AzureRole = tostring(TargetResources[0].displayName)
+| summarize count() by AzureRole
+| render piechart

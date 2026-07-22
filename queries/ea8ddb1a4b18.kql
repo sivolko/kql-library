@@ -1,0 +1,10 @@
+// Source: https://github.com/RBNoronha/KQL
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where ActionType startswith "Asr"
+| where isnotempty(InitiatingProcessCommandLine)
+| summarize ['ASR Hit Count']=count()by ActionType, InitiatingProcessCommandLine
+| sort by ['ASR Hit Count'] desc 

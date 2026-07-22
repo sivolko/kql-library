@@ -1,0 +1,9 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(1h)
+| where Operation =~ \"TeamDeleted\"
+| summarize count() by UserId
+| where count_ > 5

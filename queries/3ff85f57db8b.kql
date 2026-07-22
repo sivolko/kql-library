@@ -1,0 +1,164 @@
+// Source: https://github.com/RamiMustafa/Advanced-Hunting
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceProcessEvents
+| where Timestamp > ago(3d)
+| where AccountName =~ "SYSTEM"
+| where InitiatingProcessAccountName !in~ ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE")
+| where InitiatingProcessIntegrityLevel in~ ("Medium", "Low")
+| where FileName !in~ ("TiWorker.exe", "TrustedInstaller.exe", "msiexec.exe", "poqexec.exe", "dismhost.exe", "UsoWorker.exe", "MoUsoCoreWorker.exe", "sedsvc.exe")
+| extend
+    EscalationTime = Timestamp,
+    ProcessName = tostring(FileName),
+    ProcessCmd = tostring(ProcessCommandLine),
+    ParentProcess = tostring(InitiatingProcessFileName),
+    ParentCmd = tostring(InitiatingProcessCommandLine),
+    EscalationAccount = strcat(tostring(AccountDomain), "\\", tostring(AccountName)),
+    InitiatingAccount = tostring(InitiatingProcessAccountName),
+    ParentIntegrity = tostring(InitiatingProcessIntegrityLevel)
+| extend
+    SuspiciousParentChild = iff(
+        tolower(ParentProcess) in~ ("services.exe", "svchost.exe", "msmpeng.exe", "sense.exe", "trustedinstaller.exe")
+        and tolower(ProcessName) in~ ("cmd.exe", "powershell.exe", "pwsh.exe", "rundll32.exe", "reg.exe", "sc.exe", "schtasks.exe", "wmic.exe", "net.exe", "net1.exe"),
+        1,
+        iff(tolower(ParentProcess) in~ ("msmpeng.exe", "sense.exe"), 1, 0)
+    )
+| extend
+    HasDefenderReference = iff(
+        tolower(ProcessCmd) contains "windows defender"
+        or tolower(ProcessCmd) contains "microsoft defender"
+        or tolower(ProcessCmd) contains "windefend"
+        or tolower(ProcessCmd) contains "msmpeng.exe"
+        or tolower(ProcessCmd) contains "mpcmdrun.exe"
+        or tolower(ProcessCmd) contains "sense.exe"
+        or tolower(ProcessCmd) contains "set-mppreference"
+        or tolower(ProcessCmd) contains "add-mppreference"
+        or tolower(ProcessCmd) contains "remove-mppreference"
+        or tolower(ProcessCmd) contains "disablebehaviormonitoring"
+        or tolower(ProcessCmd) contains "disablerealtimemonitoring"
+        or tolower(ProcessCmd) contains "disableioavprotection"
+        or tolower(ProcessCmd) contains "disabletamperprotection"
+        or tolower(ProcessCmd) contains "exclusionpath"
+        or tolower(ProcessCmd) contains "exclusionprocess"
+        or tolower(ProcessCmd) contains "exclusionextension"
+        or tolower(ParentCmd) contains "windows defender"
+        or tolower(ParentCmd) contains "microsoft defender"
+        or tolower(ParentCmd) contains "windefend"
+        or tolower(ParentCmd) contains "msmpeng.exe"
+        or tolower(ParentCmd) contains "mpcmdrun.exe"
+        or tolower(ParentCmd) contains "sense.exe"
+        or tolower(ParentProcess) in~ ("msmpeng.exe", "sense.exe"),
+        1,
+        0
+    )
+| where SuspiciousParentChild == 1 or HasDefenderReference == 1
+| join kind=leftouter (
+    DeviceFileEvents
+    | where Timestamp > ago(3d)
+    | where InitiatingProcessFileName =~ "MsMpEng.exe"
+    | where ActionType in~ ("FileCreated", "FileModified", "FileRenamed")
+    | extend FolderPathLower = tolower(FolderPath)
+    | where FolderPathLower startswith @"c:\windows\system32"
+        or FolderPathLower startswith @"c:\program files\windows defender"
+        or FolderPathLower startswith @"c:\programdata\microsoft\windows defender"
+        or FolderPathLower startswith @"c:\programdata\microsoft\windows defender advanced threat protection"
+    | project
+        DeviceId,
+        WriteTime = Timestamp,
+        FileAction = ActionType,
+        FilePath = strcat(FolderPath, "\\", FileName)
+) on DeviceId
+| where isnull(WriteTime) or WriteTime between (EscalationTime - 10m .. EscalationTime + 10m)
+| join kind=leftouter (
+    DeviceEvents
+    | where Timestamp > ago(3d)
+    | where ActionType in~ ("AntivirusDetection", "AntivirusRemediation")
+    | project
+        DeviceId,
+        AVTime = Timestamp,
+        AVAction = ActionType,
+        ThreatDetails = tostring(AdditionalFields)
+) on DeviceId
+| where isnull(AVTime) or AVTime between (EscalationTime - 10m .. EscalationTime + 10m)
+| join kind=leftouter (
+    DeviceProcessEvents
+    | where Timestamp > ago(3d)
+    | extend CmdLower = tolower(ProcessCommandLine)
+    | where CmdLower contains "whoami /priv"
+        or CmdLower contains "whoami /groups"
+        or CmdLower contains "cmdkey /list"
+        or CmdLower contains "net group"
+        or CmdLower contains "net localgroup"
+        or CmdLower contains "net user"
+        or CmdLower contains "tasklist"
+        or CmdLower contains "tasklist /svc"
+        or CmdLower contains "systeminfo"
+        or CmdLower contains "sc query"
+        or CmdLower contains "sc qc"
+        or CmdLower contains "quser"
+        or CmdLower contains "qwinsta"
+        or CmdLower contains "reg query"
+    | project
+        DeviceId,
+        PostTime = Timestamp,
+        PostCmd = ProcessCommandLine
+) on DeviceId
+| where isnull(PostTime) or PostTime between (EscalationTime .. EscalationTime + 10m)
+| summarize
+    FirstSeen = min(EscalationTime),
+    LastSeen = max(EscalationTime),
+    DefenderWriteCount = countif(isnotnull(WriteTime)),
+    DefenderWrittenPaths = make_set_if(FilePath, isnotempty(FilePath), 20),
+    DefenderWriteActions = make_set_if(FileAction, isnotempty(FileAction), 10),
+    AVEventCount = countif(isnotnull(AVTime)),
+    AVActions = make_set_if(AVAction, isnotempty(AVAction), 10),
+    ThreatDetails = make_set_if(ThreatDetails, isnotempty(ThreatDetails), 10),
+    PostCount = countif(isnotnull(PostTime)),
+    PostCommands = make_set_if(PostCmd, isnotempty(PostCmd), 20)
+by
+    DeviceId,
+    DeviceName,
+    EscalationAccount,
+    InitiatingAccount,
+    ParentIntegrity,
+    ProcessName,
+    ProcessCmd,
+    ParentProcess,
+    ParentCmd,
+    SuspiciousParentChild,
+    HasDefenderReference,
+    ReportId
+| extend
+    RiskScore = 40
+        + iff(SuspiciousParentChild == 1, 15, 0)
+        + iff(HasDefenderReference == 1, 15, 0)
+        + iff(DefenderWriteCount > 0, 15, 0)
+        + iff(AVEventCount > 0, 5, 0)
+        + iff(PostCount >= 2, 20, 0)
+| where RiskScore >= 55
+| project
+    Timestamp = FirstSeen,
+    LastSeen,
+    DeviceName,
+    DeviceId,
+    EscalationAccount,
+    InitiatingAccount,
+    ParentIntegrity,
+    ProcessName,
+    ProcessCmd,
+    ParentProcess,
+    ParentCmd,
+    SuspiciousParentChild,
+    HasDefenderReference,
+    DefenderWriteCount,
+    DefenderWrittenPaths,
+    DefenderWriteActions,
+    AVEventCount,
+    AVActions,
+    ThreatDetails,
+    PostCount,
+    PostCommands,
+    RiskScore,
+    ReportId
+| order by RiskScore desc, Timestamp desc

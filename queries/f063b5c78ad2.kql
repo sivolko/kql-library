@@ -1,0 +1,26 @@
+// Source: https://github.com/Vyiel/MS-XDR-Hunts
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let procEvents = materialize ( 
+DeviceProcessEvents
+| extend processTime = bin(Timestamp, 1s)
+| where FileName contains "esentutl"
+    | extend ProcessTime = bin(Timestamp, 1s)
+    | where ProcessVersionInfoInternalFileName has @"esentutl"
+    | where ProcessCommandLine matches regex @"(?i)s[^a-zA-Z]*a[^a-zA-Z]*m"
+    or ProcessCommandLine matches regex @"(?i)s[^a-zA-Z]*y[^a-zA-Z]*s[^a-zA-Z]*t[^a-zA-Z]*e[^a-zA-Z]*m" 
+    or ProcessCommandLine matches regex @"(?i)s[^a-zA-Z]*e[^a-zA-Z]*c[^a-zA-Z]*u[^a-zA-Z]*r[^a-zA-Z]*i[^a-zA-Z]*t[^a-zA-Z]*y"
+    | project processTime, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+    | project-rename parentProcess = InitiatingProcessFileName, parentProcessCommandline = InitiatingProcessCommandLine );
+DeviceRegistryEvents
+| extend registryTime = bin(Timestamp, 1s)
+| join kind=inner ( procEvents ) on DeviceName
+| where abs(datetime_diff("second", registryTime, processTime)) <= 2
+| where InitiatingProcessFileName has @"vssvc.exe"
+| where ActionType has "RegistryKeyCreated" and RegistryKey contains "HKEY_LOCAL_MACHINE\\BCD00000000"
+| summarize DetectionCount = count(), 
+            FirstTimeDetected = min(processTime), 
+            LastTimeDetected = max(processTime) 
+            by DeviceName, FileName, ProcessCommandLine, parentProcess, parentProcessCommandline
+| order by FirstTimeDetected desc

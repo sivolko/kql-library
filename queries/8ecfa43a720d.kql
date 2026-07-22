@@ -1,0 +1,28 @@
+// Source: https://github.com/ValioCH/Hybrid-Cloud-SOC-Sentinel
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| where LogonType == 10 // Remote Interactive (Strictly restricts the scope to RDP ingress)
+| where IpAddress !in ("-", "127.0.0.1", "::1")
+// Map native Windows Hex SubStatus codes to human-readable forensics text
+| extend FailureReason = case(
+    SubStatus == "0xc000006a", "Incorrect Password",
+    SubStatus == "0xc000005e", "No Logon Servers Available",
+    SubStatus == "0xc0000072", "Account Disabled",
+    SubStatus == "0xc0000193", "Account Expired",
+    SubStatus == "0xc000006e", "Account Restriction Violation",
+    strcat("Unknown SubStatus Code: ", SubStatus)
+)
+| summarize 
+    StartTime = min(TimeGenerated), 
+    EndTime = max(TimeGenerated), 
+    FailedAttemptCount = count(),
+    DistinctTargetedUsersCount = dcount(TargetAccount),
+    TargetedAccountsList = make_set(TargetAccount, 10) // Gathers top 10 targeted users for blast radius review
+    by SourceIP = IpAddress, Computer, FailureReason
+| where FailedAttemptCount > 5
+// Enforce strict projection for high-signal triage
+| project StartTime, EndTime, SourceIP, Computer, FailedAttemptCount, DistinctTargetedUsersCount, TargetedAccountsList, FailureReason
+| sort by FailedAttemptCount desc

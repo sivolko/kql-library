@@ -1,0 +1,38 @@
+// Source: https://github.com/johnB007/Defender_XDR
+// Collected: 2026-07-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+let spikeStart = datetime(2026-06-09);
+let spikeEnd   = datetime(2026-06-12);
+let baseEnd    = spikeStart;
+let baseStart  = baseEnd - 7d;
+//
+// Optional prefilter. Keep blank to include every row. Set to a single
+// ActionType you saw in query 02 to narrow the scope.
+//
+let actionFilter = ""; // e.g. "FileCreated", "ProcessCreated", ""
+let baseline =
+    DeviceEvents
+    | where TimeGenerated between (baseStart .. baseEnd)
+    | where actionFilter == "" or ActionType == actionFilter
+    | summarize Baseline = count() by
+            Parent  = InitiatingProcessParentFileName,
+            Init    = InitiatingProcessFileName,
+            Company = tolower(InitiatingProcessVersionInfoCompanyName);
+let spike =
+    DeviceEvents
+    | where TimeGenerated between (spikeStart .. spikeEnd)
+    | where actionFilter == "" or ActionType == actionFilter
+    | summarize Spike = count() by
+            Parent  = InitiatingProcessParentFileName,
+            Init    = InitiatingProcessFileName,
+            Company = tolower(InitiatingProcessVersionInfoCompanyName);
+spike
+| join kind=leftouter baseline on Parent, Init, Company
+| extend Baseline = coalesce(Baseline, 0)
+| extend Delta    = Spike - Baseline
+| extend Ratio    = iff(Baseline == 0, todouble(Spike),
+                        todouble(Spike) / todouble(Baseline))
+| where Spike > 10000                       // tune for noisy tables
+| project Parent, Init, Company, Baseline, Spike, Delta, Ratio = round(Ratio, 2)
+| top 30 by Delta desc
