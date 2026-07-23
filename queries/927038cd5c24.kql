@@ -1,0 +1,54 @@
+// Source: https://github.com/Otrivin/strata-secure-jumphost
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureNetworkAnalytics_CL
+| where TimeGenerated > ago(30d)
+| where SubType_s == "FlowLog" and FlowDirection_s == "O"
+| where SrcIP_s startswith '<JUMPHOST_PRIVATE_IP_PREFIX>'
+| summarize Bytes = sum(toint(OutboundBytes_d)), FlowCount = count()
+            by DestIP_s, DestPort_d, NSGRule_s
+| top 50 by Bytes desc
+
+// ── 2. Outbound DENY hits — anything trying to leave that the WFAS or NSG dropped
+AzureDiagnostics
+| where TimeGenerated > ago(30d)
+| where Category == "NetworkSecurityGroupRuleCounter"
+| where ruleName_s contains "Block" or ruleName_s contains "Deny"
+| where direction_s == "Out"
+| summarize Hits = sum(toint(matchedConnections_d)) by ruleName_s, destinationAddress_s, destinationPortRange_s
+| top 50 by Hits desc
+
+// ── 3. Logon failure trends per account (4625) — month-over-month
+SecurityEvent
+| where TimeGenerated > ago(60d)
+| where EventID == 4625
+| where Computer in ('<JUMPHOST_FQDN>')
+| extend Month = startofmonth(TimeGenerated)
+| summarize Failures = count() by Account, Month
+| order by Account asc, Month asc
+
+// ── 4. Service installs (7045) — review for unauthorized
+Event
+| where TimeGenerated > ago(30d)
+| where EventLog == "System" and EventID == 7045
+| project TimeGenerated, Computer, RenderedDescription
+| order by TimeGenerated desc
+
+// ── 5. PowerShell script block executions of suspicious primitives (4104)
+Event
+| where TimeGenerated > ago(30d)
+| where EventLog == "Microsoft-Windows-PowerShell/Operational"
+| where EventID == 4104
+| where RenderedDescription has_any (
+        "Invoke-Mimikatz", "DownloadString", "FromBase64String", "IEX (",
+        "WebClient", "Net.WebClient", "BitsTransfer", "Reflection.Assembly")
+| project TimeGenerated, Computer, RenderedDescription
+| order by TimeGenerated desc
+
+// ── 6. Audit policy changes (4719) — should be near-zero
+SecurityEvent
+| where TimeGenerated > ago(30d)
+| where EventID == 4719
+| where Computer in ('<JUMPHOST_FQDN>')
+| project TimeGenerated, Computer, SubjectAccount, RenderedDescription

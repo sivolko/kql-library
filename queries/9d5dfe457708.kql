@@ -1,0 +1,24 @@
+// Source: https://github.com/carlzxc71/demo-kql-queries-public
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+authorizationresources
+| where type =~ "microsoft.authorization/roleassignments"
+| extend PrincipalId        = tostring(properties.principalId),
+         PrincipalType      = tostring(properties.principalType),
+         RoleDefinitionId   = tostring(properties.roleDefinitionId),
+         AssignmentScope    = tostring(properties.scope),
+         CreatedOn          = todatetime(properties.createdOn),
+         CreatedBy          = tostring(properties.createdBy),
+         UpdatedOn          = todatetime(properties.updatedOn),
+         UpdatedBy          = tostring(properties.updatedBy)
+| extend RoleDefinitionGuid = tostring(split(RoleDefinitionId, "/")[-1])
+| project CreatedOn,
+          PrincipalId,
+          PrincipalType,
+          RoleDefinitionGuid,
+          AssignmentScope,
+          CreatedBy,
+          UpdatedOn,
+          UpdatedBy
+| sort by CreatedOn desc

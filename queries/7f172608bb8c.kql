@@ -1,0 +1,10 @@
+// Source: https://github.com/ibondarenko1/azure-sentinel-detection-engineering
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(1h)
+| where ActivityStatusValue == "Failure"
+| where isnotempty(Caller)
+| summarize FailureCount = count() by Caller, bin(TimeGenerated, 5m)
+| where FailureCount >= 8

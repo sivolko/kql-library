@@ -1,0 +1,17 @@
+// Source: https://github.com/kkroth0/threat-hunting-ptbr
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 7d;
+let huntTerms = dynamic(["T1546.004", "lolbas", "linux", "H005", "establishing", "persistence", "Linux", "executing", "commands", "triggered", "user", "shell", "bash_profile", "bashrc", "bash_login/logout", "powershell", "cmd.exe", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "CurrentVersion\\Run", "Scheduled", "Service", "Registry", "Image File Execution Options", "SilentProcessExit", "Debugger", "Driver", "DLL"]);
+union withsource=SourceTable isfuzzy=true
+    SecurityEvent,
+    WindowsEvent,
+    TrendMicro_XDR_OAT_CL,
+    TrendMicro_XDR_WORKBENCH_CL
+| where TimeGenerated >= ago(lookback)
+| extend SearchBlob = tostring(pack_all())
+| where SearchBlob has_any (huntTerms)
+| extend HuntId = "H005", SourceUrl = "https://github.com/THORCollective/HEARTH/blob/main/Flames/H005.md"
+| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob
+| order by TimeGenerated desc

@@ -1,0 +1,17 @@
+// Source: https://github.com/academy-observability/repoOBS-2
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+let ResourceGroupName = "";
+AzureActivity
+| where TimeGenerated > ago(2h)
+| where isempty(ResourceGroupName) or ResourceGroup =~ ResourceGroupName
+| project
+    TimeGenerated,
+    ResourceGroup,
+    OperationNameValue,
+    ActivityStatusValue,
+    ResourceProviderValue,
+    Caller
+| sort by TimeGenerated desc
+| take 30

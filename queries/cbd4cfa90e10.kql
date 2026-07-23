@@ -1,0 +1,9 @@
+// Source: https://github.com/academy-observability/repoOBS-2
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(24h)
+| where ActivityStatusValue in ("Failure", "Failed") or ActivityStatus has "Fail"
+| summarize OperazioniFallite=count() by OperationNameValue, ResourceGroup, Caller
+| sort by OperazioniFallite desc

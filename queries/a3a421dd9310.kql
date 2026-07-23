@@ -1,0 +1,21 @@
+// Source: https://github.com/Olamodi1/azure-monitoring-setup
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4625                          // Windows failed login event
+| where AccountType == "User"
+| summarize
+    FailedAttempts = count(),
+    UniqueSourceIPs = dcount(IpAddress),
+    IPList = make_set(IpAddress, 10)
+    by Account, Computer, bin(TimeGenerated, 1h)
+| where FailedAttempts > 10
+| extend Severity = case(
+    FailedAttempts > 50, "Critical",
+    FailedAttempts > 20, "High",
+    "Medium"
+)
+| project TimeGenerated, Account, Computer, FailedAttempts, UniqueSourceIPs, IPList, Severity
+| order by FailedAttempts desc

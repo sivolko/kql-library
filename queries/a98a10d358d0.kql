@@ -1,0 +1,21 @@
+// Source: https://github.com/EternalR00ted/Microsoft-Sentinel-KQLs
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "AntivirusDetection"
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend ThreatName = tostring(ParsedFields.ThreatName)
+| where ThreatName has_any (
+    "DfndrPEBluHmr",   // BlueHammer family (Huntress-observed in-the-wild)
+    "Halaminer",       // RedSun original PoC family
+    "Wacapew.C",       // RedSun in-the-wild variant (Huntress-observed)
+    "PEBluHmr",        // BlueHammer alternative naming
+    "BluHmr"           // Catch-all
+)
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          ThreatName, FileName, SHA1, FolderPath,
+          WasRemediated = tobool(ParsedFields.WasRemediated),
+          WasExecutingWhileDetected = tobool(ParsedFields.WasExecutingWhileDetected),
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName

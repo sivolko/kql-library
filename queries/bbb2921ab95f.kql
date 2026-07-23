@@ -1,0 +1,12 @@
+// Source: https://github.com/chadmcox/Sentinel-and-Defender-Queries
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| where Application == "Active Directory" 
+| extend SourceComputerSid = tostring(parse_json(AdditionalFields.SourceComputerSid))
+| extend SourceComputerObjectGuid = tostring(parse_json(AdditionalFields.SourceComputerObjectGuid))
+| extend SourceComputerOperatingSystem = tostring(parse_json(AdditionalFields.SourceComputerOperatingSystem))
+| extend EncryptionType = tostring(parse_json(AdditionalFields.EncryptionType))
+| distinct SourceComputerSid, SourceComputerObjectGuid, SourceComputerOperatingSystem, AccountDomain, AccountName, EncryptionType
+| summarize count() by SourceComputerOperatingSystem, EncryptionType

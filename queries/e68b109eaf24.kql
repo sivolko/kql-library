@@ -1,0 +1,9 @@
+// Source: https://github.com/ugurkocde/kql_search_submissions
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "SmartScreenUrlWarning" 
+| where AdditionalFields.Experience == "CasbPolicy"
+//| join kind=leftouter IdentityInfo on $left.InitiatingProcessAccountUpn == $right.AccountUPN //use if you have UEBA Enabled
+| summarize count() by FileName, RemoteUrl, DeviceName, InitiatingProcessAccountUpn, InitiatingProcessFileName, TimeGenerated, InitiatingProcessVersionInfoProductName//, JobTitle 

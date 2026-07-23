@@ -1,0 +1,26 @@
+// Source: https://github.com/academy-observability/repoOBS-2
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+union isfuzzy=true withsource=TableName
+    Usage,
+    AzureActivity,
+    AzureMetrics,
+    AzureDiagnostics,
+    StorageBlobLogs,
+    StorageFileLogs,
+    StorageQueueLogs,
+    StorageTableLogs,
+    AppServiceHTTPLogs,
+    AppServiceAppLogs,
+    AppServiceConsoleLogs,
+    AppServiceAuditLogs,
+    AppServicePlatformLogs,
+    Heartbeat,
+    Perf,
+    InsightsMetrics,
+    Event,
+    Syslog
+| where TimeGenerated > ago(7d)
+| summarize righe=count(), ultimo_evento=max(TimeGenerated) by TableName
+| order by righe desc

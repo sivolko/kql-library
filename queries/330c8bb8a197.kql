@@ -1,0 +1,7 @@
+// Source: https://github.com/teremuhamblin/BLUETeam
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where Process has "psexec"
+| project TimeGenerated, Computer, Account, Process, CommandLine

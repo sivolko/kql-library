@@ -1,0 +1,23 @@
+// Source: https://github.com/Securinets-TEKUP/Cybertek-3.0
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4625
+| where Account == "svc_backup"
+| where TimeGenerated between (datetime(2025-11-02 03:00) .. datetime(2025-11-02 06:00))
+
+// KQL Snippet 2 - Suspicious executable
+DeviceProcessEvents
+| where FileName == "MalDevice.exe"
+| where Timestamp between (datetime(2025-11-02 07:10) .. datetime(2025-11-02 09:00))
+
+// KQL Snippet 3 - Heartbeat anomaly
+Heartbeat
+| where Computer == "HN-WEB-03"
+| where TimeGenerated > datetime(2025-11-02 07:00)
+
+// KQL Snippet 4 - Unusual outbound connections
+DeviceNetworkEvents
+| where RemotePort in (445, 3389)
+| where Timestamp between (datetime(2025-11-02 05:00) .. datetime(2025-11-02 08:00))

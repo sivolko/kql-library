@@ -1,0 +1,9 @@
+// Source: https://github.com/samilamppu/Sentinel-queries
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents 
+| where ActionType in ('SmartScreenUrlWarning','ExploitGuardNetworkProtectionBlocked') 
+| extend ParsedFields=parse_json(AdditionalFields) 
+| project DeviceName, ActionType, Timestamp, RemoteUrl, InitiatingProcessAccountName, ResponseCategory=tostring(ParsedFields.ResponseCategory),Experience=tostring(ParsedFields.Experience) 
+| where ResponseCategory == "Malicious" or Experience == "Malicious"

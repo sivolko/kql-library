@@ -1,0 +1,15 @@
+// Source: https://github.com/Ethan-Andrews/Exploitarium-Detections
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DestinationPort in (21115, 21116, 21117, 21118, 21119)
+| where Protocol =~ "TCP"
+| extend SrcIP = SourceIP, DstIP = DestinationIP
+| summarize ConnectionCount = count(), DistinctSources = dcount(SrcIP),
+    SourceIPs = make_set(SrcIP, 20), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+    by DstIP, DestinationPort, DeviceName
+| where ConnectionCount > 10 or DistinctSources > 3
+| extend RiskLevel = iff(DistinctSources > 5, "High", "Medium")
+| order by DistinctSources desc

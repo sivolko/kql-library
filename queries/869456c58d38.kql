@@ -1,0 +1,8 @@
+// Source: https://github.com/DanishMansuriIN/Enterprise-Detection-Threat-Hunting-Platform
+// Collected: 2026-07-23
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4624
+| project TimeGenerated, Computer, Account, IpAddress, LogonType, Activity
+| sort by TimeGenerated desc
