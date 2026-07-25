@@ -1,0 +1,7 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where OperationNameValue == "MICROSOFT.SECURITYINSIGHTS/INCIDENTS/DELETE"
+| where ActivityStatusValue <> "Start" //so we only see successes or failures, feel free to remove

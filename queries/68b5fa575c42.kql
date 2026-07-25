@@ -1,0 +1,112 @@
+// Source: https://github.com/AndrewAltimit/exploits
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let CancelWindow = 30s;
+let CancelThreshold = 20;
+
+let AfdCancelBursts =
+    DeviceEvents
+    | where TimeGenerated > ago(1d)
+    | where ActionType == "CancelIo"
+    | where AdditionalFields has "\\Device\\Afd"
+    | summarize
+        CancelCount = count(),
+        FirstCancel = min(TimeGenerated),
+        LastCancel = max(TimeGenerated)
+        by DeviceName, ProcessId, InitiatingProcessFileName,
+           InitiatingProcessAccountName, InitiatingProcessIntegrityLevel
+    | where CancelCount > CancelThreshold
+    | extend WindowSec = datetime_diff('second', LastCancel, FirstCancel)
+    | where WindowSec <= 30
+    | extend CancelRate = CancelCount * 1.0 / max_of(WindowSec, 1)
+    | project
+        DeviceName,
+        ProcessId,
+        ProcessName = InitiatingProcessFileName,
+        Account = InitiatingProcessAccountName,
+        IntegrityLevel = InitiatingProcessIntegrityLevel,
+        CancelCount,
+        CancelRate,
+        FirstCancel,
+        LastCancel;
+
+AfdCancelBursts
+| order by CancelRate desc
+
+
+// ============================================================================
+// Query 2: Token elevation correlated with AFD cancel burst
+// ============================================================================
+let ElevationWindow = 45s;
+
+let TokenElevations =
+    SecurityEvent
+    | where TimeGenerated > ago(1d)
+    | where EventID == 4672
+    | where PrivilegeList has_any ("SeDebugPrivilege", "SeTcbPrivilege", "SeLoadDriverPrivilege")
+    | project ElevationTime = TimeGenerated, Computer, ElevatedAccount = Account, PrivilegeList;
+
+AfdCancelBursts
+| join kind=inner TokenElevations on $left.DeviceName == $right.Computer
+| where ElevationTime between (LastCancel .. (LastCancel + ElevationWindow))
+| project
+    DeviceName,
+    Account,
+    ProcessName,
+    CancelCount,
+    CancelRate,
+    ExploitEnd = LastCancel,
+    ElevationTime,
+    ElevatedAccount,
+    PrivilegeList,
+    LagSeconds = datetime_diff('second', ElevationTime, LastCancel)
+| order by ElevationTime desc
+
+
+// ============================================================================
+// Query 3: Unexpected kernel callback invocation (callback overwrite path)
+//
+// If the callback overwrite variant succeeds, the overwritten callback fires
+// from an unexpected process context. This query looks for processes whose
+// image path appears in kernel-mode call stacks captured by MDE deep telemetry.
+// ============================================================================
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType == "KernelCallbackInvocation"   // MDE advanced telemetry
+| where AdditionalFields has "afd.sys"
+| where InitiatingProcessFileName !in~ (
+    "System", "svchost.exe", "lsass.exe", "services.exe",
+    "smss.exe", "csrss.exe", "wininit.exe"
+)
+| project
+    TimeGenerated,
+    DeviceName,
+    ProcessId,
+    ProcessName = InitiatingProcessFileName,
+    Account = InitiatingProcessAccountName,
+    CallbackDetails = AdditionalFields
+| order by TimeGenerated desc
+
+
+// ============================================================================
+// Query 4: WinSock DLL loaded by scripting hosts (grooming setup indicator)
+//
+// Loading ws2_32.dll from cmd.exe, powershell.exe, or scripting engines
+// is unusual. Legitimate shells rarely make direct WinSock calls.
+// ============================================================================
+DeviceImageLoadEvents
+| where TimeGenerated > ago(1d)
+| where FileName =~ "ws2_32.dll" or FileName =~ "mswsock.dll"
+| where InitiatingProcessFileName in~ (
+    "cmd.exe", "powershell.exe", "pwsh.exe",
+    "wscript.exe", "cscript.exe", "mshta.exe",
+    "rundll32.exe", "regsvr32.exe"
+)
+| project
+    TimeGenerated,
+    DeviceName,
+    ProcessName = InitiatingProcessFileName,
+    Account = InitiatingProcessAccountName,
+    LoadedDll = FileName
+| order by TimeGenerated desc

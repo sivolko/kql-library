@@ -1,0 +1,12 @@
+// Source: https://github.com/javierDAW/detection-diary
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let spike_rpm = 1000;   // per-URI requests-per-minute floor; tune to normal peak
+W3CIISLog
+| where TimeGenerated > ago(6h)
+| summarize Requests = count(), Sources = dcount(cIP),
+            GoAgent = countif(csUserAgent has "Go-http-client")
+          by csUriStem, bin(TimeGenerated, 1m)
+| where Requests > spike_rpm and Sources > 50
+| order by Requests desc

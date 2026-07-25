@@ -1,0 +1,23 @@
+// Source: https://github.com/madhuperera/Microsoft_Sentinel
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetUser     = "jane.doe@contoso.com";   // <-- set the UPN to review
+let LookbackPeriod = 30d;
+let WorkloadFilter = "";                        // "" = all workloads, else e.g. "SharePoint"
+let MeaningfulOps = dynamic([
+    "Send","SendAs","SendOnBehalf",
+    "FileUploaded","FileModified","FileCheckedIn","FileRenamed","FileMoved","FileDownloaded",
+    "ClientViewSignaled","PageViewed",
+    "MessageSent","MessageEdited","ChatCreated","TeamCreated","ChannelAdded",
+    "MeetingParticipantDetail"]);
+OfficeActivity
+| where TimeGenerated >= ago(LookbackPeriod)
+| where UserType == "Regular"
+| extend UPN = tolower(tostring(UserId))
+| where UPN == tolower(TargetUser)
+| where Operation in (MeaningfulOps)
+| where WorkloadFilter == "" or OfficeWorkload == WorkloadFilter
+| project TimeGenerated, UPN, OfficeWorkload, Operation, RecordType,
+          ResultStatus, ClientIP, UserAgent, OfficeObjectId, SourceFileName, Site_Url
+| order by TimeGenerated desc

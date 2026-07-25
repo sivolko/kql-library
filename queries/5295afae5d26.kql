@@ -1,0 +1,26 @@
+// Source: https://github.com/kkroth0/threat-hunting-ptbr
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 14d;
+let riskyTerms = dynamic(["public", "internet", "exposed", "anonymous", "open", "0.0.0.0", "critical", "high"]);
+union isfuzzy=true
+(
+    OrcaAlerts_CL
+    | where TimeGenerated >= ago(lookback)
+    | where risk_level_s in~ ("critical", "high") or RawData has_any (riskyTerms)
+    | project TimeGenerated, Source = "Orca", Asset = asset_name_s, Account = account_name_s, Risk = risk_level_s, Finding = alert_category_s, Context = RawData, Url = alert_ui_link_s
+),
+(
+    AzureActivity
+    | where TimeGenerated >= ago(lookback)
+    | where OperationNameValue has_any ("networkSecurityGroups", "publicIPAddresses", "roleAssignments", "storageAccounts") or Properties has_any (riskyTerms)
+    | project TimeGenerated, Source = "AzureActivity", Asset = Resource, Account = Caller, Risk = ActivityStatusValue, Finding = OperationNameValue, Context = Properties, Url = ResourceId
+),
+(
+    Cloudflare_CL
+    | where TimeGenerated >= ago(lookback)
+    | where EdgeResponseStatus_d >= 500 or SecurityAction_s has_any ("block", "challenge") or ClientRequestURI_s has_any ("/admin", "/login", "/wp-admin")
+    | project TimeGenerated, Source = "Cloudflare", Asset = ClientRequestHost_s, Account = RequestHeaders_cf_access_user_s, Risk = tostring(EdgeResponseStatus_d), Finding = SecurityRuleDescription_s, Context = strcat(ClientIP_s, " ", ClientRequestURI_s), Url = ClientRequestURI_s
+)
+| order by TimeGenerated desc

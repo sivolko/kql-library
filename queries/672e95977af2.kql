@@ -1,0 +1,56 @@
+// Source: https://github.com/lenoshz/active-directory-security-lab
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4769
+| where TicketEncryptionType == "0x17"  // RC4-HMAC encryption
+| where ServiceName !endswith "$"       // Exclude machine accounts
+| where ServiceName !in ("krbtgt", "kadmin/changepw")  // Exclude system services
+| extend RequestorUser = TargetUserName
+| summarize 
+    ServiceTicketCount = count(),
+    TargetedServices = make_set(ServiceName, 20),
+    UniqueServices = dcount(ServiceName)
+  by RequestorUser, IpAddress, bin(TimeGenerated, 5m)
+| where ServiceTicketCount >= 3 or UniqueServices >= 2
+| project 
+    TimeGenerated,
+    RequestorUser,
+    IpAddress,
+    ServiceTicketCount,
+    UniqueServices,
+    TargetedServices,
+    AlertSeverity = case(
+        ServiceTicketCount > 10, "High",
+        ServiceTicketCount > 5, "Medium",
+        "Low"
+    )
+| order by ServiceTicketCount desc
+
+// Alternative: Simple Service Ticket Monitoring
+/*
+SecurityEvent
+| where TimeGenerated > ago(24h)
+| where EventID == 4769
+| where TicketEncryptionType == "0x17"
+| where ServiceName !endswith "$"
+| project TimeGenerated, TargetUserName, ServiceName, IpAddress, TicketEncryptionType
+| summarize Count = count() by ServiceName, TargetUserName
+| where Count > 1
+*/
+
+// Detailed Analysis with Service Account Focus
+/*
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4769
+| where TicketEncryptionType == "0x17"
+| where ServiceName !endswith "$"
+| extend 
+    IsServiceAccount = ServiceName startswith "svc_" or ServiceName contains "service",
+    RequestHour = hourofday(TimeGenerated)
+| where IsServiceAccount
+| project TimeGenerated, TargetUserName, ServiceName, IpAddress, IsServiceAccount, RequestHour
+*/

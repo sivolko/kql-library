@@ -1,0 +1,32 @@
+// Source: https://github.com/11bztaylor/KQL
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+.create-or-alter function
+  with (docstring = 'Live PaloAlto_Threat unioned with pre-cutover CommonSecurityLog history (transform-on-read)', folder = 'PaloAlto/Views')
+  PaloAlto_Threat_All() {
+    let _cutover = coalesce(toscalar(PaloAlto_Threat | summarize min(TimeGenerated)), datetime(9999-12-31));
+    union
+        PaloAlto_Threat,
+        (PaloAlto_Threat_FromCSL() | where TimeGenerated < _cutover)
+  }
+
+
+.create-or-alter function
+  with (docstring = 'Live PaloAlto_Traffic unioned with pre-cutover CommonSecurityLog history (transform-on-read)', folder = 'PaloAlto/Views')
+  PaloAlto_Traffic_All() {
+    let _cutover = coalesce(toscalar(PaloAlto_Traffic | summarize min(TimeGenerated)), datetime(9999-12-31));
+    union
+        PaloAlto_Traffic,
+        (PaloAlto_Traffic_FromCSL() | where TimeGenerated < _cutover)
+  }
+
+
+// -------------------------------------------------------------------------------------
+// SANITY CHECK  -- the union should be continuous across the cutover with no gap/overlap.
+//    Compare daily counts around your cutover date; live and history should hand off cleanly.
+// -------------------------------------------------------------------------------------
+// PaloAlto_Threat_All()
+// | where TimeGenerated between (datetime(2026-01-01) .. datetime(2026-07-01))
+// | summarize Rows = count() by bin(TimeGenerated, 1d)
+// | order by TimeGenerated asc

@@ -1,0 +1,19 @@
+// Source: https://github.com/kkroth0/threat-hunting-ptbr
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 14d;
+let huntTerms = dynamic(["T1048", "exfiltration", "cve 2026 26144", "microsoft excel", "copilot", "ai agent", "zero click", "document delivery", "patch tuesday", "H099", "exploiting", "CVE-2026-26144", "Microsoft", "Excel", "Copilot", "Agent", "zero-click", "vulnerability", "silently", "exfiltrate", "sensitive", "spreadsheet", "POST", "GET", "webshell", "cmd=", "whoami", "bash", "powershell", "rce", "ssrf", "jndi"]);
+union withsource=SourceTable isfuzzy=true
+    Cloudflare_CL,
+    CommonSecurityLog,
+    AzureDiagnostics,
+    AppRequests,
+    AppTraces,
+    Syslog
+| where TimeGenerated >= ago(lookback)
+| extend SearchBlob = tostring(pack_all())
+| where SearchBlob has_any (huntTerms)
+| extend HuntId = "H099", SourceUrl = "https://github.com/THORCollective/HEARTH/blob/main/Flames/H099.md"
+| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob
+| order by TimeGenerated desc

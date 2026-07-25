@@ -1,0 +1,11 @@
+// Source: https://github.com/ibondarenko1/azure-sentinel-detection-engineering
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(1h)
+| where OperationNameValue endswith "/delete"
+| where ActivityStatusValue == "Success"
+| where isnotempty(Caller)
+| summarize DeleteCount = count(), DeletedResources = make_set(ResourceId, 10) by Caller, bin(TimeGenerated, 5m)
+| where DeleteCount >= 5

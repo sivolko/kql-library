@@ -1,0 +1,12 @@
+// Source: https://github.com/wahidhendrawan/Detection-Rules
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceProcessEvents
+| where Timestamp > ago(24h)
+| where FileName =~ "example.exe"
+| where ProcessCommandLine has_any ("suspicious-flag", "another-flag")
+| where InitiatingProcessFileName !in~ ("trusted_parent.exe")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by Timestamp desc

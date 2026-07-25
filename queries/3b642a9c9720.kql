@@ -1,0 +1,46 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-07-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackDays = 30d;
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackDays)
+| where RecordType in ("SharePoint", "OneDrive", "SharePointSharingOperation", "SharePointFileOperation")
+| where Operation in (
+    "SharingInvitationCreated", "AnonymousLinkCreated",
+    "SharingSet", "AddedToSecureLink",
+    "SecureLinkUsed", "AnonymousLinkUsed",
+    "SharingInvitationAccepted")
+| extend
+    TargetUser    = tostring(TargetUserOrGroupName),
+    TargetDomain  = tostring(split(TargetUserOrGroupName, "@")[1]),
+    FileExt       = tostring(extract(@"(\.[a-zA-Z0-9]+)$", 1, SourceFileName)),
+    SharingType   = tostring(parse_json(Event_Data).SharingType),
+    LinkScope     = tostring(parse_json(Event_Data).LinkScope)
+| extend
+    IsAnonymous   = (Operation has "Anonymous" or LinkScope == "Anyone"),
+    IsExternal    = isnotempty(TargetDomain)
+        and TargetDomain !has "onmicrosoft.com"
+        and TargetUser has "@"
+| summarize
+    TotalShares      = count(),
+    AnonymousShares  = countif(IsAnonymous),
+    ExternalShares   = countif(IsExternal),
+    UniqueRecipients = dcount(TargetUser),
+    FileTypes        = make_set(FileExt, 10),
+    SampleFiles      = make_set(SourceFileName, 10),
+    SiteURLs         = make_set(Site_Url, 5),
+    RecipientDomains = make_set(TargetDomain, 10)
+    by UserId
+| sort by AnonymousShares desc
+| project
+    UserId,
+    TotalShares,
+    AnonymousShares,
+    ExternalShares,
+    UniqueRecipients,
+    RecipientDomains,
+    FileTypes,
+    SampleFiles,
+    SiteURLs
