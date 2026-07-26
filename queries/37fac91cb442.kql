@@ -1,0 +1,12 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 7d;
+AzureActivity
+| where TimeGenerated >= ago(Lookback)
+| where CategoryValue in~ ("Administrative", "Policy", "Security")
+| where ActivityStatusValue =~ "Failed"
+| project TimeGenerated, Caller, OperationNameValue, SubscriptionId, ResourceGroup
+| summarize Failures = count(), LatestFailure = max(TimeGenerated) by Caller, OperationNameValue, SubscriptionId, ResourceGroup
+| order by Failures desc, LatestFailure desc

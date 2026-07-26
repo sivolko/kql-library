@@ -1,0 +1,28 @@
+// Source: https://github.com/vinayaklatthe/microsoft-security-agent-toolkit
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let LookbackHours = 24h;
+let BaselineDays  = 14d;
+let SpikeMultiplier = 5.0;
+let MinFiles = 50;
+let UserBaseline =
+    CloudAppEvents
+    | where Timestamp between (ago(BaselineDays) .. ago(LookbackHours))
+    | where ActionType in~ ("FileDownloaded","FileSyncDownloadedFull","FileAccessed")
+    | summarize BaselineDailyAvg = todouble(count()) / 14.0 by AccountObjectId, AccountUpn = AccountDisplayName;
+CloudAppEvents
+| where Timestamp > ago(LookbackHours)
+| where ActionType in~ ("FileDownloaded","FileSyncDownloadedFull")
+| summarize FileCount = count(),
+            DistinctSites = dcount(tostring(RawEventData.SiteUrl)),
+            FirstSeen = min(Timestamp), LastSeen = max(Timestamp),
+            SampleFiles = make_set(ObjectName, 10)
+        by AccountObjectId, AccountUpn = AccountDisplayName,
+           IPAddress, ApplicationId
+| join kind=leftouter UserBaseline on AccountObjectId
+| extend SpikeRatio = iff(BaselineDailyAvg > 0, FileCount / BaselineDailyAvg, todouble(FileCount))
+| where FileCount >= MinFiles and (SpikeRatio >= SpikeMultiplier or isempty(BaselineDailyAvg))
+| project FirstSeen, LastSeen, AccountUpn, IPAddress, FileCount,
+          BaselineDailyAvg, SpikeRatio, DistinctSites, SampleFiles
+| order by SpikeRatio desc

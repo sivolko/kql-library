@@ -1,0 +1,14 @@
+// Source: https://github.com/noakup/AzMonLogsAgent
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+// Quering on the past 7 days
+| where TimeGenerated > ago(7d)
+// Quering only on incoming events from a Palo Alto appliance
+| where DeviceProduct has 'PAN-OS'
+| where DeviceVendor =~ 'Palo Alto Networks'
+// Find the the collector machine with the highest usage
+| summarize Count=count() by Computer
+// Sort in a descending order- Most used Collector hostname comes first
+| sort by Count desc

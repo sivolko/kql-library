@@ -1,5 +1,537 @@
 [
   {
+    "id": "879d7001ff7a",
+    "title": "Alerts when a file believed to be malware is uploaded to your Office 365 tenant in SharePoint or OneDrive",
+    "description": "Alerts when a file believed to be malware is uploaded to your Office 365 tenant in SharePoint or OneDrive",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/petitess/kusto\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| where TimeGenerated > ago(30d)\n| where Operation == \"FileMalwareDetected\"\n| project\n    TimeGenerated,\n    OfficeWorkload,\n    ['File Name']=SourceFileName,\n    ['File Location']=OfficeObjectId,\n    ['Relative File URL']=SourceRelativeUrl,\n    ClientIP",
+    "source_repo": "petitess/kusto",
+    "source_url": "https://github.com/petitess/kusto/blob/71fd9d18d82e7e3ebb81df0cbbb9895c29a95853/Sentinel-Queries/Office%20365/OfficeActivity-MalwareDetected.kql",
+    "filename": "OfficeActivity-MalwareDetected.kql",
+    "collected_at": "2026-07-26T05:36:04.141507+00:00"
+  },
+  {
+    "id": "0056cef1a9f4",
+    "title": "Data connector required for this query - Office 365",
+    "description": "Find the top 20 guests who are downloading files from your tenant and calculate the percentage of total downloads from those users. Useful to see if you have a few guests responsible for most of the downloads in your tenant.",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet totalguestdownloads=\n    OfficeActivity\n    | where TimeGenerated > ago(30d)\n    | where Operation in (\"FileSyncDownloadedFull\", \"FileDownloaded\")\n    | where UserId contains \"#EXT#\"\n    | count\n//Extend a fake column we will use to join our two queries\n    | extend ['Total Download Count'] = Count, Constant=\"x\";\nOfficeActivity\n| where TimeGenerated > ago(30d)\n| where Operation in (\"FileSyncDownloadedFull\", \"FileDownloaded\")\n| where UserId contains \"#EXT#\"\n//Extend the same fake column to use to join our two queries\n| extend Constant=\"x\"\n| extend ['Guest UserPrincipalName'] = tostring(split(UserId, \"#\")[0])\n//Summarize download count by each guest and join to our first query\n| summarize ['Individual Download Count']=count()by ['Guest UserPrincipalName'], Constant\n| join kind=fullouter totalguestdownloads on Constant\n| project-away Constant, Constant1, Count\n| sort by ['Individual Download Count'] desc \n//Take the top 20 and then calculate the percentage\n| take 20\n| extend ['Percentage of Total Downloads']=(todouble(['Individual Download Count']) * 100 / todouble(['Total Download Count']))",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office%20365/OfficeActivity-CalculatePercentageofDownloadsforTopGuests.kql",
+    "filename": "OfficeActivity-CalculatePercentageofDownloadsforTopGuests.kql",
+    "collected_at": "2026-07-26T05:36:03.279796+00:00"
+  },
+  {
+    "id": "ede250ed2151",
+    "title": "Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit",
+    "description": "Collected: 2026-05-11 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe=30d;\nIdentityInfo\n| where TimeGenerated > ago(21d)\n| where AssignedRoles has_any (\"Exchange Administrator\", \"Global Administrator\")\n| summarize arg_max(TimeGenerated, *) by AccountUPN\n| project UserId=AccountUPN\n| join kind=inner (\nOfficeActivity\n| where TimeGenerated > ago(timeframe)\n| where OfficeWorkload == \"Exchange\"\n| where Operation == \"MailItemsAccessed\")\non UserId\n| where UserId != MailboxOwnerUPN\n| project TimeGenerated, UserId, MailboxOwnerUPN, Operation, UserType, ResultStatus, Client_IPAddress, ExternalAccess, Logon_Type, OfficeWorkload",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/2915270d4ccaa6ba8ec3668ac877b704b75097d3/queries/33c85cdbdc65.kql",
+    "filename": "33c85cdbdc65.kql",
+    "collected_at": "2026-07-26T05:36:02.118528+00:00"
+  },
+  {
+    "id": "d4c1dc981775",
+    "title": "When a malicious email is received, list all the users who received it and all the users who read it",
+    "description": "First find all the users who received the email",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/RBNoronha/KQL\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nEmailEvents\n| where EmailDirection == \"Inbound\"\n//Add in your malicious subject or malicious sender address\n| where Subject == \"Malicious Subject Name\" or SenderFromAddress == \"malicioususer@domain.com\"\n| project RecipientEmailAddress, Subject, InternetMessageId, SenderFromAddress\n//Combine that data with the OfficeActivity table which tracks whether an email was accessed\n| join kind=inner (\n    OfficeActivity\n    | where Operation == \"MailItemsAccessed\"\n    | mv-expand todynamic(Folders)\n    | extend FolderItems = Folders.FolderItems\n    | mv-expand FolderItems\n    | extend InternetMessageId = tostring(FolderItems.InternetMessageId)\n    | project UserId, InternetMessageId\n    )\n    on InternetMessageId\n//Create summary of data listing the count and all the users who received the email vs the list and count of those that read it\n| summarize\n    ['Receipient Count']=dcount(RecipientEmailAddress),\n    ['Users Who Received Email']=make_set(RecipientEmailAddress),\n    ['Reader Count']=dcount(UserId),\n    ['Users Who Read Email']=make_set(UserId)\n    by SenderFromAddress, Subject, InternetMessageId",
+    "source_repo": "RBNoronha/KQL",
+    "source_url": "https://github.com/RBNoronha/KQL/blob/f85d37568ad4abe4b6ceaef67a8dfc5954eaad47/Office%20365/EmailEvents-FindUsersWhoReadMaliciousEmail.kql",
+    "filename": "EmailEvents-FindUsersWhoReadMaliciousEmail.kql",
+    "collected_at": "2026-07-26T05:36:01.449301+00:00"
+  },
+  {
+    "id": "0729c86396e1",
+    "title": "HEARTH H020 - candidato inicial KQL",
+    "description": "Fonte: https://github.com/THORCollective/HEARTH/blob/main/Flames/H020.md Hip\u00f3tese: Os atores da amea\u00e7a est\u00e3o usando o sistema Windows Management Instrumentation (WMI) para executar comandos PowerShell que estabelecem um shell reverso, permitindo-lhes obter controle remoto sobre servidores Windows no setor financeiro... Padr\u00e3o: script suspeito e execu\u00e7\u00e3o de comando Cobertura: Starter KQL - validar em Sentinel Prioridade: P3 (28) Tabelas: SecurityEvent, WindowsEvent, TrendMicro_XDR_OAT_CL, TrendMicro_XDR_WORKBENCH_CL, ThreatIntelIndicators, Watchlist, SecurityAlert, SecurityIncident, Anomalies, OfficeActivity, AuditLogs, SigninLogs Valide a disponibilidade da tabela, nomes de campos, limites e falsos positivos antes de usar como detec\u00e7\u00e3o.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "m365",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/kkroth0/threat-hunting-ptbr\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 14d;\nlet huntTerms = dynamic([\"T1047\", \"wmi\", \"H020\", \"Windows\", \"Management\", \"Instrumentation\", \"system\", \"execute\", \"PowerShell\", \"commands\", \"that\", \"establish\", \"reverse\", \"shell\", \"allowing\", \"them\", \"gain\", \"remote\", \"control\", \"over\", \"servers\", \"financial\", \"powershell\", \"cmd.exe\", \"wscript\", \"cscript\", \"mshta\", \"rundll32\", \"regsvr32\", \"CurrentVersion\\\\Run\", \"Scheduled\", \"Service\", \"Registry\"]);\nunion withsource=SourceTable isfuzzy=true\n    SecurityEvent,\n    WindowsEvent,\n    TrendMicro_XDR_OAT_CL,\n    TrendMicro_XDR_WORKBENCH_CL\n| where TimeGenerated >= ago(lookback)\n| extend SearchBlob = tostring(pack_all())\n| where SearchBlob has_any (huntTerms)\n| extend HuntId = \"H020\", SourceUrl = \"https://github.com/THORCollective/HEARTH/blob/main/Flames/H020.md\"\n| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob\n| order by TimeGenerated desc",
+    "source_repo": "kkroth0/threat-hunting-ptbr",
+    "source_url": "https://github.com/kkroth0/threat-hunting-ptbr/blob/44ac8fa38ebdfbfe78601103421c7e1beaeeb49a/sentinel/kql/hearth/h020.kql",
+    "filename": "h020.kql",
+    "collected_at": "2026-07-26T05:36:00.747840+00:00"
+  },
+  {
+    "id": "8f69d0ff7df3",
+    "title": "Visualize the guest domains that have had the most files shares to them from your Office 365 tenant",
+    "description": "Visualize the guest domains that have had the most files shares to them from your Office 365 tenant",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/EmreOzanMemis/AzureSentinel\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| where TimeGenerated > ago(30d)\n| where Operation in~ (\"AddedToSecureLink\", \"SecureLinkCreated\", \"SecureLinkUpdated\")\n| where TargetUserOrGroupType == \"Guest\" and TargetUserOrGroupName contains \"#ext#\"\n| extend ['Guest UserPrincipalName'] = tostring(split(TargetUserOrGroupName, \"#\")[0])\n| extend ['Guest Domain'] = tostring(split(['Guest UserPrincipalName'], \"_\")[-1])\n| summarize Count=count() by ['Guest Domain']\n| top 20 by Count\n| render barchart with (title=\"Top guest domains with files shared to\")",
+    "source_repo": "EmreOzanMemis/AzureSentinel",
+    "source_url": "https://github.com/EmreOzanMemis/AzureSentinel/blob/c04f3c94811e44003267420c1789965797e2c2ea/Sentinel-KQL-Sorgular%C4%B1/Office%20365/OfficeActivity-VisualizeFileShareTopGuestDomains.kql",
+    "filename": "OfficeActivity-VisualizeFileShareTopGuestDomains.kql",
+    "collected_at": "2026-07-26T05:35:59.949018+00:00"
+  },
+  {
+    "id": "eb7df948a520",
+    "title": "Rule    : M365 - Teams Channel Deleted or Team Removed (Destructive Action)",
+    "description": "Severity: Medium Tactics : Impact, DefenseEvasion MITRE   : T1485 (Data Destruction), T1070 (Indicator Removal) Freq    : PT1H   Period: PT1H Description: Detects bulk deletion of Teams channels or entire Team workspaces, which may indicate destructive insider activity or a compromised account conducting cleanup after data exfiltration. ==========================================================================================",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet BulkDeleteThreshold = 3;   // deletions per user per hour\nlet LookbackPeriod      = 1h;\n\nOfficeActivity\n| where TimeGenerated > ago(LookbackPeriod)\n| where RecordType == \"MicrosoftTeams\"\n| where Operation in (\n    \"TeamDeleted\", \"ChannelDeleted\", \"TeamArchived\",\n    \"MemberRemoved\", \"TabRemoved\")\n| summarize\n    DeleteCount     = count(),\n    Operations      = make_set(Operation, 10),\n    TeamsAffected   = make_set(TeamName, 10),\n    ChannelList     = make_set(ChannelName, 10),\n    ClientIPs       = make_set(ClientIP, 5),\n    FirstSeen       = min(TimeGenerated),\n    LastSeen        = max(TimeGenerated)\n    by UserId, UserType\n| where DeleteCount >= BulkDeleteThreshold\n    or Operations has \"TeamDeleted\"\n    or Operations has \"TeamArchived\"\n| extend AlertSeverity = case(\n    Operations has \"TeamDeleted\",  \"High\",\n    DeleteCount >= 10,             \"High\",\n    \"Medium\")\n| project\n    TimeGenerated  = LastSeen,\n    UserId,\n    UserType,\n    DeleteCount,\n    Operations,\n    TeamsAffected,\n    ChannelList,\n    ClientIPs,\n    AlertSeverity",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/19a4a4468cfdd86d8bb059b28824b06c53694ddf/Use%20Cases%20Threat%20Hunting/M365OfficeActivity/AnalyticRules/RULE-15_M365-Teams-Bulk-Delete-Channels-Teams.kql",
+    "filename": "RULE-15_M365-Teams-Bulk-Delete-Channels-Teams.kql",
+    "collected_at": "2026-07-26T05:35:59.249049+00:00"
+  },
+  {
+    "id": "48776dc60038",
+    "title": "Title:        Anomalous large file download from SharePoint / OneDrive",
+    "description": "MITRE:        T1567 (Exfiltration Over Web Service), T1530 (Data from Cloud Storage) Data source:  CloudAppEvents (MDA) / OfficeActivity Use case:     Data exfiltration investigation. Surfaces users downloading more files in a short window than their 14-day baseline, filtered to externally-shareable SharePoint / OneDrive. Tuning:       Bulk migrations, eDiscovery exports, and admin recovery work trigger this. Whitelist the migration service accounts and investigators before alerting. Author:       Microsoft Security Agent Toolkit",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/vinayaklatthe/microsoft-security-agent-toolkit\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet LookbackHours = 24h;\nlet BaselineDays  = 14d;\nlet SpikeMultiplier = 5.0;\nlet MinFiles = 50;\nlet UserBaseline =\n    CloudAppEvents\n    | where Timestamp between (ago(BaselineDays) .. ago(LookbackHours))\n    | where ActionType in~ (\"FileDownloaded\",\"FileSyncDownloadedFull\",\"FileAccessed\")\n    | summarize BaselineDailyAvg = todouble(count()) / 14.0 by AccountObjectId, AccountUpn = AccountDisplayName;\nCloudAppEvents\n| where Timestamp > ago(LookbackHours)\n| where ActionType in~ (\"FileDownloaded\",\"FileSyncDownloadedFull\")\n| summarize FileCount = count(),\n            DistinctSites = dcount(tostring(RawEventData.SiteUrl)),\n            FirstSeen = min(Timestamp), LastSeen = max(Timestamp),\n            SampleFiles = make_set(ObjectName, 10)\n        by AccountObjectId, AccountUpn = AccountDisplayName,\n           IPAddress, ApplicationId\n| join kind=leftouter UserBaseline on AccountObjectId\n| extend SpikeRatio = iff(BaselineDailyAvg > 0, FileCount / BaselineDailyAvg, todouble(FileCount))\n| where FileCount >= MinFiles and (SpikeRatio >= SpikeMultiplier or isempty(BaselineDailyAvg))\n| project FirstSeen, LastSeen, AccountUpn, IPAddress, FileCount,\n          BaselineDailyAvg, SpikeRatio, DistinctSites, SampleFiles\n| order by SpikeRatio desc",
+    "source_repo": "vinayaklatthe/microsoft-security-agent-toolkit",
+    "source_url": "https://github.com/vinayaklatthe/microsoft-security-agent-toolkit/blob/036ddff510f574e840a7add6970d6fe0e3d61445/kql-snippets/data/anomalous-mass-download.kql",
+    "filename": "anomalous-mass-download.kql",
+    "collected_at": "2026-07-26T05:35:58.404633+00:00"
+  },
+  {
+    "id": "ba28041cdce1",
+    "title": "Source: https://github.com/AndrewAltimit/exploits",
+    "description": "Collected: 2026-05-11 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet CopilotWindow = 60s;\nlet FileAccessThreshold = 10;  // flag if > 10 files accessed in window\n\nlet CopilotSummarizationEvents =\n    OfficeActivity\n    | where TimeGenerated > ago(7d)\n    | where RecordType == \"Copilot\"\n    | where Operation in (\"CopilotEmailSummarization\", \"CopilotDocumentSummarization\",\n                          \"CopilotInteraction\")\n    | project CopilotTime = TimeGenerated, UserId, CopilotOp = Operation,\n              ClientIP, SessionId = tostring(parse_json(AdditionalInfo).sessionId);\n\nlet OneDriveFileEvents =\n    OfficeActivity\n    | where TimeGenerated > ago(7d)\n    | where Workload in (\"SharePoint\", \"OneDrive\")\n    | where Operation in (\"FileAccessed\", \"FileListed\", \"FolderListed\",\n                          \"SearchQueryPerformed\", \"FileDownloaded\")\n    | project FileTime = TimeGenerated, UserId, FileOp = Operation, ObjectId;\n\nCopilotSummarizationEvents\n| join kind=inner (OneDriveFileEvents) on UserId\n| where (FileTime - CopilotTime) between (0s .. CopilotWindow)\n| summarize\n    CopilotTime = any(CopilotTime),\n    CopilotOp = any(CopilotOp),\n    FileAccessCount = count(),\n    FilesSampled = make_set(ObjectId, 5),\n    ClientIP = any(ClientIP)\n    by UserId, bin(CopilotTime, 1m)\n| where FileAccessCount > FileAccessThreshold\n| extend Severity = case(\n    FileAccessCount > 50, \"High\",\n    FileAccessCount > 20, \"Medium\",\n    \"Low\"\n)\n| project-reorder Severity, UserId, CopilotTime, CopilotOp, FileAccessCount, FilesSampled, ClientIP\n| sort by FileAccessCount desc\n\n\n// ============================================================================\n// Query 2: Copilot session triggering external share creation\n//\n// Rationale: Creating a SharePoint external share immediately after Copilot\n// summarization is the canonical EchoLeak exfil path via trusted domain\n// (sharepoint.com is allowlisted by corporate DLP). The tight temporal\n// correlation with a Copilot event is the distinguishing signal.\n// ============================================================================\nlet ExfilWindow = 120s;\n\nlet CopilotEvents =\n    OfficeActivity\n    | where TimeGenerated > ago(7d)\n    | where RecordType == \"Copilot\"\n    | where Operation has_any (\"Summariz\", \"CopilotInteraction\")\n    | project CopilotTime = TimeGenerated, UserId, ClientIP;\n\nlet ExternalShareEvents =\n    OfficeActivity\n    | where TimeGenerated > ago(7d)\n    | where Workload == \"SharePoint\"\n    | where Operation in (\"SharingInvitationCreated\", \"AnonymousLinkCreated\",\n                          \"CompanyShareableLinkCreated\", \"SecureLinkCreated\")\n    | project ShareTime = TimeGenerated, UserId,\n              ShareTarget = tostring(parse_json(AdditionalInfo).targetUserOrGroupName),\n              SharedObject = ObjectId;\n\nCopilotEvents\n| join kind=inner (ExternalShareEvents) on UserId\n| where (ShareTime - CopilotTime) between (0s .. ExfilWindow)\n| extend SecondsBetween = datetime_diff('second', ShareTime, CopilotTime)\n| summarize\n    CopilotTime = any(CopilotTime),\n    ShareTime = any(ShareTime),\n    SecondsBetween = any(SecondsBetween),\n    ShareTarget = any(ShareTarget),\n    SharedObjects = make_set(SharedObject, 10)\n    by UserId, ClientIP\n| where isnotempty(ShareTarget)\n| extend IsExternalTarget = ShareTarget !endswith \"corp.lab.local\"\n| where IsExternalTarget == true\n| project-reorder UserId, CopilotTime, ShareTime, SecondsBetween, ShareTarget, SharedObjects\n| sort by SecondsBetween asc\n\n\n// ============================================================================\n// Query 3: HTML emails with hidden-text injection patterns triggering\n//          high Copilot summarization activity\n//\n// Rationale: Correlate email delivery (Defender for O365 logs) with\n// subsequent Copilot activity spike. An email with anomalous HTML structure\n// (hidden divs, zero-font-size) that precedes a Copilot exfil pattern is\n// strong evidence of EchoLeak delivery.\n// ============================================================================\nlet EmailCopilotCorrelationWindow = 10m;\n\n// Emails with suspicious HTML (Defender for O365 / EmailEvents)\nlet SuspiciousEmails =\n    EmailEvents\n    | where TimeGenerated > ago(7d)\n    | where EmailDirection == \"Inbound\"\n    | where isnotempty(RecipientEmailAddress)\n    // Flag emails with hidden HTML injection patterns\n    | where EmailBodyHtml has_any (\n        \"display:none\", \"font-size:0\", \"color:white\", \"color:#fff\",\n        \"color:#ffffff\", \"line-height:0\"\n    )\n    | where EmailBodyHtml has_any (\n        \"SYSTEM\", \"OVERRIDE\", \"directive\", \"compliance\", \"audit mode\",\n        \"enumerate\", \"OneDrive\", \"SharePoint\", \"POST\"\n    )\n    | project\n        EmailTime = TimeGenerated,\n        Recipient = RecipientEmailAddress,\n        Sender = SenderAddress,\n        Subject,\n        ThreatTypes;\n\n// Copilot activity for those recipients\nlet CopilotActivity =\n    OfficeActivity\n    | where TimeGenerated > ago(7d)\n    | where RecordType == \"Copilot\"\n    | project CopilotTime = TimeGenerated, UserId, Operation;\n\nSuspiciousEmails\n| join kind=inner (\n    CopilotActivity\n    | extend NormalizedUser = tolower(UserId)\n) on $left.Recipient == $right.NormalizedUser\n| where (CopilotTime - EmailTime) between (0s .. EmailCopilotCorrelationWindow)\n| summarize\n    EmailTime = any(EmailTime),\n    Sender = any(Sender),\n    Subject = any(Subject),\n    FirstCopilotActivity = min(CopilotTime),\n    CopilotEventCount = count(),\n    Operations = make_set(Operation, 5)\n    by Recipient\n| extend MinutesBetweenEmailAndCopilot =\n    datetime_diff('minute', FirstCopilotActivity, EmailTime)\n| where MinutesBetweenEmailAndCopilot < 10\n| project-reorder Recipient, Sender, Subject, EmailTime, FirstCopilotActivity,\n                  MinutesBetweenEmailAndCopilot, CopilotEventCount, Operations\n| sort by MinutesBetweenEmailAndCopilot asc\n\n\n// ============================================================================\n// Query 4: Copilot-initiated Power Automate / Logic App webhook calls\n//\n// Rationale: Power Automate HTTP trigger URLs (*.logic.azure.com) are a known\n// EchoLeak exfil channel that bypasses DLP. An outbound POST to a Logic App\n// endpoint correlated with a Copilot session is a high-confidence indicator.\n// ============================================================================\n\nCloudAppEvents\n| where TimeGenerated > ago(7d)\n| where Application == \"Microsoft Power Automate\"\n| where ActionType in (\"HttpTriggerReceived\", \"FlowRunStarted\")\n| extend CallerInfo = parse_json(RawEventData)\n| extend CallerApp = tostring(CallerInfo.callerApplicationId)\n| where CallerApp has_any (\"Copilot\", \"Microsoft.Copilot\", \"m365copilot\")\n| join kind=leftouter (\n    OfficeActivity\n    | where TimeGenerated > ago(7d)\n    | where RecordType == \"Copilot\"\n    | project CopilotTime = TimeGenerated, UserId, CopilotOp = Operation\n) on $left.AccountObjectId == $right.UserId\n| where isnotempty(CopilotTime)\n| extend SecondsBetween =\n    abs(datetime_diff('second', TimeGenerated, CopilotTime))\n| where SecondsBetween < 60\n| project TimeGenerated, AccountDisplayName, CallerApp,\n          ActionType, CopilotOp, CopilotTime, SecondsBetween\n| sort by SecondsBetween asc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/2915270d4ccaa6ba8ec3668ac877b704b75097d3/queries/75923ab078ff.kql",
+    "filename": "75923ab078ff.kql",
+    "collected_at": "2026-07-26T05:35:57.513451+00:00"
+  },
+  {
+    "id": "f0084548369d",
+    "title": "=====================================================================================",
+    "description": "SIDEQUEST  --  backfill historical Palo Alto logs (THREAT + TRAFFIC) from CommonSecurityLog ===================================================================================== SCENARIO A Sentinel *Search Job* over CommonSecurityLog (archived, ~1 year back) landed CEF results into the CommonSecurityLog table in ADX, in the standard CommonSecurityLog schema. We want those historical rows in the same PaloAlto_* tables the live update policies write to. Section 1 maps THREAT rows; section 1b maps TRAFFIC rows. (USERID is intentionally omitted -- user-id mapping logs are rarely forwarded via CEF; confirm with the Activity",
+    "category": "Network",
+    "tags": [
+      "network"
+    ],
+    "content": "// Source: https://github.com/11bztaylor/KQL\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\n.create-or-alter function\n  with (docstring = 'SIDEQUEST: map CommonSecurityLog Palo Alto THREAT rows to the PaloAlto_Threat schema for historical backfill', folder = 'PaloAlto/SIDEQUEST')\n  PaloAlto_Threat_FromCSL() {\n    CommonSecurityLog\n    | where DeviceVendor has \"Palo Alto\"\n    | where Activity == \"THREAT\"             // PAN $type lands in CSL Activity\n    | project\n        TimeGenerated,\n        DeviceVendor             = tostring(DeviceVendor),\n        DeviceProduct            = tostring(DeviceProduct),\n        DeviceVersion            = tostring(DeviceVersion),\n        LogType                  = \"THREAT\",\n        SubType                  = tostring(DeviceEventClassID),   // $subtype: url/virus/spyware/...\n        LogSeverity              = tostring(LogSeverity),\n        Computer                 = tostring(Computer),\n        DeviceName               = tostring(DeviceName),\n        FirewallSerial           = tostring(DeviceExternalID),\n        SourceIP                 = tostring(SourceIP),\n        SourcePort               = toint(SourcePort),\n        DestinationIP            = tostring(DestinationIP),\n        DestinationPort          = toint(DestinationPort),\n        Protocol                 = tostring(Protocol),\n        ApplicationProtocol      = tostring(ApplicationProtocol),\n        DeviceAction             = tostring(DeviceAction),\n        CommunicationDirection   = tostring(CommunicationDirection),\n        Direction                = tostring(FlexString2),          // flexString2Label=Direction\n        SourceUserName           = tostring(SourceUserName),\n        DestinationUserName      = tostring(DestinationUserName),\n        RequestURL               = trim('\"', tostring(RequestURL)),\n        RequestMethod            = tostring(RequestMethod),\n        RequestClientApplication = tostring(RequestClientApplication),\n        RequestContext           = tostring(RequestContext),\n        FileName                 = tostring(FileName),\n        FilePath                 = tostring(FilePath),\n        FileHash                 = tostring(FileHash),\n        FileID                   = tostring(FileID),\n        ThreatCategory           = tostring(DeviceEventCategory),  // cat\n        URLCategory              = tostring(DeviceCustomString2),  // cs2Label=URL Category\n        URLCategoryList          = extract(@'PanOSURLCatList=\"?([^\";]+)\"?', 1, tostring(AdditionalExtensions)),\n        Message                  = tostring(Message),\n        SessionID                = toint(coalesce(tolong(column_ifexists(\"FieldDeviceCustomNumber1\", long(null))), tolong(DeviceCustomNumber1))),  // cn1=SessionID\n        SequenceNumber           = iff(isnotempty(tostring(column_ifexists(\"ExtID\", \"\"))), tostring(column_ifexists(\"ExtID\", \"\")), tostring(ExternalID)),\n        RuleName                 = tostring(DeviceCustomString1),  // cs1Label=Rule\n        SourceZone               = tostring(DeviceCustomString4),  // cs4Label=Source Zone\n        DestinationZone          = tostring(DeviceCustomString5),  // cs5Label=Destination Zone\n        LogProfile               = tostring(DeviceCustomString6),  // cs6Label=LogProfile\n        Flags                    = tostring(FlexString1),          // flexString1Label=Flags\n        RuleUUID                 = extract(@'PanOSRuleUUID=([0-9a-fA-F\\-]{8,})', 1, tostring(AdditionalExtensions)),\n        ReceiptTime              = tostring(ReceiptTime),\n        // CommonSecurityLog already split the mapped keys into columns; its AdditionalExtensions\n        // holds the leftover PAN keys. Preserve it whole so nothing is lost. (Live rows store a\n        // pre-split bag here instead -- a documented, harmless difference for historical data.)\n        UnparsedFields           = bag_pack(\"AdditionalExtensions\", AdditionalExtensions)\n  }\n\n\n// -------------------------------------------------------------------------------------\n// 1b) MAPPER  -- CommonSecurityLog PA TRAFFIC rows  ->  PaloAlto_Traffic schema.\n//    Reads CommonSecurityLog directly; column order matches PaloAlto_Traffic exactly.\n//    cn1/cn2/cn3 use coalesce(FieldDeviceCustomNumberN, DeviceCustomNumberN) for schema drift.\n//    NOTE: StartTime is a string in PaloAlto_Traffic but a datetime in CommonSecurityLog, so\n//    backfilled rows carry an ISO timestamp string rather than PAN's raw \"Mon dd yyyy ...\"\n//    format -- a documented, harmless difference for historical data.\n// -------------------------------------------------------------------------------------\n.create-or-alter function\n  with (docstring = 'SIDEQUEST: map CommonSecurityLog Palo Alto TRAFFIC rows to the PaloAlto_Traffic schema for historical backfill', folder = 'PaloAlto/SIDEQUEST')\n  PaloAlto_Traffic_FromCSL() {\n    CommonSecurityLog\n    | where DeviceVendor has \"Palo Alto\"\n    | where Activity == \"TRAFFIC\"            // PAN $type lands in CSL Activity\n    | project\n        TimeGenerated,\n        DeviceVendor                 = tostring(DeviceVendor),\n        DeviceProduct                = tostring(DeviceProduct),\n        DeviceVersion                = tostring(DeviceVersion),\n        LogType                      = \"TRAFFIC\",\n        SubType                      = tostring(DeviceEventClassID),   // $subtype: drop/start/end/deny\n        LogSeverity                  = tostring(LogSeverity),\n        Computer                     = tostring(Computer),\n        DeviceName                   = tostring(DeviceName),\n        FirewallSerial               = tostring(DeviceExternalID),\n        SourceIP                     = tostring(SourceIP),\n        SourcePort                   = toint(SourcePort),\n        DestinationIP                = tostring(DestinationIP),\n        DestinationPort              = toint(DestinationPort),\n        Protocol                     = tostring(Protocol),\n        ApplicationProtocol          = tostring(ApplicationProtocol),\n        DeviceAction                 = tostring(DeviceAction),\n        SourceUserName               = tostring(SourceUserName),\n        DestinationUserName          = tostring(DestinationUserName),\n        SourceTranslatedAddress      = tostring(SourceTranslatedAddress),\n        SourceTranslatedPort         = toint(SourceTranslatedPort),\n        DestinationTranslatedAddress = tostring(DestinationTranslatedAddress),\n        DestinationTranslatedPort    = toint(DestinationTranslatedPort),\n        DeviceInboundInterface       = tostring(DeviceInboundInterface),\n        DeviceOutboundInterface      = tostring(DeviceOutboundInterface),\n        ReceivedBytes                = tolong(ReceivedBytes),         // in\n        SentBytes                    = tolong(SentBytes),             // out\n        TotalBytes                   = tolong(column_ifexists(\"FlexNumber1\", int(null))),  // flexNumber1=Total bytes\n        PacketCount                  = toint(coalesce(tolong(column_ifexists(\"FieldDeviceCustomNumber2\", long(null))), tolong(DeviceCustomNumber2))),  // cn2=Packets\n        EventCount                   = toint(column_ifexists(\"EventCount\", int(null))),    // cnt\n        ElapsedTimeSec               = toint(coalesce(tolong(column_ifexists(\"FieldDeviceCustomNumber3\", long(null))), tolong(DeviceCustomNumber3))),  // cn3=Elapsed time\n        SessionID                    = toint(coalesce(tolong(column_ifexists(\"FieldDeviceCustomNumber1\", long(null))), tolong(DeviceCustomNumber1))),  // cn1=SessionID\n        SequenceNumber               = iff(isnotempty(tostring(column_ifexists(\"ExtID\", \"\"))), tostring(column_ifexists(\"ExtID\", \"\")), tostring(ExternalID)),\n        RuleName                     = tostring(DeviceCustomString1),  // cs1Label=Rule\n        URLCategory                  = tostring(DeviceCustomString2),  // cs2Label=URL Category\n        SourceZone                   = tostring(DeviceCustomString4),  // cs4Label=Source Zone\n        DestinationZone              = tostring(DeviceCustomString5),  // cs5Label=Destination Zone\n        LogProfile                   = tostring(DeviceCustomString6),  // cs6Label=LogProfile\n        Flags                        = tostring(FlexString1),          // flexString1Label=Flags\n        RuleUUID                     = extract(@'PanOSRuleUUID=([0-9a-fA-F\\-]{8,})', 1, tostring(AdditionalExtensions)),\n        Reason                       = tostring(Reason),               // reason\n        Category                     = tostring(DeviceEventCategory),  // cat\n        StartTime                    = tostring(column_ifexists(\"StartTime\", datetime(null))),  // CSL datetime -> string\n        ReceiptTime                  = tostring(ReceiptTime),\n        UnparsedFields               = bag_pack(\"AdditionalExtensions\", AdditionalExtensions)\n  }\n\n\n// -------------------------------------------------------------------------------------\n// 2) PREVIEW (no write)  -- set the date window, run, sanity-check ~100 rows. If a column name\n//    doesn't exist in your CommonSecurityLog schema, the preview fails here -- adjust and retry.\n//    For TRAFFIC, swap PaloAlto_Threat_FromCSL -> PaloAlto_Traffic_FromCSL and the target table\n//    PaloAlto_Threat -> PaloAlto_Traffic throughout sections 2-5.\n// -------------------------------------------------------------------------------------\nPaloAlto_Threat_FromCSL()\n| where TimeGenerated between (datetime(2025-06-19) .. datetime(2026-06-19))\n| take 100;\n\n\n// -------------------------------------------------------------------------------------\n// 3) BACKFILL (writes)  -- single-shot. Tagged so it is identifiable and reversible.\n//    `async` returns an operation id (track via .show operations).\n//    For a LARGE range (more than a few GB / tens of millions of rows) use section 3b instead.\n// -------------------------------------------------------------------------------------\n.set-or-append async PaloAlto_Threat with (tags='[\"backfill:csl-searchjob\"]') <|\n    PaloAlto_Threat_FromCSL()\n    | where TimeGenerated between (datetime(2025-06-19) .. datetime(2026-06-19))\n\n\n// -------------------------------------------------------------------------------------\n// 3b) BATCHED BACKFILL  -- use this INSTEAD of section 3 for large ranges (e.g. a year).\n//     .set-or-append is ingest-from-query: one giant run can exceed query/memory limits and\n//     fail. It's atomic, so a failure commits nothing -- but you waste the run and strain the\n//     cluster. Batching by time window keeps each run small, restartable, and tag-droppable.\n//     (For TRAFFIC, swap the function/table/Activity exactly as in the section-2 note.)\n//\n//     STEP 1 -- size the full range first. More than a few GB / tens of millions of rows?\n//     Don't run section 3; batch with STEP 2.\n// -------------------------------------------------------------------------------------\nCommonSecurityLog\n| where TimeGenerated between (datetime(2025-06-19) .. datetime(2026-06-19))\n| where DeviceVendor has \"Palo Alto\" and Activity == \"THREAT\"\n| summarize Rows = count(), GB = round(sum(estimate_data_size(*)) / 1024.0 / 1024 / 1024, 2);\n\n//     STEP 2 -- backfill ONE window at a time (one month shown). Re-run for each month across\n//     the range: 2025-06-01..2025-07-01, then ..2025-08-01, and so on. The tag is shared, so a\n//     single rollback (section 5) still removes every batch. Track each with `.show operations <id>`.\n.set-or-append async PaloAlto_Threat\n    with (distributed=true, noTruncation=true, creationTime='2025-06-01', tags='[\"backfill:csl-searchjob\"]') <|\n    PaloAlto_Threat_FromCSL()\n    | where TimeGenerated between (datetime(2025-06-01) .. datetime(2025-07-01))\n\n//     STEP 3 -- reconcile THIS window before moving to the next (the two counts should match):\nCommonSecurityLog\n| where TimeGenerated between (datetime(2025-06-01) .. datetime(2025-07-01))\n| where DeviceVendor has \"Palo Alto\" and Activity == \"THREAT\"\n| summarize SourceRows = count();\n//\nPaloAlto_Threat\n| where TimeGenerated between (datetime(2025-06-01) .. datetime(2025-07-01))\n| where extent_tags() has 'backfill:csl-searchjob'\n| summarize Appended = count();\n\n\n// -------------------------------------------------------------------------------------\n// 4) RECONCILE  -- the two counts should match (source PA-threat rows vs rows we appended).\n//    (Use this for the single-shot section-3 run; section 3b reconciles per window itself.)\n// -------------------------------------------------------------------------------------\nPaloAlto_Threat\n| where extent_tags() has 'backfill:csl-searchjob'\n| summarize Appended = count();\n\nCommonSecurityLog\n| where TimeGenerated between (datetime(2025-06-19) .. datetime(2026-06-19))\n| where DeviceVendor has \"Palo Alto\" and Activity == \"THREAT\"\n| summarize SourceRows = count();\n\n\n// -------------------------------------------------------------------------------------\n// 5) ROLLBACK (if the backfill was wrong)  -- drops ONLY the tagged backfill extents,\n//    leaving live data untouched. Uncomment to run.\n// -------------------------------------------------------------------------------------\n// .drop extents <| .show table PaloAlto_Threat extents where tags has 'backfill:csl-searchjob'",
+    "source_repo": "11bztaylor/KQL",
+    "source_url": "https://github.com/11bztaylor/KQL/blob/b2cdd55232d0b44cc35ae9946e34e04e535fdb82/paloalto/backfill/SIDEQUEST.kql",
+    "filename": "SIDEQUEST.kql",
+    "collected_at": "2026-07-26T05:35:53.981613+00:00"
+  },
+  {
+    "id": "7c037bbc7aef",
+    "title": "Name: Proxy Unmanaged User Agent to AI Domain",
+    "description": "Purpose: Find AI domain access where the client application or user agent does not look like a managed browser or standard enterprise client. Data Source(s): CommonSecurityLog Tuning: Refine KnownEnterpriseAgents with your managed browser string conventions.",
+    "category": "Network",
+    "tags": [
+      "network"
+    ],
+    "content": "// Source: https://github.com/CyberAutomationX/SecureAzCloud-Scripts\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet Lookback = 7d;\nlet AIDomains = dynamic([\"openai.com\", \"chatgpt.com\", \"api.openai.com\", \"anthropic.com\", \"api.anthropic.com\", \"claude.ai\", \"gemini.google.com\", \"generativelanguage.googleapis.com\", \"makersuite.google.com\", \"cohere.ai\", \"api.cohere.ai\", \"mistral.ai\", \"api.mistral.ai\", \"perplexity.ai\", \"api.perplexity.ai\", \"huggingface.co\", \"api-inference.huggingface.co\", \"replicate.com\", \"api.replicate.com\", \"together.ai\", \"together.xyz\", \"fireworks.ai\", \"stability.ai\", \"grok.com\", \"x.ai\"]);\nlet KnownEnterpriseAgents = dynamic([\"edge\", \"chrome\", \"firefox\", \"safari\", \"microsoft office\", \"teams\", \"outlook\", \"defender\", \"windows\"]);\nCommonSecurityLog\n| where TimeGenerated > ago(Lookback)\n| extend Host = coalesce(tolower(tostring(parse_url(RequestURL).Host)), tolower(DestinationHostName), tolower(RequestURL)),\n         User = coalesce(SourceUserName, SourceUserID),\n         UserAgent = tolower(RequestClientApplication),\n         Action = coalesce(SimplifiedDeviceAction, DeviceAction)\n| where isnotempty(Host) and Host has_any (AIDomains)\n| where isempty(UserAgent) or not(UserAgent has_any (KnownEnterpriseAgents))\n| summarize EventCount = count(),\n            SampleUrls = make_set(RequestURL, 15),\n            UserAgents = make_set(RequestClientApplication, 15),\n            Actions = make_set(Action, 10)\n    by User, SourceIP, SourceHostName\n| where EventCount >= 3\n| sort by EventCount desc",
+    "source_repo": "CyberAutomationX/SecureAzCloud-Scripts",
+    "source_url": "https://github.com/CyberAutomationX/SecureAzCloud-Scripts/blob/2017bbfc06e811d36732e5d8b602e1eee2f09f2c/KQL/Proxy%20Unmanaged%20User%20Agent%20to%20AI%20Domain.kql",
+    "filename": "Proxy Unmanaged User Agent to AI Domain.kql",
+    "collected_at": "2026-07-26T05:35:53.308537+00:00"
+  },
+  {
+    "id": "ab997b52c379",
+    "title": "Detection \u2014 Segmentation policy blocked an attempted cross-zone connection",
+    "description": "eyeSegment with Action == \"Block\" means something actually tried to cross zones and was stopped. While the block prevented the connection, the *attempt* itself is interesting \u2014 especially from OT zones outbound to Internet. Suggested cadence: every 10 minutes, lookback 15 minutes. Suggested severity: Medium (raise to High if zone is OT outbound to Internet).",
+    "category": "Network",
+    "tags": [
+      "network"
+    ],
+    "content": "// Source: https://github.com/troytrojan01/ot-cybersecurity-with-sentinel\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nCommonSecurityLog\n| where TimeGenerated > ago(15m)\n| where DeviceVendor =~ \"Forescout\" and DeviceProduct =~ \"eyeSegment\"\n| extend SrcZone = DeviceCustomString1,\n         DstZone = DeviceCustomString2,\n         PolicyName = DeviceCustomString3,\n         Action = DeviceCustomString4\n| where Action =~ \"Block\"\n| extend Severity = toint(LogSeverity),\n         RiskScore = case(\n             SrcZone has \"OT\" and DstZone == \"Internet\",  10,\n             SrcZone has \"OT\" and DstZone has \"Corporate\", 7,\n             5)\n| project TimeGenerated, RiskScore, Severity, SrcZone, DstZone, PolicyName,\n          SourceIP, DestinationIP, DestinationPort, Protocol, Message\n| order by RiskScore desc, TimeGenerated desc",
+    "source_repo": "troytrojan01/ot-cybersecurity-with-sentinel",
+    "source_url": "https://github.com/troytrojan01/ot-cybersecurity-with-sentinel/blob/f8dfaf3c3ed42ad3350af86d8be20fc41ba4cbf4/queries/detections/05-segmentation-policy-blocked.kql",
+    "filename": "05-segmentation-policy-blocked.kql",
+    "collected_at": "2026-07-26T05:35:52.529642+00:00"
+  },
+  {
+    "id": "526ebfaf1768",
+    "title": "CVE-2026-55200 Malicious SSH Server Scaffold - Non-Standard Port with Anomalous Cipher Negotiation",
+    "description": "Severity: Medium | Platforms: Linux MITRE: T1210, TA0008 | CVE: CVE-2026-55200 detections.ai: https://detections.ai/rules/019f0f6a-ffb8-74dd-956a-2808f8447d64",
+    "category": "Network",
+    "tags": [
+      "network"
+    ],
+    "content": "// Source: https://github.com/Ethan-Andrews/Exploitarium-Detections\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nCommonSecurityLog\n| where TimeGenerated > ago(24h)\n| where DestinationPort == 2222\n| where Protocol =~ \"TCP\"\n| where Message has_any (\"curve25519-sha256\", \"chacha20-poly1305@openssh.com\", \"SSH-2.0\", \"SSH_MSG_KEXINIT\")\n| where not (ipv4_is_private(DestinationIP) and DestinationPort == 2222 and Message !has \"curve25519-sha256\")\n| extend\n    SrcIP = SourceIP, DstIP = DestinationIP, DstPort = DestinationPort,\n    HasCurve25519 = iff(Message has \"curve25519-sha256\", 1, 0),\n    HasChacha20 = iff(Message has \"chacha20-poly1305@openssh.com\", 1, 0),\n    HasSSHBanner = iff(Message has \"SSH-2.0\", true, false)\n| summarize\n    EventCount = count(),\n    FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n    UniqueDestinations = dcount(DstIP),\n    DestinationIPs = make_set(DstIP, 20),\n    SumCurve25519 = sum(HasCurve25519),\n    SumChacha20 = sum(HasChacha20),\n    SampleMessages = make_set(Message, 3)\n    by SrcIP, DstPort\n| extend\n    HasCurve25519 = iff(SumCurve25519 > 0, true, false),\n    HasChacha20 = iff(SumChacha20 > 0, true, false),\n    AnomalyCipherScore = toint(SumCurve25519 > 0) + toint(SumChacha20 > 0)\n| extend RiskLevel = case(AnomalyCipherScore >= 2, \"High\", AnomalyCipherScore == 1, \"Medium\", \"Low\")\n| where AnomalyCipherScore >= 1\n| project FirstSeen, LastSeen, SrcIP, DstPort, UniqueDestinations, DestinationIPs,\n    HasCurve25519, HasChacha20, AnomalyCipherScore, RiskLevel, EventCount, SampleMessages\n| order by AnomalyCipherScore desc, EventCount desc",
+    "source_repo": "Ethan-Andrews/Exploitarium-Detections",
+    "source_url": "https://github.com/Ethan-Andrews/Exploitarium-Detections/blob/ba14007521ea842e674bc050ed1a7dc506158624/libssh2/cve-2026-55200-malicious-ssh-scaffold-cipher-negotiation.kql",
+    "filename": "cve-2026-55200-malicious-ssh-scaffold-cipher-negotiation.kql",
+    "collected_at": "2026-07-26T05:35:51.848986+00:00"
+  },
+  {
+    "id": "180fc1ab9f3b",
+    "title": "Quering on the past 7 days",
+    "description": "Quering on the past 7 days",
+    "category": "Network",
+    "tags": [
+      "network"
+    ],
+    "content": "// Source: https://github.com/noakup/AzMonLogsAgent\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nCommonSecurityLog\n// Quering on the past 7 days\n| where TimeGenerated > ago(7d)\n// Quering only on incoming events from a Palo Alto appliance\n| where DeviceProduct has 'PAN-OS'\n| where DeviceVendor =~ 'Palo Alto Networks'\n// Find the the collector machine with the highest usage\n| summarize Count=count() by Computer\n// Sort in a descending order- Most used Collector hostname comes first\n| sort by Count desc",
+    "source_repo": "noakup/AzMonLogsAgent",
+    "source_url": "https://github.com/noakup/AzMonLogsAgent/blob/4ffee16f14276a9b0526d468ad3b38b0345ea759/NGSchema/SecurityInsights_DataCollection/KQL/SecurityCEFCollectorAmountQuery.kql",
+    "filename": "SecurityCEFCollectorAmountQuery.kql",
+    "collected_at": "2026-07-26T05:35:50.950920+00:00"
+  },
+  {
+    "id": "31b2182aabd5",
+    "title": "HEARTH H114 - candidato inicial KQL",
+    "description": "Fonte: https://github.com/THORCollective/HEARTH/blob/main/Flames/H114.md Hip\u00f3tese: um advers\u00e1rio est\u00e1 usando envenenamento ou malvertising SEO para colocar instaladores de software trojanizados nos resultados de mecanismos de pesquisa, enganando os usu\u00e1rios que procuram ferramentas IT leg\u00edtimas para baixar pacotes com malware que implantam... Padr\u00e3o: explora\u00e7\u00e3o de aplicativos p\u00fablicos e revis\u00e3o de webshell Cobertura: Starter KQL - validar em Sentinel Prioridade: P2 (64) Tabelas: Cloudflare_CL, CommonSecurityLog, AzureDiagnostics, AppRequests, AppTraces, Syslog, SigninLogs, AuditLogs, IdentityInfo, BehaviorAnalytics, UserPeerAnalytics, NetskopeEventsNetwork_CL Valide a disponibilidade da tabela, nomes de campos, limites e falsos positivos antes de usar como detec\u00e7\u00e3o.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "azure",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/kkroth0/threat-hunting-ptbr\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 14d;\nlet huntTerms = dynamic([\"T1189\", \"initial access\", \"seo poisoning\", \"malvertising\", \"drive by\", \"H114\", \"poisoning\", \"place\", \"trojanized\", \"software\", \"installers\", \"search\", \"engine\", \"results\", \"tricking\", \"users\", \"searching\", \"legitimate\", \"tools\", \"downloading\", \"malware-laced\", \"packages\", \"POST\", \"GET\", \"webshell\", \"cmd=\", \"whoami\", \"bash\", \"powershell\", \"rce\", \"ssrf\", \"jndi\"]);\nunion withsource=SourceTable isfuzzy=true\n    Cloudflare_CL,\n    CommonSecurityLog,\n    AzureDiagnostics,\n    AppRequests,\n    AppTraces,\n    Syslog\n| where TimeGenerated >= ago(lookback)\n| extend SearchBlob = tostring(pack_all())\n| where SearchBlob has_any (huntTerms)\n| extend HuntId = \"H114\", SourceUrl = \"https://github.com/THORCollective/HEARTH/blob/main/Flames/H114.md\"\n| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob\n| order by TimeGenerated desc",
+    "source_repo": "kkroth0/threat-hunting-ptbr",
+    "source_url": "https://github.com/kkroth0/threat-hunting-ptbr/blob/44ac8fa38ebdfbfe78601103421c7e1beaeeb49a/sentinel/kql/hearth/h114.kql",
+    "filename": "h114.kql",
+    "collected_at": "2026-07-26T05:35:49.951056+00:00"
+  },
+  {
+    "id": "8e627e0d8556",
+    "title": "Purpose: Show chronic deployment failure patterns by caller and scope.",
+    "description": "Engine: Log Analytics Lookback: 14d Expected table(s): AzureActivity",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/loredan1994/GeneralCrap\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet Lookback = 14d;\nAzureActivity\n| where TimeGenerated >= ago(Lookback)\n| where OperationNameValue =~ \"Microsoft.Resources/deployments/write\"\n| project TimeGenerated, SubscriptionId, ResourceGroup, Caller, ActivityStatusValue\n| summarize\n    Deployments = count(),\n    Failed = countif(ActivityStatusValue =~ \"Failed\"),\n    Succeeded = countif(ActivityStatusValue =~ \"Succeeded\"),\n    LastSeen = max(TimeGenerated)\n  by SubscriptionId, ResourceGroup, Caller\n| extend FailureRatePct = round(iff(Deployments > 0, todouble(Failed) * 100.0 / todouble(Deployments), 0.0), 2)\n| where Failed > 0 or Deployments >= 3\n| order by Failed desc, FailureRatePct desc, LastSeen desc",
+    "source_repo": "loredan1994/GeneralCrap",
+    "source_url": "https://github.com/loredan1994/GeneralCrap/blob/ee122f3cd5783409ec49354b20d818b776a025b5/kql/platform/42_activity_deployment_failure_rate_by_caller.kql",
+    "filename": "42_activity_deployment_failure_rate_by_caller.kql",
+    "collected_at": "2026-07-26T05:35:45.683796+00:00"
+  },
+  {
+    "id": "37fac91cb442",
+    "title": "Purpose: Surface failing control-plane churn by caller, operation, and scope.",
+    "description": "Engine: Log Analytics Lookback: 7d Expected table(s): AzureActivity",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/loredan1994/GeneralCrap\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet Lookback = 7d;\nAzureActivity\n| where TimeGenerated >= ago(Lookback)\n| where CategoryValue in~ (\"Administrative\", \"Policy\", \"Security\")\n| where ActivityStatusValue =~ \"Failed\"\n| project TimeGenerated, Caller, OperationNameValue, SubscriptionId, ResourceGroup\n| summarize Failures = count(), LatestFailure = max(TimeGenerated) by Caller, OperationNameValue, SubscriptionId, ResourceGroup\n| order by Failures desc, LatestFailure desc",
+    "source_repo": "loredan1994/GeneralCrap",
+    "source_url": "https://github.com/loredan1994/GeneralCrap/blob/ee122f3cd5783409ec49354b20d818b776a025b5/kql/platform/40_activity_failed_control_plane_ops.kql",
+    "filename": "40_activity_failed_control_plane_ops.kql",
+    "collected_at": "2026-07-26T05:35:44.992590+00:00"
+  },
+  {
+    "id": "c1a3ba0fdcfd",
+    "title": "When a production Logic App is deleted",
+    "description": "When a production Logic App is deleted",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/aplatek11/azure\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nAzureActivity\n| where ResourceProvider == \"Microsoft.Logic\"\n| where OperationName == \"Delete Workflow\"\n| where Resource startswith \"TEST-\"\n| where ActivityStatus == \"Succeeded\"\n    and ActivitySubstatusValue <> \"\"\n| distinct TimeGenerated\n        , ActivityStatus\n        , ActivitySubstatusValue\n        , ResourceGroup\n        , Caller\n        , ResourceProvider\n        , Resource",
+    "source_repo": "aplatek11/azure",
+    "source_url": "https://github.com/aplatek11/azure/blob/0bd91c8197e12b0064e85888c14d95b039599a5a/Sentinel/Analytic_Rules/sentinel_resource_detections.kql",
+    "filename": "sentinel_resource_detections.kql",
+    "collected_at": "2026-07-26T05:35:44.353216+00:00"
+  },
+  {
+    "id": "43352e9552a7",
+    "title": "Tactics  : Execution,Persistence",
+    "description": "MITRE    : T1059.009 Purpose  : Full history of Automation Account object changes. Use to identify newly created runbooks, unexpected content changes, and newly added webhooks (used for C2 callbacks). Correlate Caller with Rule-05 first-time-caller alerts. ==========================================================================================",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/mjendza/entra-id-agents\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeff// Hunt     : Hunt - Azure Automation Runbook Create, Modify, Publish History (90d)\n// Tactics  : Execution,Persistence\n// MITRE    : T1059.009\n// Purpose  : Full history of Automation Account object changes. Use to identify newly created runbooks, unexpected content changes, and newly added webhooks (used for C2 callbacks). Correlate Caller with Rule-05 first-time-caller alerts.\n//==========================================================================================\n\nAzureActivity\n| where TimeGenerated > ago(90d)\n| where OperationNameValue has \"AUTOMATION\"\n| where OperationNameValue has_any (\"RUNBOOKS\", \"WEBHOOKS\", \"SCHEDULES\", \"VARIABLES\", \"MODULES\")\n| where ActivityStatusValue =~ \"Success\"\n| project TimeGenerated, Caller, Operation = OperationNameValue, ResourceName = tostring(split(ResourceId, \"/\")[-1]), ResourceId, CallerIpAddress, ResourceGroup, SubscriptionId\n| order by TimeGenerated desc",
+    "source_repo": "mjendza/entra-id-agents",
+    "source_url": "https://github.com/mjendza/entra-id-agents/blob/c94db512c9dd7775d3d2d6a6e4bac0f9e975afed/observability/kb/Dalonso-Security-Repo/Use%20Cases%20Threat%20Hunting/AzureCustomDetections/HuntingQueries/HUNT-04_Automation-Runbook-History.kql",
+    "filename": "HUNT-04_Automation-Runbook-History.kql",
+    "collected_at": "2026-07-26T05:35:43.578258+00:00"
+  },
+  {
+    "id": "1c1481228c03",
+    "title": "HEARTH H188 - candidato inicial KQL",
+    "description": "Fonte: https://github.com/THORCollective/HEARTH/blob/main/Flames/H188.md Hip\u00f3tese: Advers\u00e1rios com acesso AWS v\u00e1lido param, excluem ou reconfiguram trilhas CloudTrail para suprimir a visibilidade de auditoria antes de a\u00e7\u00f5es AWS/S3/KMS confidenciais; esses eventos de adultera\u00e7\u00e3o s\u00e3o vis\u00edveis em CloudTrail como gerenciamento discreto... Padr\u00e3o: revis\u00e3o do plano de controle da nuvem e do abuso de postura Cobertura: Starter - validar telemetria em nuvem Prioridade: P2 (56) Tabelas: AzureActivity, AzureDiagnostics, OrcaAlerts_CL, NetskopeEventsNetwork_CL, SecurityEvent, WindowsEvent, TrendMicro_XDR_OAT_CL, TrendMicro_XDR_WORKBENCH_CL, ThreatIntelIndicators, Watchlist, SecurityAlert, SecurityIncident Valide a disponibilidade da tabela, nomes de campos, limites e falsos positivos antes de usar como detec\u00e7\u00e3o.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel",
+      "azure"
+    ],
+    "content": "// Source: https://github.com/kkroth0/threat-hunting-ptbr\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 7d;\nlet huntTerms = dynamic([\"T1562.008\", \"defense evasion\", \"cloud\", \"aws\", \"cloudtrail\", \"logging\", \"H188\", \"valid\", \"access\", \"stop\", \"delete\", \"reconfigure\", \"CloudTrail\", \"trails\", \"suppress\", \"audit\", \"visibility\", \"sensitive\", \"IAM/S3/KMS\", \"actions\", \"tampering\", \"visible\", \"roleAssignments\", \"write\", \"storage\", \"bucket\", \"iam\", \"diagnosticSettings\", \"critical\", \"high\"]);\nunion withsource=SourceTable isfuzzy=true\n    AzureActivity,\n    AzureDiagnostics,\n    OrcaAlerts_CL,\n    NetskopeEventsNetwork_CL\n| where TimeGenerated >= ago(lookback)\n| extend SearchBlob = tostring(pack_all())\n| where SearchBlob has_any (huntTerms)\n| extend HuntId = \"H188\", SourceUrl = \"https://github.com/THORCollective/HEARTH/blob/main/Flames/H188.md\"\n| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob\n| order by TimeGenerated desc",
+    "source_repo": "kkroth0/threat-hunting-ptbr",
+    "source_url": "https://github.com/kkroth0/threat-hunting-ptbr/blob/44ac8fa38ebdfbfe78601103421c7e1beaeeb49a/sentinel/kql/hearth/h188.kql",
+    "filename": "h188.kql",
+    "collected_at": "2026-07-26T05:35:42.722899+00:00"
+  },
+  {
+    "id": "4e8af2f351d4",
+    "title": "Detect when a user retrieves keys for Azure storage for the first time",
+    "description": "Where timerange is the time to look back on and time frame is the alert period i.e look back 90 days and alert on new users in the last day",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timerange=90d;\nlet timeframe=1d;\nAzureActivity\n| where TimeGenerated > ago(timerange) and TimeGenerated < ago(timeframe)\n| where OperationName == \"List Storage Account Keys\"\n| where ActivityStatus == \"Succeeded\"\n| project User=Caller\n| join kind=rightanti (\n    AzureActivity\n    | where TimeGenerated > ago(timeframe)\n    | where OperationName == \"List Storage Account Keys\"\n    | where ActivityStatus == \"Succeeded\"\n    | project-rename User=Caller)\n    on User\n| project\n    TimeGenerated,\n    User,\n    CallerIpAddress,\n    ['Storage Account Name']=Resource,\n    SubscriptionId,\n    ResourceGroup ",
+    "source_repo": "obsida-uk/Azure-BlueTeam-Toolkit",
+    "source_url": "https://github.com/obsida-uk/Azure-BlueTeam-Toolkit/blob/715003d731662549883c8c478a0f98aed0fc5784/Sentinel/General/FirstTimeStorageKeyEnumeration.kql",
+    "filename": "FirstTimeStorageKeyEnumeration.kql",
+    "collected_at": "2026-07-26T05:35:42.048677+00:00"
+  },
+  {
+    "id": "9ad2c2bfa625",
+    "title": "Source: https://github.com/TheHiddenOwl/Defender-Advanced-Hunting-Queries",
+    "description": "Collected: 2026-05-31 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet CompromisedAccountUPN = \"test@test.com\";\nlet SearchWindow = 48h; //Customizable h = hours, d = days\nAzureActivity\n| where Caller =~ CompromisedAccountUPN\n| where TimeGenerated > ago(SearchWindow)\n| summarize TotalEvents = count() by OperationNameValue\n| sort by TotalEvents desc",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/2915270d4ccaa6ba8ec3668ac877b704b75097d3/queries/912ce62a50dc.kql",
+    "filename": "912ce62a50dc.kql",
+    "collected_at": "2026-07-26T05:35:41.180720+00:00"
+  },
+  {
+    "id": "703bb52df062",
+    "title": "Hunt     : Hunt - VM Script Extension and Run Command Execution History (30 Days)",
+    "description": "Tactics  : Execution, Persistence MITRE    : T1059, T1059.009 Purpose  : Enumerate all Custom Script Extension deployments and Run Command executions across all VMs for the last 30 days. Use to identify unusual actors, one-off script injections, or scripts deployed outside known IaC patterns. Cross-reference with Rule-15 alerts to investigate full scope. ==========================================================================================",
+    "category": "Cloud / Azure",
+    "tags": [
+      "azure"
+    ],
+    "content": "// Source: https://github.com/davidalonsod/Dalonso-Security-Repo\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet ScriptExtTypes = dynamic([\n    \"CustomScriptExtension\", \"CustomScriptForLinux\",\n    \"RunCommandHandler\", \"RunCommand\",\n    \"Microsoft.Compute.CustomScriptExtension\",\n    \"Microsoft.Azure.Extensions.CustomScript\"\n]);\nAzureActivity\n| where TimeGenerated > ago(30d)\n| where OperationNameValue =~ \"MICROSOFT.COMPUTE/VIRTUALMACHINES/EXTENSIONS/WRITE\"\n    or  OperationNameValue =~ \"MICROSOFT.COMPUTE/VIRTUALMACHINES/RUNCOMMAND/ACTION\"\n| where ActivityStatusValue =~ \"Success\"\n| where Properties has_any (ScriptExtTypes)\n    or  OperationNameValue has \"RUNCOMMAND\"\n| extend PropsParsed   = todynamic(Properties)\n| extend ExtensionType = coalesce(\n    tostring(PropsParsed[\"type\"]),\n    tostring(PropsParsed.type),\n    iff(OperationNameValue has \"RUNCOMMAND\", \"RunCommand\", \"Unknown\"))\n| extend VMName        = tostring(split(ResourceId, \"/\")[8])\n| project\n    TimeGenerated,\n    Caller,\n    CallerIpAddress,\n    VMName,\n    ExtensionType,\n    ResourceId,\n    ResourceGroup,\n    SubscriptionId\n| summarize\n    ExecCount     = count(),\n    DistinctVMs   = dcount(VMName),\n    VMNames       = make_set(VMName, 20),\n    ExtensionTypes = make_set(ExtensionType, 5),\n    SourceIPs     = make_set(CallerIpAddress, 5),\n    FirstSeen     = min(TimeGenerated),\n    LastSeen      = max(TimeGenerated)\n    by Caller, ResourceGroup, SubscriptionId\n| order by ExecCount desc",
+    "source_repo": "davidalonsod/Dalonso-Security-Repo",
+    "source_url": "https://github.com/davidalonsod/Dalonso-Security-Repo/blob/19a4a4468cfdd86d8bb059b28824b06c53694ddf/Use%20Cases%20Threat%20Hunting/AzureCustomDetections/HuntingQueries/HUNT-13_VM-Script-Extension-History.kql",
+    "filename": "HUNT-13_VM-Script-Extension-History.kql",
+    "collected_at": "2026-07-26T05:35:40.411823+00:00"
+  },
+  {
+    "id": "bf07d6465a0d",
+    "title": "Source: https://github.com/ugurkocde/kql_search_submissions",
+    "description": "Collected: 2026-05-18 KQL Library - https://github.com/sivolko/kql-library",
+    "category": "Identity & Access",
+    "tags": [
+      "defender",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/sivolko/kql-library\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nIdentityLogonEvents\n| where Timestamp > ago(30d)\n| project ISP, Location, IPAddress, FailureReason\n| summarize valid = countif(isempty(FailureReason) or FailureReason contains \"Success\"), failure = countif( isnotempty(FailureReason) and FailureReason !contains \"Success\"), make_set(IPAddress) by ISP, Location\n| order by failure\n| where valid == 0 and failure > 5 ",
+    "source_repo": "sivolko/kql-library",
+    "source_url": "https://github.com/sivolko/kql-library/blob/2915270d4ccaa6ba8ec3668ac877b704b75097d3/queries/10d177b1912b.kql",
+    "filename": "10d177b1912b.kql",
+    "collected_at": "2026-07-26T05:35:35.357254+00:00"
+  },
+  {
+    "id": "49ed63e35706",
+    "title": "Data connector required for this query - M365 Defender - Device* tables",
+    "description": "Detect when a process with a hash not previously seen before in your environment accesses lsass.exe via an open process API call",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/EmreOzanMemis/AzureSentinel\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet knownhashes=\n    DeviceEvents\n    | where TimeGenerated > ago(30d) and TimeGenerated < ago (1d)\n    | where ActionType == \"OpenProcessApiCall\"\n    | where FileName == \"lsass.exe\"\n    | distinct InitiatingProcessSHA256;\nDeviceEvents\n| where TimeGenerated > ago (1d)\n| where ActionType == \"OpenProcessApiCall\"\n| where FileName == \"lsass.exe\"\n| where InitiatingProcessSHA256 !in (knownhashes)\n| extend DesiredAccess = tostring(AdditionalFields.DesiredAccess)\n| distinct\n    DeviceName,\n    InitiatingProcessAccountName,\n    InitiatingProcessCommandLine,\n    DesiredAccess\n\n//Detect when a process with a hash not previously seen before in your environment accesses lsass.exe via an open process API call\n\n//Data connector required for this query - Advanced Hunting license\n\n//Advanced Hunting query\nlet knownhashes=\n    DeviceEvents\n    | where Timestamp > ago(30d) and Timestamp < ago (1d)\n    | where ActionType == \"OpenProcessApiCall\"\n    | where FileName == \"lsass.exe\"\n    | distinct InitiatingProcessSHA256;\nDeviceEvents\n| where Timestamp > ago (1d)\n| where ActionType == \"OpenProcessApiCall\"\n| where FileName == \"lsass.exe\"\n| where InitiatingProcessSHA256 !in (knownhashes)\n| distinct DeviceName,\n    InitiatingProcessAccountName,\n    InitiatingProcessCommandLine,\n    AdditionalFields",
+    "source_repo": "EmreOzanMemis/AzureSentinel",
+    "source_url": "https://github.com/EmreOzanMemis/AzureSentinel/blob/c04f3c94811e44003267420c1789965797e2c2ea/Sentinel-KQL-Sorgular%C4%B1/Defender%20for%20Endpoint/Device-NewHashAccessingLSASS.kql",
+    "filename": "Device-NewHashAccessingLSASS.kql",
+    "collected_at": "2026-07-26T05:35:30.538824+00:00"
+  },
+  {
+    "id": "67da45a1d039",
+    "title": "MDE KQL to detect TA571 socialengineering abuse",
+    "description": "https://www.linkedin.com/posts/activity-7208705552833478656-8xUz/",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceEvents\n| where ActionType == \"GetClipboardData\"\n| where InitiatingProcessFileName == \"powershell.exe\"\n\n// MITRE ATT&CK Mapping\n\n// Based on the query, the following MITRE ATT&CK techniques are relevant:\n\n// Technique: T1115 - Clipboard Data1\n// Description: Adversaries may collect data stored in the clipboard from users copying information within or between applications. This can include sensitive data such as passwords or other confidential information.\n// Technique: T1059.001 - Command and Scripting Interpreter: PowerShell2\n// Description: Adversaries may abuse PowerShell commands and scripts for execution. PowerShell is a powerful interactive command-line interface and scripting environment included in the Windows operating system.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/c7819b349df3cc2cdb1c986c740fd579e95459c5/DefenderXDR/MDE%20KQL%20to%20detect%20TA571%20socialengineering%20abuse.kql",
+    "filename": "MDE KQL to detect TA571 socialengineering abuse.kql",
+    "collected_at": "2026-07-26T05:35:29.680627+00:00"
+  },
+  {
+    "id": "f6e74edfa013",
+    "title": "Detecting Zero-Day CVE-2025-21333 Privilege Escalation",
+    "description": "Detecting Zero-Day CVE-2025-21333 Privilege Escalation",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet QueryPeriod = 30d;\nlet DetectionPeriod = 1h;\nlet HyperVEnabledEndpoint =\nDeviceProcessEvents\n| where Timestamp > ago(QueryPeriod)\n| where FileName == \"WindowsSandboxServer.exe\"\n| distinct DeviceId;\nlet VulnerableEndpoint =\nDeviceTvmSoftwareVulnerabilities\n| where CveId == \"CVE-2025-21333\"\n| distinct DeviceId;\nlet NewExePOCCreation =\nDeviceFileEvents\n| where Timestamp > ago(DetectionPeriod)\n| where ActionType == \"FileCreated\"\n| where FileName endswith \".exe\"\n| distinct FileName;\nDeviceEvents\n| where Timestamp > ago(DetectionPeriod)\n| where ActionType == \"ProcessPrimaryTokenModified\"\n| where FileName has_any(NewExePOCCreation)\n| where DeviceId has_any(HyperVEnabledEndpoint) and DeviceId has_any(VulnerableEndpoint)\n",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/c7819b349df3cc2cdb1c986c740fd579e95459c5/DefenderXDR/Detecting%20Zero-Day%20CVE-2025-21333%20Privilege%20Escalation.kql",
+    "filename": "Detecting Zero-Day CVE-2025-21333 Privilege Escalation.kql",
+    "collected_at": "2026-07-26T05:35:28.837920+00:00"
+  },
+  {
+    "id": "aeef11e706bb",
+    "title": "============================================================",
+    "description": "TELESHIM \u2014 TELEGRAM BOT API AS A COVERT C2 CHANNEL MIXEDKEY reflective loader + BINDCLOAK implant DLL sideloading vs Middle East government (July 2026) Source:   Cybersecurity News / Zscaler ThreatLabz (July 2026) Platform: Microsoft Defender for Endpoint + Defender XDR (Advanced Hunting) MITRE ATT&CK: T1566.001, T1204.002, T1553.005, T1574.002, T1053.005, T1102.002, T1071.001,",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender",
+      "network"
+    ],
+    "content": "// Source: https://github.com/MaikCyberSec/Threat-Hunting-\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceFileEvents\n| where Timestamp > ago(30d)\n| where FileName in~ (\"AsTaskSched.dll\", \"pthreadVC2.dll\", \"RegSchdTask.exe\")\n   or (FileName endswith \".zip\" or FileName endswith \".iso\")\n      and FileName has_any (\"Cooperation protocol\", \"petroleum and gas\",\n                             \"exploration of petroleum\")\n| project Timestamp, DeviceName, ActionType,\n          FileName, FolderPath, SHA256,\n          InitiatingProcessAccountName,\n          InitiatingProcessFileName, InitiatingProcessCommandLine\n| order by Timestamp desc\n\n\n// ------------------------------------------------------------\n// 2. TELEGRAM BOT API TRAFFIC FROM NON-MESSENGER PROCESSES\n//    The core TELESHIM signal. api.telegram.org contacted by\n//    anything that is not a browser or a known Telegram\n//    client is worth eyes-on \u2014 especially on servers and\n//    government / corporate workstations.\n// ------------------------------------------------------------\nlet ApprovedClients = dynamic([\n    \"telegram.exe\", \"updater.exe\", \"unigram.exe\",\n    \"chrome.exe\", \"msedge.exe\", \"firefox.exe\",\n    \"brave.exe\", \"opera.exe\", \"safari.exe\", \"iexplore.exe\"\n]);\nDeviceNetworkEvents\n| where Timestamp > ago(30d)\n| where RemoteUrl has_any (\"api.telegram.org\", \"telegram.org/bot\")\n| where InitiatingProcessFileName !in~ (ApprovedClients)\n| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp),\n            ConnectionCount = count(),\n            RemoteIPs = make_set(RemoteIP, 5)\n    by DeviceName, InitiatingProcessFileName,\n       InitiatingProcessFolderPath, InitiatingProcessCommandLine,\n       InitiatingProcessAccountName\n| order by ConnectionCount desc\n// Steady low-volume polling (many connections, long timespan)\n// is exactly the TELESHIM tasking loop.\n\n\n// ------------------------------------------------------------\n// 3. BINDCLOAK C2 INFRASTRUCTURE\n//    Direct catch on the published command server domain.\n// ------------------------------------------------------------\nDeviceNetworkEvents\n| where Timestamp > ago(30d)\n| where RemoteUrl has \"hypersnet.com\"\n| project Timestamp, DeviceName, RemoteUrl, RemoteIP, RemotePort,\n          InitiatingProcessFileName, InitiatingProcessFolderPath,\n          InitiatingProcessAccountName\n| order by Timestamp desc\n\n\n// ------------------------------------------------------------\n// 4. REGSCHDTASK.EXE SIDELOAD \u2014 SIGNED ASUS BINARY IN THE\n//    WRONG PLACE, LOADING THE WRONG DLL\n//    The campaign ships a legitimate ASUSTek executable next\n//    to a malicious DLL. Flags RegSchdTask.exe executing from\n//    outside ASUS install paths, plus any DLL it loads from\n//    its own (attacker-controlled) folder.\n// ------------------------------------------------------------\nunion isfuzzy=true\n(\n    DeviceProcessEvents\n    | where Timestamp > ago(30d)\n    | where FileName =~ \"RegSchdTask.exe\"\n    | where not (FolderPath startswith @\"C:\\Program Files (x86)\\ASUS\"\n                 or FolderPath startswith @\"C:\\Program Files\\ASUS\")\n    | extend Kind = \"ProcOutsideAsusPath\", Detail = FolderPath\n    | project Timestamp, DeviceName, Kind, Detail,\n              AccountName, FileName, SHA256,\n              InitiatingProcessFileName, InitiatingProcessCommandLine\n),\n(\n    DeviceImageLoadEvents\n    | where Timestamp > ago(30d)\n    | where InitiatingProcessFileName =~ \"RegSchdTask.exe\"\n    | where FileName in~ (\"AsTaskSched.dll\", \"pthreadVC2.dll\")\n       or not (FolderPath startswith @\"C:\\Windows\\\"\n               or FolderPath startswith @\"C:\\Program Files\")\n    | extend Kind = \"SideloadedDll\", Detail = strcat(FolderPath, \"\\\\\", FileName)\n    | project Timestamp, DeviceName, Kind, Detail,\n              AccountName = InitiatingProcessAccountName,\n              FileName, SHA256,\n              InitiatingProcessFileName, InitiatingProcessCommandLine = \"\"\n)\n| order by Timestamp desc\n\n\n// ------------------------------------------------------------\n// 5. ISO / DISC-IMAGE LURE EXECUTION\n//    Document-named ISO archives landing in mail / download\n//    paths, and processes launched from a mounted disc image\n//    (mounted ISOs surface as a drive root with no standard\n//    program-files structure).\n// ------------------------------------------------------------\nunion isfuzzy=true\n(\n    DeviceFileEvents\n    | where Timestamp > ago(30d)\n    | where FileName endswith \".iso\" or FileName endswith \".img\"\n    | where FolderPath has_any (@\"\\Downloads\\\", @\"\\Temp\\\",\n                                 @\"\\AppData\\Local\\Microsoft\\Outlook\",\n                                 @\"\\INetCache\\\", @\"\\Desktop\\\")\n    | where FileName has_any (\"protocol\", \"cooperation\", \"agreement\",\n                               \"contract\", \"petroleum\", \"invoice\",\n                               \"document\", \"report\", \"official\")\n    | extend Kind = \"IsoLureDrop\", Detail = strcat(FolderPath, \"\\\\\", FileName)\n    | project Timestamp, DeviceName, Kind, Detail,\n              AccountName = InitiatingProcessAccountName,\n              InitiatingProcessFileName\n),\n(\n    DeviceProcessEvents\n    | where Timestamp > ago(30d)\n    | where FolderPath matches regex @\"^[D-Z]:\\\\[^\\\\]+\\.exe$\"      // exe at root of a non-system drive\n    | where InitiatingProcessFileName =~ \"explorer.exe\"\n    | extend Kind = \"MountedImageExec\", Detail = FolderPath\n    | project Timestamp, DeviceName, Kind, Detail,\n              AccountName, InitiatingProcessFileName\n)\n| order by Timestamp desc\n\n\n// ------------------------------------------------------------\n// 6. MIXEDKEY ENVIRONMENTAL KEYING \u2014 VOLUME SERIAL RECON\n//    MIXEDKEY derives its decryption key from the volume\n//    serial number. Command-line volume-serial harvesting\n//    shortly before or after an unsigned DLL load is a strong\n//    correlation signal. Weak on its own: correlate.\n// ------------------------------------------------------------\nDeviceProcessEvents\n| where Timestamp > ago(30d)\n| where (FileName in~ (\"cmd.exe\", \"powershell.exe\", \"pwsh.exe\")\n         and ProcessCommandLine has_any (\"vol c:\", \"vol C:\",\n                                          \"VolumeSerialNumber\",\n                                          \"Get-Volume\", \"Win32_LogicalDisk\"))\n   or (FileName =~ \"wmic.exe\"\n       and ProcessCommandLine has_any (\"volumeserialnumber\", \"logicaldisk\"))\n| project Timestamp, DeviceName, AccountName,\n          FileName, ProcessCommandLine,\n          InitiatingProcessFileName, InitiatingProcessCommandLine\n| order by Timestamp desc\n\n\n// ------------------------------------------------------------\n// 7. SCHEDULED-TASK PERSISTENCE POINTING AT USER-WRITABLE PATHS\n//    The campaign persists via scheduled tasks. Catches task\n//    creation whose action lives in a user-writable directory,\n//    via both the command line and the OS-generated event.\n// ------------------------------------------------------------\nunion isfuzzy=true\n(\n    DeviceProcessEvents\n    | where Timestamp > ago(30d)\n    | where FileName =~ \"schtasks.exe\"\n       or (FileName in~ (\"powershell.exe\", \"pwsh.exe\")\n           and ProcessCommandLine has \"Register-ScheduledTask\")\n    | where ProcessCommandLine has_any (\"/create\", \"Register-ScheduledTask\")\n    | where ProcessCommandLine has_any (\n        @\"\\AppData\\\", @\"\\Temp\\\", @\"\\Downloads\\\",\n        @\":\\Users\\Public\\\", @\"\\ProgramData\\\")\n    | extend Kind = \"TaskCreateCmd\", Detail = ProcessCommandLine\n    | project Timestamp, DeviceName, Kind, Detail,\n              AccountName, InitiatingProcessFileName\n),\n(\n    DeviceEvents\n    | where Timestamp > ago(30d)\n    | where ActionType == \"ScheduledTaskCreated\"\n    | extend TaskInfo = tostring(AdditionalFields)\n    | where TaskInfo has_any (@\"\\AppData\\\", @\"\\Temp\\\", @\"\\Downloads\\\",\n                               @\"Users\\Public\", @\"\\ProgramData\\\")\n    | extend Kind = \"TaskCreatedEvent\", Detail = TaskInfo\n    | project Timestamp, DeviceName, Kind, Detail,\n              AccountName = InitiatingProcessAccountName,\n              InitiatingProcessFileName\n)\n| order by Timestamp desc\n\n\n// ------------------------------------------------------------\n// 8. KILL-CHAIN CORRELATION (HIGH FIDELITY)\n//    A sideload artefact (Query 1/4 signals) followed by\n//    Telegram Bot API traffic from the same device within\n//    24 hours. A hit here is a live TELESHIM intrusion.\n// ------------------------------------------------------------\nlet Stage1_Sideload = union isfuzzy=true\n(\n    DeviceFileEvents\n    | where Timestamp > ago(14d)\n    | where FileName in~ (\"AsTaskSched.dll\", \"pthreadVC2.dll\", \"RegSchdTask.exe\")\n    | project DeviceName, Stage1Time = Timestamp,\n              Stage1Signal = strcat(\"FileDrop: \", FileName)\n),\n(\n    DeviceImageLoadEvents\n    | where Timestamp > ago(14d)\n    | where InitiatingProcessFileName =~ \"RegSchdTask.exe\"\n    | project DeviceName, Stage1Time = Timestamp,\n              Stage1Signal = strcat(\"DllLoad: \", FileName)\n);\nlet Stage2_TelegramC2 = DeviceNetworkEvents\n| where Timestamp > ago(14d)\n| where RemoteUrl has \"api.telegram.org\"\n| where InitiatingProcessFileName !in~ (\"telegram.exe\", \"chrome.exe\",\n                                         \"msedge.exe\", \"firefox.exe\", \"brave.exe\")\n| project DeviceName, C2Time = Timestamp,\n          C2Process = InitiatingProcessFileName,\n          C2ProcessPath = InitiatingProcessFolderPath;\nStage1_Sideload\n| join kind=inner Stage2_TelegramC2 on DeviceName\n| where C2Time between (Stage1Time .. (Stage1Time + 24h))\n| project Stage1Time, Stage1Signal, C2Time,\n          DeviceName, C2Process, C2ProcessPath\n| order by Stage1Time desc",
+    "source_repo": "MaikCyberSec/Threat-Hunting-",
+    "source_url": "https://github.com/MaikCyberSec/Threat-Hunting-/blob/be37d326c9e4d612efd16a6fa032807da9811508/TELESHIM%20Telegram%20Bot%20C2%20-%20MIXEDKEY%20&%20BINDCLOAK%20DLL%20Sideload%20vs%20MidEast%20Gov%20(July%202026)/TELESHIM_Telegram_Bot_C2_Detection.kql",
+    "filename": "TELESHIM_Telegram_Bot_C2_Detection.kql",
+    "collected_at": "2026-07-26T05:35:27.768312+00:00"
+  },
+  {
+    "id": "763a74367499",
+    "title": "List specific URL from various data tables",
+    "description": "List specific URL from various data tables",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender",
+      "network"
+    ],
+    "content": "// Source: https://github.com/samilamppu/Sentinel-queries\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet url = \"dewi\";\nsearch in (EmailUrlInfo,UrlClickEvents,DeviceNetworkEvents,DeviceFileEvents,DeviceEvents,BehaviorEntities)\nTimestamp between (ago(30d) .. now())\nand (RemoteUrl contains url\nor FileOriginUrl contains url\nor FileOriginReferrerUrl contains url\nor Url contains url\n)\n| take 100\n\n\n//List specific URLClick from MDO data tables\nUrlClickEvents\n| where Timestamp > ago(30d)\n| extend UrlBlocked = ActionType has_any(\"ClickBlocked\")\n| extend UrlAllowed = ActionType has_any('ClickAllowed')\n| extend UrlPendingVerdict = ActionType has_any('UrlScanInProgress')\n| extend ErrorPage = ActionType has_any('UrlErrorPage')\n| summarize Blocked = countif(UrlBlocked), Allowed = countif(UrlAllowed), PendingVerdict = countif(UrlPendingVerdict), \nError = countif(ErrorPage), ClickedThrough = countif(IsClickedThrough)  by Url",
+    "source_repo": "samilamppu/Sentinel-queries",
+    "source_url": "https://github.com/samilamppu/Sentinel-queries/blob/169e4c5ca1d8d3903026b0d3d39cbd0758f2ff78/Defender%20for%20Office%20365%20(MDO)/URL%20Clicks.kql",
+    "filename": "URL Clicks.kql",
+    "collected_at": "2026-07-26T05:35:27.082728+00:00"
+  },
+  {
+    "id": "51a68c91ab03",
+    "title": "Data connector required for this query - M365 Defender - Device* tables",
+    "description": "Detects a user that downloaded a file from O365 and then wrote the same file to USB, matches on both filename and the user",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender",
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet filedownloads=\n    OfficeActivity\n    | where TimeGenerated > ago(1d)\n    | extend DownloadTime = TimeGenerated\n    | where Operation in ('FileSyncDownloadedFull', 'FileDownloaded')\n    | project DownloadTime, UserId, SourceFileName\n    | join kind=inner\n        (\n        IdentityInfo\n        | where TimeGenerated > ago (21d)\n        | summarize arg_max(TimeGenerated, *) by AccountUPN) \n        on $left.UserId == $right.AccountUPN\n    | project DownloadTime, SourceFileName, UserId, AccountName\n;\nDeviceEvents\n| where TimeGenerated > ago(1d)\n| where ActionType == \"UsbDriveMounted\"\n| extend DriveLetter = tostring(todynamic(AdditionalFields).DriveLetter)\n| join kind=inner \n    (\n    DeviceFileEvents\n    | where TimeGenerated > ago(1d)\n    | extend FileCopyTime = TimeGenerated\n    | where ActionType == \"FileCreated\"\n    | join kind=inner filedownloads\n        on\n        $left.FileName == $right.SourceFileName,\n        $left.RequestAccountName == $right.AccountName\n    | parse FolderPath with DriveLetter '\\\\' *\n    | extend DriveLetter = tostring(DriveLetter)\n    ) \n    on DeviceId, DriveLetter\n| extend FileCopied = FileName1\n| extend User = AccountName1\n| distinct DeviceName, DriveLetter, FileCopied, User",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Defender%20for%20Endpoint/Device-FileDownloadedfromO365thenCopiedtoUSB.kql",
+    "filename": "Device-FileDownloadedfromO365thenCopiedtoUSB.kql",
+    "collected_at": "2026-07-26T05:35:26.374500+00:00"
+  },
+  {
+    "id": "c3ec29e7154b",
+    "title": "Title: Suspicious LSASS process access",
+    "description": "Technique: T1003.001 - OS Credential Dumping: LSASS Memory Data source(s): DeviceEvents (ActionType == \"OpenProcessApiCall\"), DeviceProcessEvents Author: nextlayersec Last updated: 2026-05-27 Description: Surfaces processes opening a handle to lsass.exe with credential-dump-capable access rights, excluding known good Microsoft signers and EDR agents. Catches Mimikatz, ProcDump abuse, comsvcs.dll MiniDump, and direct syscall variants.",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/Blackvectra/nextlayersec-guides\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 1d;\nlet credDumpRights = dynamic([0x1010, 0x1410, 0x1438, 0x143A, 0x1FFFFF]); // PROCESS_VM_READ | QUERY_INFORMATION variants\nlet knownGoodImages = dynamic([\n    \"MsMpEng.exe\", \"MsSense.exe\", \"SenseIR.exe\", \"SenseCncProxy.exe\",\n    \"windefend.exe\", \"csrss.exe\", \"wininit.exe\", \"services.exe\"\n]);\nDeviceEvents\n| where Timestamp > ago(lookback)\n| where ActionType == \"OpenProcessApiCall\"\n| where FileName =~ \"lsass.exe\"\n| extend Rights = tolong(parse_json(AdditionalFields).DesiredAccess)\n| where Rights in (credDumpRights) or (Rights has_any (\"0x10\", \"0x40\"))\n| where not(InitiatingProcessFileName in~ (knownGoodImages))\n| where InitiatingProcessVersionInfoCompanyName !contains \"Microsoft\"\n| project Timestamp, DeviceName, AccountName,\n          InitiatingProcessFileName, InitiatingProcessCommandLine,\n          InitiatingProcessVersionInfoCompanyName,\n          InitiatingProcessParentFileName, Rights, ReportId\n| sort by Timestamp desc",
+    "source_repo": "Blackvectra/nextlayersec-guides",
+    "source_url": "https://github.com/Blackvectra/nextlayersec-guides/blob/57d4a1f7d436d7a810606a3297c38e1a4c0c71ec/detections/kql/T1003.001_lsass-access-suspicious.kql",
+    "filename": "T1003.001_lsass-access-suspicious.kql",
+    "collected_at": "2026-07-26T05:35:25.697722+00:00"
+  },
+  {
+    "id": "66ed18eb7e66",
+    "title": "Creates a list of your applications and summarizes successful signins by members vs guests",
+    "description": "Creates a list of your applications and summarizes successful signins by members vs guests",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timerange=30d;\nSigninLogs\n| where TimeGenerated > ago(timerange)\n| project TimeGenerated, UserType, ResultType, AppDisplayName\n| where ResultType == 0\n| summarize\n    MemberSignins=countif(UserType == \"Member\"),\n    GuestSignins=countif(UserType == \"Guest\")\n    by AppDisplayName\n| sort by AppDisplayName  ",
+    "source_repo": "obsida-uk/Azure-BlueTeam-Toolkit",
+    "source_url": "https://github.com/obsida-uk/Azure-BlueTeam-Toolkit/blob/715003d731662549883c8c478a0f98aed0fc5784/Sentinel/Azure-Entra-ID/AppAccessMembersvsGuests.kql",
+    "filename": "AppAccessMembersvsGuests.kql",
+    "collected_at": "2026-07-26T05:35:16.535700+00:00"
+  },
+  {
+    "id": "9042cdd8169a",
+    "title": "Breakglassdetection",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/gnarly-cl0s/AZ-500CheatSheet\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\n\ufeffSigninLogs\n| project UserId, IPAddress, Location, SourceSystem, TimeGenerated, UserPrincipalName\n| where UserId == 'object-id-of-the-account'\n| extend AccountCustomEntity = UserPrincipalName\n| extend IPCustomEntity = IPAddress",
+    "source_repo": "gnarly-cl0s/AZ-500CheatSheet",
+    "source_url": "https://github.com/gnarly-cl0s/AZ-500CheatSheet/blob/bcb94f0a618d66c96ef7e1c43a312bada5dc7f6e/Demo-Code/kql/breakglassdetection.kql",
+    "filename": "breakglassdetection.kql",
+    "collected_at": "2026-07-26T05:35:15.673120+00:00"
+  },
+  {
+    "id": "c484dce618a0",
+    "title": "for what ever reason azuread, azureadpreview and msol use the same app",
+    "description": "for what ever reason azuread, azureadpreview and msol use the same app",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/chadmcox/Azure_Active_Directory\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(30d)\n| where ResultType == 0\n| where AppDisplayName == \"Azure Active Directory PowerShell\"\n| distinct UserPrincipalName\n\n\n//this is a little better of a query that includes graph module and explorer\nSigninLogs\n| where TimeGenerated > ago(30d)\n| where ResultType == 0\n| where AppId in (\"1b730954-1685-4b74-9bfd-dac224a7b894\",\"de8bc8b5-d9f9-48b1-a8ad-b748da725064\",\"14d82eec-204b-4c2f-b7e8-296a70dab67e\")\n| extend TrustedLocation = tostring(iff(NetworkLocationDetails contains 'trustedNamedLocation', 'trustedNamedLocation',''))\n| distinct UserPrincipalName, AuthenticationRequirement, AppDisplayName,TrustedLocation, RiskLevelDuringSignIn, RiskState",
+    "source_repo": "chadmcox/Azure_Active_Directory",
+    "source_url": "https://github.com/chadmcox/Azure_Active_Directory/blob/288f2dd72871a43941576fe6ed0b810eac7e11fe/Log%20Analytics/find-msolusage.kql",
+    "filename": "find-msolusage.kql",
+    "collected_at": "2026-07-26T05:35:14.997623+00:00"
+  },
+  {
+    "id": "f7149c375b01",
+    "title": "Detects when unconstrained kerberos delegation is enabled on a user object",
+    "description": "Detects when unconstrained kerberos delegation is enabled on a user object",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == \"4738\"\n| parse EventData with * 'NewUacValue\">' NewUacValue '</Data>' *\n| parse EventData with * 'TargetUserName\">' UserName '</Data>' *\n| parse EventData with * 'SubjectUserName\">' Actor '</Data>' *\n| where NewUacValue == \"0x2010\"\n| project TimeGenerated, Activity, UserName, Actor",
+    "source_repo": "obsida-uk/Azure-BlueTeam-Toolkit",
+    "source_url": "https://github.com/obsida-uk/Azure-BlueTeam-Toolkit/blob/715003d731662549883c8c478a0f98aed0fc5784/Sentinel/Active-Directory/UnconstrainedDelegationtoUser.kql",
+    "filename": "UnconstrainedDelegationtoUser.kql",
+    "collected_at": "2026-07-26T05:35:10.344060+00:00"
+  },
+  {
+    "id": "034d2cd60a58",
+    "title": "HEARTH H055 - candidato inicial KQL",
+    "description": "Fonte: https://github.com/THORCollective/HEARTH/blob/main/Flames/H055.md Hip\u00f3tese: os atores da amea\u00e7a est\u00e3o usando o cmdlet Get-CimInstance de PowerShell para consultar Win32_OperatingSystem e ConvertTo-Csv para extrair propriedades MainWindowTitle de processos em execu\u00e7\u00e3o, exfiltrando vari\u00e1veis de ambiente em 99 canais... Padr\u00e3o: script suspeito e execu\u00e7\u00e3o de comando Cobertura: Starter KQL - validar em Sentinel Prioridade: P3 (34) Tabelas: SecurityEvent, WindowsEvent, TrendMicro_XDR_OAT_CL, TrendMicro_XDR_WORKBENCH_CL, ThreatIntelIndicators, Watchlist, SecurityAlert, SecurityIncident, Anomalies, SigninLogs, AuditLogs, IdentityInfo Valide a disponibilidade da tabela, nomes de campos, limites e falsos positivos antes de usar como detec\u00e7\u00e3o.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/kkroth0/threat-hunting-ptbr\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet lookback = 14d;\nlet huntTerms = dynamic([\"T1082\", \"gootloader\", \"powershell\", \"systeminfo\", \"H055\", \"PowerShell\", \"Get-CimInstance\", \"cmdlet\", \"query\", \"Win32_OperatingSystem\", \"ConvertTo-Csv\", \"extract\", \"MainWindowTitle\", \"properties\", \"running\", \"processes\", \"exfiltrating\", \"environment\", \"variables\", \"under\", \"characters\", \"desktop\", \"cmd.exe\", \"wscript\", \"cscript\", \"mshta\", \"rundll32\", \"regsvr32\", \"CurrentVersion\\\\Run\", \"Scheduled\", \"Service\", \"Registry\"]);\nunion withsource=SourceTable isfuzzy=true\n    SecurityEvent,\n    WindowsEvent,\n    TrendMicro_XDR_OAT_CL,\n    TrendMicro_XDR_WORKBENCH_CL\n| where TimeGenerated >= ago(lookback)\n| extend SearchBlob = tostring(pack_all())\n| where SearchBlob has_any (huntTerms)\n| extend HuntId = \"H055\", SourceUrl = \"https://github.com/THORCollective/HEARTH/blob/main/Flames/H055.md\"\n| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob\n| order by TimeGenerated desc",
+    "source_repo": "kkroth0/threat-hunting-ptbr",
+    "source_url": "https://github.com/kkroth0/threat-hunting-ptbr/blob/44ac8fa38ebdfbfe78601103421c7e1beaeeb49a/sentinel/kql/hearth/h055.kql",
+    "filename": "h055.kql",
+    "collected_at": "2026-07-26T05:35:08.931890+00:00"
+  },
+  {
+    "id": "96cff9df7a58",
+    "title": "DETECTION QUERY 2 \u2014 External IP Logon Anomaly",
+    "description": "Flags logon activity from non-private IPv4 addresses Excludes RFC1918, loopback, APIPA, and link-local ranges MITRE: T1078 \u2014 Valid Accounts",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Lovedipsingh/sentinel-kql-detection-lab\n// Collected: 2026-07-26\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet Lookback = 1h;\n\nSecurityEvent\n| where TimeGenerated >= ago(Lookback)\n| where EventID in (4624, 4625)\n| where isnotempty(IpAddress)\n// Exclude private IPv4 ranges using native KQL functions\n| where not(ipv4_is_in_range(IpAddress, \"10.0.0.0/8\"))\n| where not(ipv4_is_in_range(IpAddress, \"192.168.0.0/16\"))\n| where not(ipv4_is_in_range(IpAddress, \"172.16.0.0/12\"))\n| where not(ipv4_is_in_range(IpAddress, \"169.254.0.0/16\")) // APIPA\n| where IpAddress !in (\"127.0.0.1\", \"::1\", \"-\", \"\")\n// Exclude IPv6 private/link-local ranges\n| where not(IpAddress startswith \"fe80:\")  // link-local\n| where not(IpAddress startswith \"fc00:\")  // unique local\n| where not(IpAddress startswith \"fd00:\")  // unique local\n| summarize AttemptCount = count(),\n            SuccessCount = countif(EventID == 4624),\n            FailureCount = countif(EventID == 4625),\n            FirstSeen = min(TimeGenerated),\n            LastSeen = max(TimeGenerated)\n    by Account, Computer, IpAddress\n| extend Severity = iff(SuccessCount > 0, \"HIGH\", \"MEDIUM\")\n| extend Description = iff(\n    SuccessCount > 0,\n    \"Successful logon from external IP address\",\n    \"Failed logon attempts from external IP address\"\n)\n| project Account,\n          Computer,\n          IpAddress,\n          AttemptCount,\n          SuccessCount,\n          FailureCount,\n          FirstSeen,\n          LastSeen,\n          Severity,\n          Description\n\n// TUNING NOTES:\n// - Allowlist VPN egress IPs: | where IpAddress !in (\"203.0.113.5\", \"198.51.100.10\")\n// - Allowlist cloud identity providers: | where IpAddress !has \"okta.com\" and IpAddress !has \"azure\"\n// - Allowlist known remote administration gateways",
+    "source_repo": "Lovedipsingh/sentinel-kql-detection-lab",
+    "source_url": "https://github.com/Lovedipsingh/sentinel-kql-detection-lab/blob/f8240a41521af7033cbb444e31e435b026947490/queries/02-external-ip-logon.kql",
+    "filename": "02-external-ip-logon.kql",
+    "collected_at": "2026-07-26T05:35:08.110560+00:00"
+  },
+  {
     "id": "8d0da068f5da",
     "title": "Anamoly Usbfilecopiesfromuserswithanamolousdownloads",
     "description": "Searches OfficeActivity table for anomalies in download actions and then retrives all USB file copy events by those users over the last week",

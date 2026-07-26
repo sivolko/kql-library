@@ -1,0 +1,20 @@
+// Source: https://github.com/troytrojan01/ot-cybersecurity-with-sentinel
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(15m)
+| where DeviceVendor =~ "Forescout" and DeviceProduct =~ "eyeSegment"
+| extend SrcZone = DeviceCustomString1,
+         DstZone = DeviceCustomString2,
+         PolicyName = DeviceCustomString3,
+         Action = DeviceCustomString4
+| where Action =~ "Block"
+| extend Severity = toint(LogSeverity),
+         RiskScore = case(
+             SrcZone has "OT" and DstZone == "Internet",  10,
+             SrcZone has "OT" and DstZone has "Corporate", 7,
+             5)
+| project TimeGenerated, RiskScore, Severity, SrcZone, DstZone, PolicyName,
+          SourceIP, DestinationIP, DestinationPort, Protocol, Message
+| order by RiskScore desc, TimeGenerated desc

@@ -1,0 +1,198 @@
+// Source: https://github.com/11bztaylor/KQL
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+.create-or-alter function
+  with (docstring = 'SIDEQUEST: map CommonSecurityLog Palo Alto THREAT rows to the PaloAlto_Threat schema for historical backfill', folder = 'PaloAlto/SIDEQUEST')
+  PaloAlto_Threat_FromCSL() {
+    CommonSecurityLog
+    | where DeviceVendor has "Palo Alto"
+    | where Activity == "THREAT"             // PAN $type lands in CSL Activity
+    | project
+        TimeGenerated,
+        DeviceVendor             = tostring(DeviceVendor),
+        DeviceProduct            = tostring(DeviceProduct),
+        DeviceVersion            = tostring(DeviceVersion),
+        LogType                  = "THREAT",
+        SubType                  = tostring(DeviceEventClassID),   // $subtype: url/virus/spyware/...
+        LogSeverity              = tostring(LogSeverity),
+        Computer                 = tostring(Computer),
+        DeviceName               = tostring(DeviceName),
+        FirewallSerial           = tostring(DeviceExternalID),
+        SourceIP                 = tostring(SourceIP),
+        SourcePort               = toint(SourcePort),
+        DestinationIP            = tostring(DestinationIP),
+        DestinationPort          = toint(DestinationPort),
+        Protocol                 = tostring(Protocol),
+        ApplicationProtocol      = tostring(ApplicationProtocol),
+        DeviceAction             = tostring(DeviceAction),
+        CommunicationDirection   = tostring(CommunicationDirection),
+        Direction                = tostring(FlexString2),          // flexString2Label=Direction
+        SourceUserName           = tostring(SourceUserName),
+        DestinationUserName      = tostring(DestinationUserName),
+        RequestURL               = trim('"', tostring(RequestURL)),
+        RequestMethod            = tostring(RequestMethod),
+        RequestClientApplication = tostring(RequestClientApplication),
+        RequestContext           = tostring(RequestContext),
+        FileName                 = tostring(FileName),
+        FilePath                 = tostring(FilePath),
+        FileHash                 = tostring(FileHash),
+        FileID                   = tostring(FileID),
+        ThreatCategory           = tostring(DeviceEventCategory),  // cat
+        URLCategory              = tostring(DeviceCustomString2),  // cs2Label=URL Category
+        URLCategoryList          = extract(@'PanOSURLCatList="?([^";]+)"?', 1, tostring(AdditionalExtensions)),
+        Message                  = tostring(Message),
+        SessionID                = toint(coalesce(tolong(column_ifexists("FieldDeviceCustomNumber1", long(null))), tolong(DeviceCustomNumber1))),  // cn1=SessionID
+        SequenceNumber           = iff(isnotempty(tostring(column_ifexists("ExtID", ""))), tostring(column_ifexists("ExtID", "")), tostring(ExternalID)),
+        RuleName                 = tostring(DeviceCustomString1),  // cs1Label=Rule
+        SourceZone               = tostring(DeviceCustomString4),  // cs4Label=Source Zone
+        DestinationZone          = tostring(DeviceCustomString5),  // cs5Label=Destination Zone
+        LogProfile               = tostring(DeviceCustomString6),  // cs6Label=LogProfile
+        Flags                    = tostring(FlexString1),          // flexString1Label=Flags
+        RuleUUID                 = extract(@'PanOSRuleUUID=([0-9a-fA-F\-]{8,})', 1, tostring(AdditionalExtensions)),
+        ReceiptTime              = tostring(ReceiptTime),
+        // CommonSecurityLog already split the mapped keys into columns; its AdditionalExtensions
+        // holds the leftover PAN keys. Preserve it whole so nothing is lost. (Live rows store a
+        // pre-split bag here instead -- a documented, harmless difference for historical data.)
+        UnparsedFields           = bag_pack("AdditionalExtensions", AdditionalExtensions)
+  }
+
+
+// -------------------------------------------------------------------------------------
+// 1b) MAPPER  -- CommonSecurityLog PA TRAFFIC rows  ->  PaloAlto_Traffic schema.
+//    Reads CommonSecurityLog directly; column order matches PaloAlto_Traffic exactly.
+//    cn1/cn2/cn3 use coalesce(FieldDeviceCustomNumberN, DeviceCustomNumberN) for schema drift.
+//    NOTE: StartTime is a string in PaloAlto_Traffic but a datetime in CommonSecurityLog, so
+//    backfilled rows carry an ISO timestamp string rather than PAN's raw "Mon dd yyyy ..."
+//    format -- a documented, harmless difference for historical data.
+// -------------------------------------------------------------------------------------
+.create-or-alter function
+  with (docstring = 'SIDEQUEST: map CommonSecurityLog Palo Alto TRAFFIC rows to the PaloAlto_Traffic schema for historical backfill', folder = 'PaloAlto/SIDEQUEST')
+  PaloAlto_Traffic_FromCSL() {
+    CommonSecurityLog
+    | where DeviceVendor has "Palo Alto"
+    | where Activity == "TRAFFIC"            // PAN $type lands in CSL Activity
+    | project
+        TimeGenerated,
+        DeviceVendor                 = tostring(DeviceVendor),
+        DeviceProduct                = tostring(DeviceProduct),
+        DeviceVersion                = tostring(DeviceVersion),
+        LogType                      = "TRAFFIC",
+        SubType                      = tostring(DeviceEventClassID),   // $subtype: drop/start/end/deny
+        LogSeverity                  = tostring(LogSeverity),
+        Computer                     = tostring(Computer),
+        DeviceName                   = tostring(DeviceName),
+        FirewallSerial               = tostring(DeviceExternalID),
+        SourceIP                     = tostring(SourceIP),
+        SourcePort                   = toint(SourcePort),
+        DestinationIP                = tostring(DestinationIP),
+        DestinationPort              = toint(DestinationPort),
+        Protocol                     = tostring(Protocol),
+        ApplicationProtocol          = tostring(ApplicationProtocol),
+        DeviceAction                 = tostring(DeviceAction),
+        SourceUserName               = tostring(SourceUserName),
+        DestinationUserName          = tostring(DestinationUserName),
+        SourceTranslatedAddress      = tostring(SourceTranslatedAddress),
+        SourceTranslatedPort         = toint(SourceTranslatedPort),
+        DestinationTranslatedAddress = tostring(DestinationTranslatedAddress),
+        DestinationTranslatedPort    = toint(DestinationTranslatedPort),
+        DeviceInboundInterface       = tostring(DeviceInboundInterface),
+        DeviceOutboundInterface      = tostring(DeviceOutboundInterface),
+        ReceivedBytes                = tolong(ReceivedBytes),         // in
+        SentBytes                    = tolong(SentBytes),             // out
+        TotalBytes                   = tolong(column_ifexists("FlexNumber1", int(null))),  // flexNumber1=Total bytes
+        PacketCount                  = toint(coalesce(tolong(column_ifexists("FieldDeviceCustomNumber2", long(null))), tolong(DeviceCustomNumber2))),  // cn2=Packets
+        EventCount                   = toint(column_ifexists("EventCount", int(null))),    // cnt
+        ElapsedTimeSec               = toint(coalesce(tolong(column_ifexists("FieldDeviceCustomNumber3", long(null))), tolong(DeviceCustomNumber3))),  // cn3=Elapsed time
+        SessionID                    = toint(coalesce(tolong(column_ifexists("FieldDeviceCustomNumber1", long(null))), tolong(DeviceCustomNumber1))),  // cn1=SessionID
+        SequenceNumber               = iff(isnotempty(tostring(column_ifexists("ExtID", ""))), tostring(column_ifexists("ExtID", "")), tostring(ExternalID)),
+        RuleName                     = tostring(DeviceCustomString1),  // cs1Label=Rule
+        URLCategory                  = tostring(DeviceCustomString2),  // cs2Label=URL Category
+        SourceZone                   = tostring(DeviceCustomString4),  // cs4Label=Source Zone
+        DestinationZone              = tostring(DeviceCustomString5),  // cs5Label=Destination Zone
+        LogProfile                   = tostring(DeviceCustomString6),  // cs6Label=LogProfile
+        Flags                        = tostring(FlexString1),          // flexString1Label=Flags
+        RuleUUID                     = extract(@'PanOSRuleUUID=([0-9a-fA-F\-]{8,})', 1, tostring(AdditionalExtensions)),
+        Reason                       = tostring(Reason),               // reason
+        Category                     = tostring(DeviceEventCategory),  // cat
+        StartTime                    = tostring(column_ifexists("StartTime", datetime(null))),  // CSL datetime -> string
+        ReceiptTime                  = tostring(ReceiptTime),
+        UnparsedFields               = bag_pack("AdditionalExtensions", AdditionalExtensions)
+  }
+
+
+// -------------------------------------------------------------------------------------
+// 2) PREVIEW (no write)  -- set the date window, run, sanity-check ~100 rows. If a column name
+//    doesn't exist in your CommonSecurityLog schema, the preview fails here -- adjust and retry.
+//    For TRAFFIC, swap PaloAlto_Threat_FromCSL -> PaloAlto_Traffic_FromCSL and the target table
+//    PaloAlto_Threat -> PaloAlto_Traffic throughout sections 2-5.
+// -------------------------------------------------------------------------------------
+PaloAlto_Threat_FromCSL()
+| where TimeGenerated between (datetime(2025-06-19) .. datetime(2026-06-19))
+| take 100;
+
+
+// -------------------------------------------------------------------------------------
+// 3) BACKFILL (writes)  -- single-shot. Tagged so it is identifiable and reversible.
+//    `async` returns an operation id (track via .show operations).
+//    For a LARGE range (more than a few GB / tens of millions of rows) use section 3b instead.
+// -------------------------------------------------------------------------------------
+.set-or-append async PaloAlto_Threat with (tags='["backfill:csl-searchjob"]') <|
+    PaloAlto_Threat_FromCSL()
+    | where TimeGenerated between (datetime(2025-06-19) .. datetime(2026-06-19))
+
+
+// -------------------------------------------------------------------------------------
+// 3b) BATCHED BACKFILL  -- use this INSTEAD of section 3 for large ranges (e.g. a year).
+//     .set-or-append is ingest-from-query: one giant run can exceed query/memory limits and
+//     fail. It's atomic, so a failure commits nothing -- but you waste the run and strain the
+//     cluster. Batching by time window keeps each run small, restartable, and tag-droppable.
+//     (For TRAFFIC, swap the function/table/Activity exactly as in the section-2 note.)
+//
+//     STEP 1 -- size the full range first. More than a few GB / tens of millions of rows?
+//     Don't run section 3; batch with STEP 2.
+// -------------------------------------------------------------------------------------
+CommonSecurityLog
+| where TimeGenerated between (datetime(2025-06-19) .. datetime(2026-06-19))
+| where DeviceVendor has "Palo Alto" and Activity == "THREAT"
+| summarize Rows = count(), GB = round(sum(estimate_data_size(*)) / 1024.0 / 1024 / 1024, 2);
+
+//     STEP 2 -- backfill ONE window at a time (one month shown). Re-run for each month across
+//     the range: 2025-06-01..2025-07-01, then ..2025-08-01, and so on. The tag is shared, so a
+//     single rollback (section 5) still removes every batch. Track each with `.show operations <id>`.
+.set-or-append async PaloAlto_Threat
+    with (distributed=true, noTruncation=true, creationTime='2025-06-01', tags='["backfill:csl-searchjob"]') <|
+    PaloAlto_Threat_FromCSL()
+    | where TimeGenerated between (datetime(2025-06-01) .. datetime(2025-07-01))
+
+//     STEP 3 -- reconcile THIS window before moving to the next (the two counts should match):
+CommonSecurityLog
+| where TimeGenerated between (datetime(2025-06-01) .. datetime(2025-07-01))
+| where DeviceVendor has "Palo Alto" and Activity == "THREAT"
+| summarize SourceRows = count();
+//
+PaloAlto_Threat
+| where TimeGenerated between (datetime(2025-06-01) .. datetime(2025-07-01))
+| where extent_tags() has 'backfill:csl-searchjob'
+| summarize Appended = count();
+
+
+// -------------------------------------------------------------------------------------
+// 4) RECONCILE  -- the two counts should match (source PA-threat rows vs rows we appended).
+//    (Use this for the single-shot section-3 run; section 3b reconciles per window itself.)
+// -------------------------------------------------------------------------------------
+PaloAlto_Threat
+| where extent_tags() has 'backfill:csl-searchjob'
+| summarize Appended = count();
+
+CommonSecurityLog
+| where TimeGenerated between (datetime(2025-06-19) .. datetime(2026-06-19))
+| where DeviceVendor has "Palo Alto" and Activity == "THREAT"
+| summarize SourceRows = count();
+
+
+// -------------------------------------------------------------------------------------
+// 5) ROLLBACK (if the backfill was wrong)  -- drops ONLY the tagged backfill extents,
+//    leaving live data untouched. Uncomment to run.
+// -------------------------------------------------------------------------------------
+// .drop extents <| .show table PaloAlto_Threat extents where tags has 'backfill:csl-searchjob'

@@ -1,0 +1,17 @@
+// Source: https://github.com/aplatek11/azure
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where ResourceProvider == "Microsoft.Logic"
+| where OperationName == "Delete Workflow"
+| where Resource startswith "TEST-"
+| where ActivityStatus == "Succeeded"
+    and ActivitySubstatusValue <> ""
+| distinct TimeGenerated
+        , ActivityStatus
+        , ActivitySubstatusValue
+        , ResourceGroup
+        , Caller
+        , ResourceProvider
+        , Resource

@@ -1,0 +1,18 @@
+// Source: https://github.com/loredan1994/GeneralCrap
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 14d;
+AzureActivity
+| where TimeGenerated >= ago(Lookback)
+| where OperationNameValue =~ "Microsoft.Resources/deployments/write"
+| project TimeGenerated, SubscriptionId, ResourceGroup, Caller, ActivityStatusValue
+| summarize
+    Deployments = count(),
+    Failed = countif(ActivityStatusValue =~ "Failed"),
+    Succeeded = countif(ActivityStatusValue =~ "Succeeded"),
+    LastSeen = max(TimeGenerated)
+  by SubscriptionId, ResourceGroup, Caller
+| extend FailureRatePct = round(iff(Deployments > 0, todouble(Failed) * 100.0 / todouble(Deployments), 0.0), 2)
+| where Failed > 0 or Deployments >= 3
+| order by Failed desc, FailureRatePct desc, LastSeen desc

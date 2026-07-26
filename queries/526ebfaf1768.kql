@@ -1,0 +1,33 @@
+// Source: https://github.com/Ethan-Andrews/Exploitarium-Detections
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DestinationPort == 2222
+| where Protocol =~ "TCP"
+| where Message has_any ("curve25519-sha256", "chacha20-poly1305@openssh.com", "SSH-2.0", "SSH_MSG_KEXINIT")
+| where not (ipv4_is_private(DestinationIP) and DestinationPort == 2222 and Message !has "curve25519-sha256")
+| extend
+    SrcIP = SourceIP, DstIP = DestinationIP, DstPort = DestinationPort,
+    HasCurve25519 = iff(Message has "curve25519-sha256", 1, 0),
+    HasChacha20 = iff(Message has "chacha20-poly1305@openssh.com", 1, 0),
+    HasSSHBanner = iff(Message has "SSH-2.0", true, false)
+| summarize
+    EventCount = count(),
+    FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+    UniqueDestinations = dcount(DstIP),
+    DestinationIPs = make_set(DstIP, 20),
+    SumCurve25519 = sum(HasCurve25519),
+    SumChacha20 = sum(HasChacha20),
+    SampleMessages = make_set(Message, 3)
+    by SrcIP, DstPort
+| extend
+    HasCurve25519 = iff(SumCurve25519 > 0, true, false),
+    HasChacha20 = iff(SumChacha20 > 0, true, false),
+    AnomalyCipherScore = toint(SumCurve25519 > 0) + toint(SumChacha20 > 0)
+| extend RiskLevel = case(AnomalyCipherScore >= 2, "High", AnomalyCipherScore == 1, "Medium", "Low")
+| where AnomalyCipherScore >= 1
+| project FirstSeen, LastSeen, SrcIP, DstPort, UniqueDestinations, DestinationIPs,
+    HasCurve25519, HasChacha20, AnomalyCipherScore, RiskLevel, EventCount, SampleMessages
+| order by AnomalyCipherScore desc, EventCount desc

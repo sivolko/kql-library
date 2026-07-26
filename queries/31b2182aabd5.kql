@@ -1,0 +1,19 @@
+// Source: https://github.com/kkroth0/threat-hunting-ptbr
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = 14d;
+let huntTerms = dynamic(["T1189", "initial access", "seo poisoning", "malvertising", "drive by", "H114", "poisoning", "place", "trojanized", "software", "installers", "search", "engine", "results", "tricking", "users", "searching", "legitimate", "tools", "downloading", "malware-laced", "packages", "POST", "GET", "webshell", "cmd=", "whoami", "bash", "powershell", "rce", "ssrf", "jndi"]);
+union withsource=SourceTable isfuzzy=true
+    Cloudflare_CL,
+    CommonSecurityLog,
+    AzureDiagnostics,
+    AppRequests,
+    AppTraces,
+    Syslog
+| where TimeGenerated >= ago(lookback)
+| extend SearchBlob = tostring(pack_all())
+| where SearchBlob has_any (huntTerms)
+| extend HuntId = "H114", SourceUrl = "https://github.com/THORCollective/HEARTH/blob/main/Flames/H114.md"
+| project TimeGenerated, HuntId, SourceTable, SourceUrl, SearchBlob
+| order by TimeGenerated desc

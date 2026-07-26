@@ -1,0 +1,25 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timerange=90d;
+let timeframe=1d;
+AzureActivity
+| where TimeGenerated > ago(timerange) and TimeGenerated < ago(timeframe)
+| where OperationName == "List Storage Account Keys"
+| where ActivityStatus == "Succeeded"
+| project User=Caller
+| join kind=rightanti (
+    AzureActivity
+    | where TimeGenerated > ago(timeframe)
+    | where OperationName == "List Storage Account Keys"
+    | where ActivityStatus == "Succeeded"
+    | project-rename User=Caller)
+    on User
+| project
+    TimeGenerated,
+    User,
+    CallerIpAddress,
+    ['Storage Account Name']=Resource,
+    SubscriptionId,
+    ResourceGroup 

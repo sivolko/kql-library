@@ -1,0 +1,220 @@
+// Source: https://github.com/MaikCyberSec/Threat-Hunting-
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceFileEvents
+| where Timestamp > ago(30d)
+| where FileName in~ ("AsTaskSched.dll", "pthreadVC2.dll", "RegSchdTask.exe")
+   or (FileName endswith ".zip" or FileName endswith ".iso")
+      and FileName has_any ("Cooperation protocol", "petroleum and gas",
+                             "exploration of petroleum")
+| project Timestamp, DeviceName, ActionType,
+          FileName, FolderPath, SHA256,
+          InitiatingProcessAccountName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by Timestamp desc
+
+
+// ------------------------------------------------------------
+// 2. TELEGRAM BOT API TRAFFIC FROM NON-MESSENGER PROCESSES
+//    The core TELESHIM signal. api.telegram.org contacted by
+//    anything that is not a browser or a known Telegram
+//    client is worth eyes-on — especially on servers and
+//    government / corporate workstations.
+// ------------------------------------------------------------
+let ApprovedClients = dynamic([
+    "telegram.exe", "updater.exe", "unigram.exe",
+    "chrome.exe", "msedge.exe", "firefox.exe",
+    "brave.exe", "opera.exe", "safari.exe", "iexplore.exe"
+]);
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteUrl has_any ("api.telegram.org", "telegram.org/bot")
+| where InitiatingProcessFileName !in~ (ApprovedClients)
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp),
+            ConnectionCount = count(),
+            RemoteIPs = make_set(RemoteIP, 5)
+    by DeviceName, InitiatingProcessFileName,
+       InitiatingProcessFolderPath, InitiatingProcessCommandLine,
+       InitiatingProcessAccountName
+| order by ConnectionCount desc
+// Steady low-volume polling (many connections, long timespan)
+// is exactly the TELESHIM tasking loop.
+
+
+// ------------------------------------------------------------
+// 3. BINDCLOAK C2 INFRASTRUCTURE
+//    Direct catch on the published command server domain.
+// ------------------------------------------------------------
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteUrl has "hypersnet.com"
+| project Timestamp, DeviceName, RemoteUrl, RemoteIP, RemotePort,
+          InitiatingProcessFileName, InitiatingProcessFolderPath,
+          InitiatingProcessAccountName
+| order by Timestamp desc
+
+
+// ------------------------------------------------------------
+// 4. REGSCHDTASK.EXE SIDELOAD — SIGNED ASUS BINARY IN THE
+//    WRONG PLACE, LOADING THE WRONG DLL
+//    The campaign ships a legitimate ASUSTek executable next
+//    to a malicious DLL. Flags RegSchdTask.exe executing from
+//    outside ASUS install paths, plus any DLL it loads from
+//    its own (attacker-controlled) folder.
+// ------------------------------------------------------------
+union isfuzzy=true
+(
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where FileName =~ "RegSchdTask.exe"
+    | where not (FolderPath startswith @"C:\Program Files (x86)\ASUS"
+                 or FolderPath startswith @"C:\Program Files\ASUS")
+    | extend Kind = "ProcOutsideAsusPath", Detail = FolderPath
+    | project Timestamp, DeviceName, Kind, Detail,
+              AccountName, FileName, SHA256,
+              InitiatingProcessFileName, InitiatingProcessCommandLine
+),
+(
+    DeviceImageLoadEvents
+    | where Timestamp > ago(30d)
+    | where InitiatingProcessFileName =~ "RegSchdTask.exe"
+    | where FileName in~ ("AsTaskSched.dll", "pthreadVC2.dll")
+       or not (FolderPath startswith @"C:\Windows\"
+               or FolderPath startswith @"C:\Program Files")
+    | extend Kind = "SideloadedDll", Detail = strcat(FolderPath, "\\", FileName)
+    | project Timestamp, DeviceName, Kind, Detail,
+              AccountName = InitiatingProcessAccountName,
+              FileName, SHA256,
+              InitiatingProcessFileName, InitiatingProcessCommandLine = ""
+)
+| order by Timestamp desc
+
+
+// ------------------------------------------------------------
+// 5. ISO / DISC-IMAGE LURE EXECUTION
+//    Document-named ISO archives landing in mail / download
+//    paths, and processes launched from a mounted disc image
+//    (mounted ISOs surface as a drive root with no standard
+//    program-files structure).
+// ------------------------------------------------------------
+union isfuzzy=true
+(
+    DeviceFileEvents
+    | where Timestamp > ago(30d)
+    | where FileName endswith ".iso" or FileName endswith ".img"
+    | where FolderPath has_any (@"\Downloads\", @"\Temp\",
+                                 @"\AppData\Local\Microsoft\Outlook",
+                                 @"\INetCache\", @"\Desktop\")
+    | where FileName has_any ("protocol", "cooperation", "agreement",
+                               "contract", "petroleum", "invoice",
+                               "document", "report", "official")
+    | extend Kind = "IsoLureDrop", Detail = strcat(FolderPath, "\\", FileName)
+    | project Timestamp, DeviceName, Kind, Detail,
+              AccountName = InitiatingProcessAccountName,
+              InitiatingProcessFileName
+),
+(
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where FolderPath matches regex @"^[D-Z]:\\[^\\]+\.exe$"      // exe at root of a non-system drive
+    | where InitiatingProcessFileName =~ "explorer.exe"
+    | extend Kind = "MountedImageExec", Detail = FolderPath
+    | project Timestamp, DeviceName, Kind, Detail,
+              AccountName, InitiatingProcessFileName
+)
+| order by Timestamp desc
+
+
+// ------------------------------------------------------------
+// 6. MIXEDKEY ENVIRONMENTAL KEYING — VOLUME SERIAL RECON
+//    MIXEDKEY derives its decryption key from the volume
+//    serial number. Command-line volume-serial harvesting
+//    shortly before or after an unsigned DLL load is a strong
+//    correlation signal. Weak on its own: correlate.
+// ------------------------------------------------------------
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where (FileName in~ ("cmd.exe", "powershell.exe", "pwsh.exe")
+         and ProcessCommandLine has_any ("vol c:", "vol C:",
+                                          "VolumeSerialNumber",
+                                          "Get-Volume", "Win32_LogicalDisk"))
+   or (FileName =~ "wmic.exe"
+       and ProcessCommandLine has_any ("volumeserialnumber", "logicaldisk"))
+| project Timestamp, DeviceName, AccountName,
+          FileName, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by Timestamp desc
+
+
+// ------------------------------------------------------------
+// 7. SCHEDULED-TASK PERSISTENCE POINTING AT USER-WRITABLE PATHS
+//    The campaign persists via scheduled tasks. Catches task
+//    creation whose action lives in a user-writable directory,
+//    via both the command line and the OS-generated event.
+// ------------------------------------------------------------
+union isfuzzy=true
+(
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where FileName =~ "schtasks.exe"
+       or (FileName in~ ("powershell.exe", "pwsh.exe")
+           and ProcessCommandLine has "Register-ScheduledTask")
+    | where ProcessCommandLine has_any ("/create", "Register-ScheduledTask")
+    | where ProcessCommandLine has_any (
+        @"\AppData\", @"\Temp\", @"\Downloads\",
+        @":\Users\Public\", @"\ProgramData\")
+    | extend Kind = "TaskCreateCmd", Detail = ProcessCommandLine
+    | project Timestamp, DeviceName, Kind, Detail,
+              AccountName, InitiatingProcessFileName
+),
+(
+    DeviceEvents
+    | where Timestamp > ago(30d)
+    | where ActionType == "ScheduledTaskCreated"
+    | extend TaskInfo = tostring(AdditionalFields)
+    | where TaskInfo has_any (@"\AppData\", @"\Temp\", @"\Downloads\",
+                               @"Users\Public", @"\ProgramData\")
+    | extend Kind = "TaskCreatedEvent", Detail = TaskInfo
+    | project Timestamp, DeviceName, Kind, Detail,
+              AccountName = InitiatingProcessAccountName,
+              InitiatingProcessFileName
+)
+| order by Timestamp desc
+
+
+// ------------------------------------------------------------
+// 8. KILL-CHAIN CORRELATION (HIGH FIDELITY)
+//    A sideload artefact (Query 1/4 signals) followed by
+//    Telegram Bot API traffic from the same device within
+//    24 hours. A hit here is a live TELESHIM intrusion.
+// ------------------------------------------------------------
+let Stage1_Sideload = union isfuzzy=true
+(
+    DeviceFileEvents
+    | where Timestamp > ago(14d)
+    | where FileName in~ ("AsTaskSched.dll", "pthreadVC2.dll", "RegSchdTask.exe")
+    | project DeviceName, Stage1Time = Timestamp,
+              Stage1Signal = strcat("FileDrop: ", FileName)
+),
+(
+    DeviceImageLoadEvents
+    | where Timestamp > ago(14d)
+    | where InitiatingProcessFileName =~ "RegSchdTask.exe"
+    | project DeviceName, Stage1Time = Timestamp,
+              Stage1Signal = strcat("DllLoad: ", FileName)
+);
+let Stage2_TelegramC2 = DeviceNetworkEvents
+| where Timestamp > ago(14d)
+| where RemoteUrl has "api.telegram.org"
+| where InitiatingProcessFileName !in~ ("telegram.exe", "chrome.exe",
+                                         "msedge.exe", "firefox.exe", "brave.exe")
+| project DeviceName, C2Time = Timestamp,
+          C2Process = InitiatingProcessFileName,
+          C2ProcessPath = InitiatingProcessFolderPath;
+Stage1_Sideload
+| join kind=inner Stage2_TelegramC2 on DeviceName
+| where C2Time between (Stage1Time .. (Stage1Time + 24h))
+| project Stage1Time, Stage1Signal, C2Time,
+          DeviceName, C2Process, C2ProcessPath
+| order by Stage1Time desc

@@ -1,0 +1,11 @@
+// Source: https://github.com/obsida-uk/Azure-BlueTeam-Toolkit
+// Collected: 2026-07-26
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == "4738"
+| parse EventData with * 'NewUacValue">' NewUacValue '</Data>' *
+| parse EventData with * 'TargetUserName">' UserName '</Data>' *
+| parse EventData with * 'SubjectUserName">' Actor '</Data>' *
+| where NewUacValue == "0x2010"
+| project TimeGenerated, Activity, UserName, Actor
