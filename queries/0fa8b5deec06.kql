@@ -1,0 +1,11 @@
+// Source: https://github.com/0xAnalyst/DefenderATPQueries
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+Tags:
+Query:
+DeviceEvents
+| where ActionType == 'ServiceInstalled'
+| extend parsed = parse_json(AdditionalFields)
+| where parsed.ServiceName has_any ("screenconnect","Radmin", "Splashtop", "Atera", "AmmyyAdmin", "jumpcloud", "GoToAssist", "anydesk")
+References:

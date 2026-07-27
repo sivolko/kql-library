@@ -1,0 +1,7 @@
+// Source: https://github.com/dferrell30/ShadowTraceOps-CommunityEdition
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+IdentityLogonEvents
+| join DeviceProcessEvents on AccountName
+| project Timestamp, AccountName, DeviceName, FileName

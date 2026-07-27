@@ -1,0 +1,22 @@
+// Source: https://github.com/EternalR00ted/Microsoft-Sentinel-KQLs
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "ServiceInstalled"
+| extend ServiceFileName = tostring(parse_json(AdditionalFields).ServiceFileName)
+| extend ServiceName = tostring(parse_json(AdditionalFields).ServiceName)
+| where ServiceFileName has_any (
+    @"\Users\", @"\AppData\", @"\Temp\",
+    @"\Pictures\", @"\Downloads\",
+    @"\ProgramData\"
+)
+| where ServiceFileName !contains @"C:\ProgramData\Microsoft\Windows Defender"
+| where InitiatingProcessFileName !in~ (
+    "services.exe", "MsiExec.exe", "TrustedInstaller.exe",
+    "IntuneManagementExtension.exe"
+)
+| project Timestamp, DeviceId, ReportId, DeviceName,
+          ServiceName, ServiceFileName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          InitiatingProcessAccountName

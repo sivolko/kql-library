@@ -1,0 +1,39 @@
+// Source: https://github.com/davidalonsod/Dalonso-Security-Repo
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+let BulkThreshold = 10;        // invitations per hour that trigger the rule
+let LookbackPeriod = 1h;
+
+OfficeActivity
+| where TimeGenerated > ago(LookbackPeriod)
+| where RecordType == "MicrosoftTeams"
+| where Operation in ("MemberAdded", "TeamsSessionStarted", "InviteAccepted")
+    or (Operation == "MemberAdded" and Members has "#EXT#")
+| extend MemberUPN = tostring(parse_json(Members)[0].UPN)
+| where MemberUPN has "#EXT#"                         // guest UPN pattern
+| summarize
+    GuestCount      = dcount(MemberUPN),
+    GuestList       = make_set(MemberUPN, 20),
+    TeamsInvolved   = make_set(TeamName, 10),
+    FirstInvite     = min(TimeGenerated),
+    LastInvite      = max(TimeGenerated)
+    by UserId, UserType, ClientIP, OfficeWorkload
+| where GuestCount >= BulkThreshold
+| extend
+    InviterDomain   = tostring(split(UserId, "@")[1]),
+    DurationMinutes = datetime_diff("minute", LastInvite, FirstInvite)
+| extend AlertSeverity = case(
+    GuestCount >= 30, "High",
+    GuestCount >= 15, "Medium",
+    "Low")
+| project
+    TimeGenerated  = LastInvite,
+    UserId,
+    InviterDomain,
+    GuestCount,
+    GuestList,
+    TeamsInvolved,
+    DurationMinutes,
+    ClientIP,
+    AlertSeverity

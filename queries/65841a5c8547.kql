@@ -1,0 +1,21 @@
+// Source: https://github.com/troytrojan01/ot-cybersecurity-with-sentinel
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(10m)
+| where DeviceVendor in~ ("Dragos", "Forescout")
+| extend MitreIcs = DeviceCustomString3
+| where MitreIcs has "T0858"
+   or Activity has "Mode Change"
+   or Activity has "Operating Mode"
+| project TimeGenerated,
+          Platform = strcat(DeviceVendor, " / ", DeviceProduct),
+          RuleId = DeviceEventClassID,
+          Activity,
+          Severity = toint(LogSeverity),
+          SourceIP,
+          DestinationIP,
+          DstAssetRole = DeviceCustomString2,
+          Message
+| order by TimeGenerated desc

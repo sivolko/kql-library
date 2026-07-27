@@ -1,0 +1,10 @@
+// Source: https://github.com/agent4t2/microsoft-sentinel
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(90d)
+| where OfficeWorkload =~ "MicrosoftTeams"
+| where UserId has_any("onmicrosoft.com")
+| where not(UserId has_any("iqor","inspiro"))
+| summarize count() by UserId

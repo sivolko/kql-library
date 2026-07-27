@@ -1,0 +1,241 @@
+// Source: https://github.com/LucioBenzor/CodeSamples
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(1d)
+| where ActionType startswith "Asr"
+| summarize count(DeviceName) by ActionType
+| sort by count_DeviceName asc
+
+
+
+//This query will look at ASR events audited or blocked by the block credential stealing processes from touching lsass.exe rule and output useful information on the executables
+DeviceEvents
+| where Timestamp > ago(1d) 
+| where ActionType == "AsrLsassCredentialTheftAudited" == "AsrLsassCredentialTheftBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("InitiatingProcessSHA1",10000)
+| distinct IsAudit, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//This query will look at ASR events from the Psecewmi rule in audit or block mode
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType =="AsrPsexecWmiChildProcessAudited" or ActionType == "AsrPsexecWmiChildProcessBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("InitiatingProcessSHA1",10000000)
+| distinct IsAudit, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//This query will detect the block use of copied or impersonated system tools
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrAbusedSystemToolAudited"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//This query will evaluate the Audit and Block events for the Prevent booting into safe mode ASR rule
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrSafeModeRebootedAudited" or ActionType == "AsrSafeModeRebootBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//AdobeReaderChildProcess
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType == "AsrAdobeReaderChildProcessAudited" or ActionType == "AsrAdobeReaderChildProcessBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",1000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+
+//ExecutableEmailContent
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType == "AsrExecutableEmailContentAudited" or ActionType == "AsrExecutableEmailContentBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+
+//ExecutableOfficeContent
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrExecutableOfficeContentAudited" or ActionType == "AsrExecutableOfficeContentBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("InitiatingProcessSHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//LsassCredentialTheft
+DeviceEvents
+| where Timestamp > ago(7d) 
+| where ActionType == "AsrLsassCredentialTheftAudited"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("InitiatingProcessSHA1",10000)
+| distinct IsAudit, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//ObfuscatedScript.For this one, we can't use any of the hash since it always leads back to Office apps such as Excel.  Doesn't matter if SHA1 or InitiatingProcessSHA1 is used.
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrObfuscatedScriptAudited" or ActionType == "AsrObfuscatedScriptBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("InitiatingProcessSHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, InitiatingProcessSHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//OfficeChildProcess
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrOfficeChildProcessAudited" or ActionType == "AsrOfficeChildProcessBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//OfficeCommAppChildProcess
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrOfficeCommAppChildProcessAudited" or ActionType == "AsrOfficeCommAppChildProcessBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//OfficeMacroWin32ApiCalls
+DeviceEvents
+| where Timestamp > ago(1d) 
+| where ActionType == "AsrOfficeMacroWin32ApiCallsAudited" or ActionType == "AsrOfficeMacroWin32ApiCallsBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("InitiatingProcessSHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//OfficeProcessInjection
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrOfficeProcessInjectionAudited" or ActionType == "AsrOfficeProcessInjectionBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//PsexecWmiChildProcess.The Signer/Issuer doesn't help here since the majority is Microsoft or Windows signed.
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType =="AsrPsexecWmiChildProcessAudited" or ActionType == "AsrPsexecWmiChildProcessBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("InitiatingProcessSHA1",10000000)
+| distinct IsAudit, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//PersistenceThroughWmi
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrPersistenceThroughWmiAudited" or ActionType == "AsrPersistenceThroughWmiBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//Obfuscated Scripts
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrObfuscatedScriptAudited" or ActionType == "AsrObfuscatedScriptBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//Ransomware
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrRansomwareAudited" or ActionType == "AsrRansomwareBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//ScriptExecutableDownload. There's not much to this query since scripts are not signed
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType == "AsrScriptExecutableDownloadAudited" or ActionType == "AsrScriptExecutableDownloadBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+
+//UntrustedExecutable
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrUntrustedExecutableAudited" or ActionType == "AsrUntrustedExecutableBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+//UntrustedUsbProcess
+DeviceEvents
+| where Timestamp > ago(30d) 
+| where ActionType == "AsrUntrustedUsbProcessAudited" or ActionType == "AsrUntrustedUsbProcessBlocked"
+| extend parsedfields = parse_json(AdditionalFields)
+| extend IsAudit = tostring (parsedfields.IsAudit)
+| invoke FileProfile("SHA1",10000)
+| distinct IsAudit, FolderPath, FileName, ProcessCommandLine, SHA1, IsExecutable, ThreatName, GlobalPrevalence, SoftwareName, Publisher, Signer, Issuer, IsCertificateValid, IsRootSignerMicrosoft, SignatureState
+
+
+
+
+
+
+
+
+

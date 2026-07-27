@@ -1,0 +1,10 @@
+// Source: https://github.com/leandroer/AI-Security-Incident-Response-Lab
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+let SensitiveDocs = PurviewSensitivity_CL | where TimeGenerated > ago(7d) | where SensitivityLabel_s in~ ("Confidential", "Highly Confidential", "Restricted") | project FileName_s, SiteUrl_s, SensitivityLabel_s, DataOwner_s;
+let BroadSharing = OfficeActivity | where TimeGenerated > ago(24h) | where Operation in ("AnonymousLinkCreated", "SecureLinkCreated", "SharingSet", "AddedToSecureLink") | project TimeGenerated, UserId, FileName_s, Site_Url, Operation;
+BroadSharing
+| join kind=inner SensitiveDocs on $left.FileName_s == $right.FileName_s
+| extend DetectionName = "PURVIEW03 - Copilot Oversharing / Sensitive Data Broad Sharing", Severity = "High"
+| project TimeGenerated, DetectionName, Severity, UserId, Operation, FileName_s, Site_Url, SensitivityLabel_s, DataOwner_s

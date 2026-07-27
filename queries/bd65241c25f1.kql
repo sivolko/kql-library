@@ -1,0 +1,15 @@
+// Source: https://github.com/troytrojan01/ot-cybersecurity-with-sentinel
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+CommonSecurityLog
+| where TimeGenerated > ago(24h)
+| where DeviceVendor in~ ("Dragos", "Forescout")
+| extend Sev = toint(LogSeverity)
+| extend SeverityBucket = case(
+    Sev >= 8, "1-Critical (8-10)",
+    Sev >= 5, "2-High (5-7)",
+    Sev >= 3, "3-Medium (3-4)",
+                "4-Low (0-2)")
+| summarize Events = count() by DeviceProduct, SeverityBucket
+| order by DeviceProduct asc, SeverityBucket asc

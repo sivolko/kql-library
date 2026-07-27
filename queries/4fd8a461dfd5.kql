@@ -1,0 +1,8 @@
+// Source: https://github.com/smaarmstrong/aztrain
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+AzureActivity
+| where TimeGenerated > ago(1h)
+| summarize Total = count(), Failed = countif(ActivityStatusValue == "Failed"), Callers = dcount(Caller) by ResourceGroup
+| sort by Total desc, ResourceGroup asc

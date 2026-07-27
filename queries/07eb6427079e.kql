@@ -1,0 +1,14 @@
+// Source: https://github.com/EmreOzanMemis/AzureSentinel
+// Collected: 2026-07-27
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where TimeGenerated > ago(30d)
+| where Operation in ("TeamCreated", "TeamDeleted")
+| summarize
+    ['Count of Teams Created']=dcountif(TeamName, Operation == "TeamCreated"),
+    ['List of Teams Created']=make_set_if(TeamName, Operation == "TeamCreated"),
+    ['Count of Teams Deleted']=dcountif(TeamName, Operation == "TeamDeleted"),
+    ['List of Teams Deleted']=make_set_if(TeamName, Operation == "TeamDeleted")
+    by Week=startofweek(TimeGenerated)
+| sort by Week desc 
