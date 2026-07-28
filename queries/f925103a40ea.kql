@@ -1,0 +1,24 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-07-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+let top20locations=
+    SigninLogs
+    | where TimeGenerated > ago(30d)
+    | where ResultType == 0
+    | extend DeviceTrustType = tostring(DeviceDetail.trustType)
+    | where NetworkLocationDetails == '[]'
+        and isempty(DeviceTrustType)
+        and AuthenticationRequirement == "singleFactorAuthentication"
+    | summarize Count=count()by IPAddress
+    | top 20 by Count;
+SigninLogs
+| where ResultType == 0
+| where IPAddress in (top20locations)
+| summarize
+    ['Total Signin Count']=count(),
+    ['Distinct User Count']=dcount(UserPrincipalName),
+    ['List of Users']=make_set(UserPrincipalName),
+    ['Distinct Application Count']=dcount(AppDisplayName),
+    ['List of Applications']=make_set(AppDisplayName)
+    by IPAddress

@@ -1,5 +1,215 @@
 [
   {
+    "id": "b8cc3c64230c",
+    "title": "Data connector required for this query - Azure Active Directory - Audit Logs",
+    "description": "Detect when an Azure AD Entitlement Package is created. You may want to review to see what resources and roles have been included in the package.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago(1d)\n| where OperationName == \"Create access package\"\n| where TargetResources[0].type == \"AccessPackage\"\n| extend AccessPackageName = tostring(TargetResources[0].displayName)\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| project TimeGenerated, OperationName, AccessPackageName, Actor",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-AccessPackageCreated.kql",
+    "filename": "Audit-AccessPackageCreated.kql",
+    "collected_at": "2026-07-28T05:18:04.579912+00:00"
+  },
+  {
+    "id": "c2294a4c1811",
+    "title": "Detect when a user activates an Azure AD PIM role never seen by them before",
+    "description": "Detect when a user activates an Azure AD PIM role never seen by them before",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago(180d) and TimeGenerated < ago(1d)\n| where OperationName == \"Add member to role completed (PIM activation)\"\n| extend User = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend ['Azure AD Role Name'] = tostring(TargetResources[0].displayName)\n| distinct User, ['Azure AD Role Name']\n| join kind=rightanti (\n    AuditLogs\n    | where TimeGenerated > ago(1d)\n    | where OperationName == \"Add member to role completed (PIM activation)\"\n    | extend User = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n    | extend ['Azure AD Role Name'] = tostring(TargetResources[0].displayName)\n    )\n    on User, ['Azure AD Role Name']\n| extend IPAddress = tostring(parse_json(tostring(InitiatedBy.user)).ipAddress)\n| project TimeGenerated, User, ['Azure AD Role Name']",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-NewPIMRoleActivated.kql",
+    "filename": "Audit-NewPIMRoleActivated.kql",
+    "collected_at": "2026-07-28T05:18:03.895461+00:00"
+  },
+  {
+    "id": "1bca52b088a5",
+    "title": "Detect when a user adds delegated or application permissions to an Azure AD app for the first time.",
+    "description": "Detect when a user adds delegated or application permissions to an Azure AD app for the first time.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet newusers=\nAuditLogs\n| where TimeGenerated > ago(365d) and TimeGenerated < ago(1d)\n| where OperationName in (\"Add app role assignment to service principal\",\"Add delegated permission grant\")\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| distinct Actor\n//Find users who add access to an app for the first time in the last day\n| join kind=rightanti (\nAuditLogs\n| where TimeGenerated > ago(1d)\n| where OperationName in (\"Add app role assignment to service principal\",\"Add delegated permission grant\")\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| distinct Actor )\non Actor;\n//Retrieve the list of permissions granted by the first time users\nlet delegatedaccess=\n    AuditLogs\n    | where TimeGenerated > ago(1d)\n    | where OperationName has \"Add delegated permission grant\"\n    | extend x = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[0].newValue)))\n    | extend ['Permissions granted'] = split(x, ' ')\n    | extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n    | where Actor in (newusers)\n    | extend ['Service Principal ObjectId'] = tostring(TargetResources[1].id)\n    | extend Activity = strcat(\"Delegated access added to application\")\n    | project\n        TimeGenerated,\n        Activity,\n        ['Permissions granted'],\n        ['Service Principal ObjectId'],\n        Actor;\nlet appaccess=\n    AuditLogs\n    | where TimeGenerated > ago(1d)\n    | where OperationName has \"Add app role assignment to service principal\"\n    | extend x = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue)))\n    | extend ['Permissions granted'] = split(x, ' ')\n    | extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n    | where Actor in (newusers)\n    | extend Activity = strcat(\"Application access added to application\")\n    | extend ['Service Principal ObjectId'] = tostring(TargetResources[1].id)\n    | project\n        TimeGenerated,\n        Activity,\n        ['Permissions granted'],\n        ['Service Principal ObjectId'],\n        Actor;\nunion delegatedaccess, appaccess",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/OAuth-FirstTimeAppConsent.kql",
+    "filename": "OAuth-FirstTimeAppConsent.kql",
+    "collected_at": "2026-07-28T05:18:03.248511+00:00"
+  },
+  {
+    "id": "6443d4c45966",
+    "title": "List the bulk activities attempted by your privileged Azure AD users and parse the results",
+    "description": "List the bulk activities attempted by your privileged Azure AD users and parse the results",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where OperationName has_all (\"(bulk)\", \"finished\")\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| project TimeGenerated, Actor, ResultDescription, OperationName\n| parse ResultDescription with * \"Total activities count:\" ['Total Activity Count'] \";\" *\n| parse ResultDescription with * \"succeeded activities count\" ['Total Succeeded'] \";\" *\n| parse ResultDescription with * \"failed activities count\" ['Total Failed']\n| project\n    TimeGenerated,\n    Actor,\n    OperationName,\n    ['Total Activity Count'],\n    ['Total Succeeded'],\n    ['Total Failed'] ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-ListBulkActivities.kql",
+    "filename": "Audit-ListBulkActivities.kql",
+    "collected_at": "2026-07-28T05:18:02.531557+00:00"
+  },
+  {
+    "id": "d68db0905605",
+    "title": "Alert when the redirect URI list is changed for a service principal",
+    "description": "Alert when the redirect URI list is changed for a service principal",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where OperationName == \"Update service principal\"\n| mv-expand TargetResources\n| extend modifiedProperties = parse_json(TargetResources).modifiedProperties\n| mv-expand modifiedProperties \n| where modifiedProperties.displayName == \"AppAddress\" \n| extend newValue = tostring(parse_json(modifiedProperties).newValue)\n| mv-expand todynamic(newValue)\n| extend RedirectURI = tostring(newValue.Address)\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend ['Service Principal Name'] = tostring(TargetResources.displayName)\n| summarize ['List of Redirect URIs']=make_list(RedirectURI) by Actor, ['Service Principal Name']",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-RedirectURIChanged.kql",
+    "filename": "Audit-RedirectURIChanged.kql",
+    "collected_at": "2026-07-28T05:18:01.843625+00:00"
+  },
+  {
+    "id": "3a49775d443e",
+    "title": "Create a summary of PIM activations for all your users per week",
+    "description": "Create a summary of PIM activations for all your users per week",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago (30d)\n| where OperationName == \"Add member to role completed (PIM activation)\"\n| extend User = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend Role = tostring(TargetResources[0].displayName)\n| where isnotempty(User)\n| summarize\n    ['Roles Activated']=make_list(Role),\n    ['Times Activated']=make_list(TimeGenerated)\n    by User, ['Week Starting']=startofweek(TimeGenerated)\n| sort by User asc, ['Week Starting'] desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-SummarizeWeeklyPIM.kql",
+    "filename": "Audit-SummarizeWeeklyPIM.kql",
+    "collected_at": "2026-07-28T05:18:01.163222+00:00"
+  },
+  {
+    "id": "b731a41a35cc",
+    "title": "Visualize successful self service password resets and account unlocks over time",
+    "description": "Visualize successful self service password resets and account unlocks over time",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago (180d)\n| where OperationName in (\"Reset password (self-service)\", \"Unlock user account (self-service)\")\n| summarize\n    ['Password Reset']=countif(OperationName == \"Reset password (self-service)\" and ResultDescription == \"Successfully completed reset.\"),\n    ['Account Unlock']=countif(OperationName == \"Unlock user account (self-service)\" and ResultDescription == \"Success\")\n    by startofweek(TimeGenerated)\n| render timechart\n    with (\n    ytitle=\"Count\",\n    xtitle=\"Day\",\n    title=\"Self Service Password Resets and Account Unlocks over time\")",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-VisualizeSSPR.kql",
+    "filename": "Identity-VisualizeSSPR.kql",
+    "collected_at": "2026-07-28T05:18:00.323449+00:00"
+  },
+  {
+    "id": "4f5ab6558e0b",
+    "title": "Calculate the percentage of signins to each of your Azure AD applications that used MFA",
+    "description": "Calculate the percentage of signins to each of your Azure AD applications that used MFA",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(30d)\n| where ResultType == 0\n| summarize\n    ['Total Signin Count']=count(),\n    ['Total MFA Count']=countif(AuthenticationRequirement == \"multiFactorAuthentication\"),\n    ['Total non MFA Count']=countif(AuthenticationRequirement == \"singleFactorAuthentication\")\n    by AppDisplayName\n| project\n    AppDisplayName,\n    ['Total Signin Count'],\n    ['Total MFA Count'],\n    ['Total non MFA Count'],\n    MFAPercentage=(todouble(['Total MFA Count']) * 100 / todouble(['Total Signin Count']))\n| sort by ['Total Signin Count'] desc, MFAPercentage asc  ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-MFAPercentageperapp.kql",
+    "filename": "Identity-MFAPercentageperapp.kql",
+    "collected_at": "2026-07-28T05:17:55.196331+00:00"
+  },
+  {
+    "id": "f925103a40ea",
+    "title": "Find the top 20 IP addresses that are unknown to Azure AD, with users using unknown devices and single factor auth",
+    "description": "Then find the users and applications being accessed from each to help build out conditional access policy",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet top20locations=\n    SigninLogs\n    | where TimeGenerated > ago(30d)\n    | where ResultType == 0\n    | extend DeviceTrustType = tostring(DeviceDetail.trustType)\n    | where NetworkLocationDetails == '[]'\n        and isempty(DeviceTrustType)\n        and AuthenticationRequirement == \"singleFactorAuthentication\"\n    | summarize Count=count()by IPAddress\n    | top 20 by Count;\nSigninLogs\n| where ResultType == 0\n| where IPAddress in (top20locations)\n| summarize\n    ['Total Signin Count']=count(),\n    ['Distinct User Count']=dcount(UserPrincipalName),\n    ['List of Users']=make_set(UserPrincipalName),\n    ['Distinct Application Count']=dcount(AppDisplayName),\n    ['List of Applications']=make_set(AppDisplayName)\n    by IPAddress",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-Top20RiskyLocations.kql",
+    "filename": "Identity-Top20RiskyLocations.kql",
+    "collected_at": "2026-07-28T05:17:54.543546+00:00"
+  },
+  {
+    "id": "6298f6381c53",
+    "title": "Find users that have connected successfully via legacy auth for the first time",
+    "description": "First find users with existing successful legacy auth connections",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet knownusers=\n    SigninLogs\n    | where TimeGenerated > ago(90d) and TimeGenerated < ago(1d)\n    | where ResultType == 0\n    | where ClientAppUsed !in (\"Mobile Apps and Desktop clients\", \"Browser\")\n    | distinct UserPrincipalName;\n//Find any new connections in the last day from users not in the existing list\nSigninLogs\n| where TimeGenerated > ago(1d)\n| where ResultType == 0\n| where ClientAppUsed !in (\"Mobile Apps and Desktop clients\", \"Browser\")\n| where isnotempty(ClientAppUsed)\n| where UserPrincipalName !in (knownusers)\n| distinct UserPrincipalName, AppDisplayName, ClientAppUsed, IPAddress\n\n//Advanced Hunting query\n\n//Data connector required for this query - Advanced Hunting with Azure AD P2 License\n\n//First find users with existing successful legacy auth connections. Advanced Hunting only stores 30 days of data, but otherwise the same query works\nlet knownusers=\n    AADSignInEventsBeta\n    | where Timestamp > ago(30d) and Timestamp < ago(1d)\n    | where LogonType == @\"[\"\"interactiveUser\"\"]\"\n    | where ErrorCode == 0\n    | where ClientAppUsed !in (\"Mobile Apps and Desktop clients\", \"Browser\")\n    | where isnotempty(ClientAppUsed)\n    | distinct AccountUpn;\n//Find any new connections in the last day from users not in the existing list\nAADSignInEventsBeta\n| where Timestamp > ago(1d)\n| where LogonType == @\"[\"\"interactiveUser\"\"]\"\n| where ErrorCode == 0\n| where ClientAppUsed !in (\"Mobile Apps and Desktop clients\", \"Browser\")\n| where isnotempty(ClientAppUsed)\n| where AccountUpn !in (knownusers)\n| distinct AccountUpn, Application, ClientAppUsed, IPAddress\n",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-FirstTimeLegacyAuth.kql",
+    "filename": "Identity-FirstTimeLegacyAuth.kql",
+    "collected_at": "2026-07-28T05:17:53.891301+00:00"
+  },
+  {
+    "id": "8352fca42ff4",
+    "title": "Visualize the MFA types used by your users, i.e text message, mobile app notification, verification code",
+    "description": "Visualize the MFA types used by your users, i.e text message, mobile app notification, verification code",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago (30d)\n| where AuthenticationRequirement == \"multiFactorAuthentication\"\n| project AuthenticationDetails\n| extend ['MFA Method'] = tostring(parse_json(AuthenticationDetails)[1].authenticationMethod)\n| summarize Count=count()by ['MFA Method']\n| where ['MFA Method'] != \"Previously satisfied\" and isnotempty(['MFA Method'])\n| sort by Count desc\n| render barchart with (title=\"Types of MFA Methods used\")",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-VisualizeMFAMethods.kql",
+    "filename": "Identity-VisualizeMFAMethods.kql",
+    "collected_at": "2026-07-28T05:17:53.207573+00:00"
+  },
+  {
+    "id": "2d2ac1a04180",
+    "title": "Data connector required for this query - Azure Active Directory - Signin Logs",
+    "description": "Summarize legacy auth authentications by type (such as ActiveSync, IMAP etc) and which accounts are using those protocols",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nunion SigninLogs, AADNonInteractiveUserSignInLogs\n| where TimeGenerated > ago(30d)\n| where ResultType == 0\n| where ClientAppUsed in (\"Exchange ActiveSync\", \"Exchange Web Services\", \"AutoDiscover\", \"Unknown\", \"POP3\", \"IMAP4\", \"Other clients\", \"Authenticated SMTP\", \"MAPI Over HTTP\", \"Offline Address Book\")\n| summarize ['Count of legacy auth attempts'] = count()by ClientAppUsed, UserPrincipalName\n| sort by ClientAppUsed asc, ['Count of legacy auth attempts'] desc \n\n//Advanced Hunting query\n\n//Data connector required for this query - Advanced Hunting with Azure AD P2 License\n\nAADSignInEventsBeta\n| where Timestamp > ago(30d)\n| where ErrorCode == 0\n| where ClientAppUsed in (\"Exchange ActiveSync\", \"Exchange Web Services\", \"AutoDiscover\", \"Unknown\", \"POP3\", \"IMAP4\", \"Other clients\", \"Authenticated SMTP\", \"MAPI Over HTTP\", \"Offline Address Book\")\n| summarize ['Count of legacy auth attempts'] = count()by ClientAppUsed, AccountUpn\n| sort by ClientAppUsed asc, ['Count of legacy auth attempts'] desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-SummarizeLegacyAuth.kql",
+    "filename": "Identity-SummarizeLegacyAuth.kql",
+    "collected_at": "2026-07-28T05:17:52.534262+00:00"
+  },
+  {
+    "id": "addd0b211af6",
+    "title": "Data connector required for this query - Azure Active Directory - Signin Logs",
+    "description": "Detect when a user is blocked by Conditional Access after failing 3 unique CA policies or 3 unique applications over a 2 hour period",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(1d)\n| where ResultType == \"53003\"\n| mv-expand ConditionalAccessPolicies\n| extend ['CA Policy Name'] = tostring(ConditionalAccessPolicies.displayName)\n| where ConditionalAccessPolicies.result == \"failure\"\n| summarize\n    ['Total count of logon failures']=count(),\n    ['Count of failed applications']=dcount(AppDisplayName),\n    ['List of failed applications']=make_set(AppDisplayName),\n    ['Count of failed policy names']=dcount(['CA Policy Name']),\n    ['List of failed policy names']=make_set(['CA Policy Name'])\n    by UserPrincipalName, bin(TimeGenerated, 2h)\n| where ['Count of failed applications'] >= 3 or ['Count of failed policy names'] >= 3",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-MultipleCAFailures.kql",
+    "filename": "Identity-MultipleCAFailures.kql",
+    "collected_at": "2026-07-28T05:17:51.519356+00:00"
+  },
+  {
+    "id": "a0eb0c819084",
+    "title": "Data connector required for this query - Azure Active Directory - Signin Logs",
+    "description": "Find the top 20 most popular applications in your tenant that have had no Conditional Access policies (success or failure) applied",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-07-28\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet apps=\n    SigninLogs\n    | where TimeGenerated > ago (30d)\n    | project TimeGenerated, ConditionalAccessPolicies, AppDisplayName\n//Exclude native Microsoft apps that you can't enforce policy on or that are covered natively in Office 365\n    | where AppDisplayName !in (\"Microsoft Office Web Apps Service\", \"Microsoft App Access Panel\", \"Office Online Core SSO\", \"Microsoft Authentication Broker\", \"Microsoft Account Controls V2\", \"Microsoft 365 Support Service\",\"Office Online Maker SSO\",\"My Apps\",\"My Profile\")\n    | mv-expand ConditionalAccessPolicies\n    | extend CAResult = tostring(ConditionalAccessPolicies.result)\n    | summarize ResultSet=make_set(CAResult) by AppDisplayName\n    | where ResultSet !has \"success\" or ResultSet !has \"failure\"\n    | project AppDisplayName;\nSigninLogs\n| where TimeGenerated > ago(30d)\n| where ResultType == 0\n| where AppDisplayName in (apps)\n| summarize Count=count()by AppDisplayName\n| top 20 by Count",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-Top20AppswithnoCA.kql",
+    "filename": "Identity-Top20AppswithnoCA.kql",
+    "collected_at": "2026-07-28T05:17:50.830817+00:00"
+  },
+  {
     "id": "24df7be9ba3f",
     "title": "DET007: current download volume materially exceeds a bounded historical user baseline.",
     "description": "Exclude governed backup, migration, eDiscovery, and legal export identities before enabling.",
