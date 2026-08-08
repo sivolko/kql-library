@@ -1,0 +1,16 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-08-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+let isGUID = "[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}";
+SigninLogs
+| where TimeGenerated > ago(30d)
+| mv-expand todynamic(AuthenticationDetails)
+| extend ['Authentication Method'] = tostring(AuthenticationDetails.authenticationMethod)
+//Exclude previously satisifed, passwords and other data and any UserPrincipalName that comes through as a guid
+| where ['Authentication Method'] !in ("Previously satisfied", "Password", "Other")
+    and isnotempty(['Authentication Method'])
+    and not(UserPrincipalName matches regex isGUID)
+//Create pivot table of each method and the count by user
+| evaluate pivot(['Authentication Method'], count(), UserPrincipalName)
+| sort by UserPrincipalName asc

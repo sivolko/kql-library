@@ -1,0 +1,28 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-08-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+let privusers=
+    IdentityInfo
+    | where TimeGenerated > ago(21d)
+    | summarize arg_max(TimeGenerated, *) by AccountUPN
+    | where isnotempty(AssignedRoles)
+    | where AssignedRoles != "[]"
+    | distinct AccountUPN;
+//Find actions taken by those users previously
+AuditLogs
+| where TimeGenerated > ago(90d) and TimeGenerated < ago(1d)
+| extend UserPrincipalName = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| where isnotempty(UserPrincipalName)
+| where UserPrincipalName in (privusers)
+| distinct UserPrincipalName, OperationName
+//Find any new actions taken in the last day not seen before from that user
+| join kind=rightanti (
+    AuditLogs
+    | where TimeGenerated > ago(1d)
+    | extend UserPrincipalName = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+    | where UserPrincipalName in (privusers)
+    | where isnotempty(UserPrincipalName)
+    )
+    on UserPrincipalName, OperationName
+| project TimeGenerated, UserPrincipalName, OperationName, Category, CorrelationId

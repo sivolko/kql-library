@@ -1,0 +1,41 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-08-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+//Create a list of all result codes within a single sign in to Azure AD
+| summarize MFA=make_list(ResultType) by CorrelationId
+//Find correlation ids where the user was sent to third party MFA (ResultType 50158) but there is no subsequent success (ResultType 0)
+| where MFA has "50158" and MFA !has "0"
+//Join back to SigninLogs table to find the sign in details
+| join kind=inner (SigninLogs) on CorrelationId
+| project
+    TimeGenerated,
+    UserPrincipalName,
+    UserType,
+    AppDisplayName,
+    IPAddress,
+    Location,
+    UserAgent,
+    ResultType
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting with Azure AD P2 License
+
+AADSignInEventsBeta
+//Create a list of all result codes within a single sign in to Azure AD
+| summarize MFA=make_list(ErrorCode) by CorrelationId
+//Find correlation ids where the user was sent to third party MFA (ResultType 50158) but there is no subsequent success (ResultType 0)
+| where MFA has "50158" and MFA !has "0"
+//Join back to SigninLogs table to find the sign in details
+| join kind=inner (AADSignInEventsBeta) on CorrelationId
+| project
+    Timestamp,
+    AccountUpn,
+    IsGuestUser,
+    Application,
+    IPAddress,
+    Country,
+    UserAgent,
+    ErrorCode

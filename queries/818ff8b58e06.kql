@@ -1,0 +1,18 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-08-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where ResultType == 500121
+| mv-expand todynamic(AuthenticationDetails)
+| extend AuthResultDetail=AuthenticationDetails.authenticationStepResultDetail
+| where AuthResultDetail == "SuspiciousActivityReported"
+| project TimeGenerated, UserPrincipalName, ResultType, AppDisplayName, AuthResultDetail, Location, IPAddress, UserAgent, CorrelationId
+
+//These events are also written to Azure AD Identity Protection
+
+//Data connector required for this query - Azure Active Directory Identity Protection
+
+AADUserRiskEvents
+| where RiskEventType == "userReportedSuspiciousActivity"
+| project TimeGenerated, UserPrincipalName, DetectionTimingType, RiskEventType, RiskState

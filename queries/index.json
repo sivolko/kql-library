@@ -1,5 +1,214 @@
 [
   {
+    "id": "54a7d9adf2e1",
+    "title": "Detect when a user is made an owner on multiple Teams in a short time frame.",
+    "description": "Detect when a user is made an owner on multiple Teams in a short time frame.",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe=30m;\nlet threshold=3;\nOfficeActivity\n| where TimeGenerated > ago(1d)\n| where Operation == \"MemberRoleChanged\"\n| mv-expand Members\n| extend RoleAdded = tostring(Members.Role)\n| extend UserAdded = tostring(Members.UPN)\n| where RoleAdded == 2\n| project TimeGenerated, RoleAdded, UserAdded, TeamName\n| summarize\n    ['Number of Teams Made Owner']=dcount(TeamName), ['Team Names']=make_set(TeamName) by UserAdded, bin(TimeGenerated, timeframe)\n| where ['Number of Teams Made Owner'] >= threshold",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-DetectUsermadeOwneronmultipleTeams.kql",
+    "filename": "OfficeActivity-DetectUsermadeOwneronmultipleTeams.kql",
+    "collected_at": "2026-08-08T03:35:58.324487+00:00"
+  },
+  {
+    "id": "bac5bb449640",
+    "title": "Detects when an Azure AD guest is added to an Azure AD role",
+    "description": "Detects when an Azure AD guest is added to an Azure AD role",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where OperationName == \"Add member to role\"\n| extend Target = tostring(TargetResources[0].userPrincipalName)\n| extend RoleAdded = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue)))\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| where Target contains \"#ext#\"\n| project TimeGenerated, OperationName, Actor, Target, RoleAdded",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-GuestAddedtoAADRole.kql",
+    "filename": "Identity-GuestAddedtoAADRole.kql",
+    "collected_at": "2026-08-08T03:35:35.492491+00:00"
+  },
+  {
+    "id": "b6da55896988",
+    "title": "Data connector required for this query - Azure Active Directory - Audit Logs",
+    "description": "Detect AADInternals use, where we see a domain changed from managed to federated, and the issuer contains any.sts or the issuer suffix is 8 characters, a combination of letters and numbers",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where OperationName == \"Set domain authentication\"\n| extend DomainName = tostring(TargetResources[0].displayName)\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend ActorIPAddress = tostring(parse_json(tostring(InitiatedBy.user)).ipAddress)\n| extend mp=parse_json(TargetResources[0].modifiedProperties)\n| mv-apply mp on (\nwhere mp.displayName == \"IssuerUri\"\n| extend Issuer=mp.newValue\n)\n| extend mp=parse_json(TargetResources[0].modifiedProperties)\n| mv-apply mp on (\nwhere mp.displayName == \"LiveType\"\n| extend OldDomainType = mp.oldValue\n| extend NewDomainType = mp.newValue\n)\n| project TimeGenerated, Actor, ActorIPAddress, DomainName, OldDomainType, NewDomainType, Issuer\n| parse Issuer with * @'://' Issuer @'\"' *\n| extend IssuerSuffix = split(Issuer, '/')[-1]\n| where OldDomainType has \"Managed\" and NewDomainType has \"Federated\"\n| where Issuer has \"any.sts\" or IssuerSuffix matches regex \"^[a-zA-Z0-9]{8}$\"",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-DetectAADInternalsUse.kql",
+    "filename": "Audit-DetectAADInternalsUse.kql",
+    "collected_at": "2026-08-08T03:35:34.862477+00:00"
+  },
+  {
+    "id": "e5dc81649607",
+    "title": "Detect when Azure AD Named Locations are changed (either IP or Country) and retrieve the current list",
+    "description": "Detect when Azure AD Named Locations are changed (either IP or Country) and retrieve the current list",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet updatedip=\n    AuditLogs\n    | where OperationName == \"Update named location\"\n    | mv-expand TargetResources\n    | extend modifiedProperties = parse_json(TargetResources).modifiedProperties\n    | mv-expand modifiedProperties  \n    | extend newValue = tostring(parse_json(modifiedProperties).newValue)\n    | mv-expand todynamic(newValue)\n    | extend ipRanges = tostring(parse_json(newValue).ipRanges)\n    | mv-expand todynamic(ipRanges) \n    | extend cidr = tostring(ipRanges.cidrAddress)\n    | where isnotempty(cidr)\n    | extend ['Named Location name'] = tostring(TargetResources.displayName)\n    | summarize ['IP List']=make_list(cidr) by ['Named Location name'];\nlet updatedcountries=\n    AuditLogs\n    | where OperationName == \"Update named location\"\n    | mv-expand TargetResources\n    | extend modifiedProperties = parse_json(TargetResources).modifiedProperties\n    | mv-expand modifiedProperties  \n    | extend newValue = tostring(parse_json(modifiedProperties).newValue)\n    | extend countriesAndRegions = tostring(parse_json(newValue).countriesAndRegions)\n    | mv-expand todynamic(countriesAndRegions) \n    | where isnotempty(countriesAndRegions)\n    | extend ['Named Location name'] = tostring(TargetResources.displayName)\n    | summarize ['Country List']=make_list(countriesAndRegions) by ['Named Location name'];\nunion updatedip, updatedcountries",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-NamedLocationsChanged.kql",
+    "filename": "Audit-NamedLocationsChanged.kql",
+    "collected_at": "2026-08-08T03:35:34.222286+00:00"
+  },
+  {
+    "id": "f8e6c05f59d3",
+    "title": "Data connector required for this query - Azure Active Directory - Audit Logs",
+    "description": "Detect users who are trying to use self service password reset but failing as they don't have any authentication methods listed",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where LoggedByService == \"Self-service Password Management\"\n| extend User = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend ['User IP Address'] = tostring(parse_json(tostring(InitiatedBy.user)).ipAddress)\n| sort by TimeGenerated asc \n| summarize ['SSPR Actions']=make_list(ResultReason) by CorrelationId, User, ['User IP Address']\n| where ['SSPR Actions'] has \"User's account has insufficient authentication methods defined. Add authentication info to resolve this\"\n| sort by User desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-FindUsersFailingSSPR.kql",
+    "filename": "Audit-FindUsersFailingSSPR.kql",
+    "collected_at": "2026-08-08T03:35:33.599468+00:00"
+  },
+  {
+    "id": "d496d4225a8a",
+    "title": "Find new operations completed by your privileged Azure AD users not seen before",
+    "description": "Find new operations completed by your privileged Azure AD users not seen before",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet privusers=\n    IdentityInfo\n    | where TimeGenerated > ago(21d)\n    | summarize arg_max(TimeGenerated, *) by AccountUPN\n    | where isnotempty(AssignedRoles)\n    | where AssignedRoles != \"[]\"\n    | distinct AccountUPN;\n//Find actions taken by those users previously\nAuditLogs\n| where TimeGenerated > ago(90d) and TimeGenerated < ago(1d)\n| extend UserPrincipalName = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| where isnotempty(UserPrincipalName)\n| where UserPrincipalName in (privusers)\n| distinct UserPrincipalName, OperationName\n//Find any new actions taken in the last day not seen before from that user\n| join kind=rightanti (\n    AuditLogs\n    | where TimeGenerated > ago(1d)\n    | extend UserPrincipalName = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n    | where UserPrincipalName in (privusers)\n    | where isnotempty(UserPrincipalName)\n    )\n    on UserPrincipalName, OperationName\n| project TimeGenerated, UserPrincipalName, OperationName, Category, CorrelationId",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-NewPrivilegedActions.kql",
+    "filename": "Audit-NewPrivilegedActions.kql",
+    "collected_at": "2026-08-08T03:35:32.968382+00:00"
+  },
+  {
+    "id": "fffe0c20ce65",
+    "title": "Alert on successful self service password resets at suspicious times",
+    "description": "Alert on successful self service password resets at suspicious times",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n// extend LocalTime to your time zone\n| extend LocalTime=TimeGenerated + 5h\n| where LocalTime > ago(7d)\n| where OperationName == \"Reset password (self-service)\"\n| where ResultDescription == \"Successfully completed reset.\"\n// Change hours of the day to suit your company, i.e this would find self service password reset events between 11pm and 4am\n| where hourofday(LocalTime) !between (4 .. 23)\n| extend User = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend ['IP Address of User'] = tostring(parse_json(tostring(InitiatedBy.user)).ipAddress)\n| project LocalTime, OperationName, ResultDescription, User, ['IP Address of User']",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-DetectSSPRAfterHours.kql",
+    "filename": "Audit-DetectSSPRAfterHours.kql",
+    "collected_at": "2026-08-08T03:35:32.335395+00:00"
+  },
+  {
+    "id": "818ff8b58e06",
+    "title": "Detect when a user reports suspicious MFA activity via the updated user risk integration",
+    "description": "Detect when a user reports suspicious MFA activity via the updated user risk integration",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where ResultType == 500121\n| mv-expand todynamic(AuthenticationDetails)\n| extend AuthResultDetail=AuthenticationDetails.authenticationStepResultDetail\n| where AuthResultDetail == \"SuspiciousActivityReported\"\n| project TimeGenerated, UserPrincipalName, ResultType, AppDisplayName, AuthResultDetail, Location, IPAddress, UserAgent, CorrelationId\n\n//These events are also written to Azure AD Identity Protection\n\n//Data connector required for this query - Azure Active Directory Identity Protection\n\nAADUserRiskEvents\n| where RiskEventType == \"userReportedSuspiciousActivity\"\n| project TimeGenerated, UserPrincipalName, DetectionTimingType, RiskEventType, RiskState",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-UserReportedSuspiciousMFA.kql",
+    "filename": "Identity-UserReportedSuspiciousMFA.kql",
+    "collected_at": "2026-08-08T03:35:27.930659+00:00"
+  },
+  {
+    "id": "14402fc7730f",
+    "title": "First retrieve the event where a cross-tenant setting was added",
+    "description": "First retrieve the event where a cross-tenant setting was added",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago(1d)\n| where OperationName == \"Add a partner to cross-tenant access setting\"\n| where Result == \"success\"\n| extend GuestTenantId = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[0].newValue)))\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| project TimeGenerated, OperationName, Actor, GuestTenantId\n//join back to Azure AD sign in logs for the last 30 days to retrieve inbound guest activity\n| join kind=inner (\n    SigninLogs\n    | where TimeGenerated > ago (180d)\n    | where UserType == \"Guest\"\n    | where ResultType == 0\n    | where AADTenantId != HomeTenantId and HomeTenantId != ResourceTenantId\n    //Split all the domains belonging to inbound guest domains and summarize the list per TenantId\n    | extend ['Guest Domains'] = split(UserPrincipalName, '@')[-1]\n    | summarize ['Guest Domain Names']=make_set(['Guest Domains']) by HomeTenantId)\n    //Join back to the audit even where the TenantId from the added setting matches the sign in data\n    on $left.GuestTenantId == $right.HomeTenantId\n| project-away HomeTenantId",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-DetectNewCrossTenantSetting.kql",
+    "filename": "Audit-DetectNewCrossTenantSetting.kql",
+    "collected_at": "2026-08-08T03:35:27.090676+00:00"
+  },
+  {
+    "id": "51cb05d87694",
+    "title": "Find the applications that have the most privileged users accessing them using only single factor authentication",
+    "description": "Find the applications that have the most privileged users accessing them using only single factor authentication",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet privusers=\n    IdentityInfo\n    | where TimeGenerated > ago(21d)\n    | summarize arg_max(TimeGenerated, *) by AccountUPN\n    | where isnotempty(AssignedRoles)\n    | where AssignedRoles != \"[]\"\n    | distinct AccountUPN;\nSigninLogs\n| where TimeGenerated > ago(30d)\n| where UserPrincipalName in (privusers)\n| where ResultType == 0\n| where AuthenticationRequirement == \"singleFactorAuthentication\"\n| summarize\n    ['List of Users']=make_set(UserPrincipalName),\n    ['Count of Users']=dcount(UserPrincipalName)\n    by AppDisplayName\n| sort by ['Count of Users'] desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-AppswithmostSFAPrivUsers.kql",
+    "filename": "Identity-AppswithmostSFAPrivUsers.kql",
+    "collected_at": "2026-08-08T03:35:26.472224+00:00"
+  },
+  {
+    "id": "b39c61a812ba",
+    "title": "Azure cloud account takeover",
+    "description": "https://www.linkedin.com/feed/update/urn:li:activity:7163049034528481281/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(90d)\n| where UserAgent == \"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\"\n| where AppDisplayName == \"OfficeHome\"\n\n// MITRE ATT&CK Mapping\n\n// Based on the KQL query, the following MITRE ATT&CK techniques are relevant:\n\n// T1078 - Valid Accounts: The query is filtering sign-in logs, which can be used to detect the use of valid accounts, especially if the user agent is unusual or unexpected for the environment1.\n// T1071.001 - Application Layer Protocol: Web Protocols: The specific user agent string indicates web-based access, which falls under the use of web protocols2.\n// T1204.002 - User Execution: Malicious File: If the user agent is associated with a known malicious browser or script, it could indicate an attempt to execute malicious files3.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/Sentinel/Azure cloud account takeover.kql",
+    "filename": "Azure cloud account takeover.kql",
+    "collected_at": "2026-08-08T03:35:25.837438+00:00"
+  },
+  {
+    "id": "5cbc1259cc03",
+    "title": "Azure CLI Spray - ASN 53667",
+    "description": "https://www.linkedin.com/posts/activity-7216141179648716800-703J/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(30d)\n| where ResultType == \"50126\" or ResultType == \"50053\"\n| where UserAgent == \"node-fetch\"\n| where AutonomousSystemNumber == \"53667\"\n| where AppDisplayName == \"Microsoft Azure CLI\"\n\n// MITRE ATT&CK Mapping\n\n// Based on the criteria in the KQL query, the following MITRE ATT&CK techniques are relevant:\n\n// T1078 - Valid Accounts: The query is looking for failed sign-in attempts, which can indicate attempts to use valid accounts with incorrect credentials.\n// T1071.001 - Application Layer Protocol: Web Protocols: The use of \u201cnode-fetch\u201d suggests web-based communication, which falls under this technique.\n// T1586.001 - Compromise Infrastructure: Botnet: The specific ASN and user agent might indicate the use of compromised infrastructure or botnets for automated sign-in attempts.\n// T1078.004 - Valid Accounts: Cloud Accounts: The use of \u201cMicrosoft Azure CLI\u201d indicates attempts to access cloud resources, which is relevant to this technique.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/Sentinel/Azure CLI Spray - ASN 53667.kql",
+    "filename": "Azure CLI Spray - ASN 53667.kql",
+    "collected_at": "2026-08-08T03:35:25.215913+00:00"
+  },
+  {
+    "id": "160a2f113b06",
+    "title": "Data connector required for this query - Azure Active Directory - Signin Logs",
+    "description": "If successful the user then generates a success code 0. When third party MFA fails Azure AD logs the 50158 result code but no corresponding 0 result code.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n//Create a list of all result codes within a single sign in to Azure AD\n| summarize MFA=make_list(ResultType) by CorrelationId\n//Find correlation ids where the user was sent to third party MFA (ResultType 50158) but there is no subsequent success (ResultType 0)\n| where MFA has \"50158\" and MFA !has \"0\"\n//Join back to SigninLogs table to find the sign in details\n| join kind=inner (SigninLogs) on CorrelationId\n| project\n    TimeGenerated,\n    UserPrincipalName,\n    UserType,\n    AppDisplayName,\n    IPAddress,\n    Location,\n    UserAgent,\n    ResultType\n\n//Advanced Hunting query\n\n//Data connector required for this query - Advanced Hunting with Azure AD P2 License\n\nAADSignInEventsBeta\n//Create a list of all result codes within a single sign in to Azure AD\n| summarize MFA=make_list(ErrorCode) by CorrelationId\n//Find correlation ids where the user was sent to third party MFA (ResultType 50158) but there is no subsequent success (ResultType 0)\n| where MFA has \"50158\" and MFA !has \"0\"\n//Join back to SigninLogs table to find the sign in details\n| join kind=inner (AADSignInEventsBeta) on CorrelationId\n| project\n    Timestamp,\n    AccountUpn,\n    IsGuestUser,\n    Application,\n    IPAddress,\n    Country,\n    UserAgent,\n    ErrorCode",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-ThirdPartyMFAFailures.kql",
+    "filename": "Identity-ThirdPartyMFAFailures.kql",
+    "collected_at": "2026-08-08T03:35:24.576211+00:00"
+  },
+  {
+    "id": "1fbdce074e7c",
+    "title": "Data connector required for this query - Azure Active Directory - Signin Logs",
+    "description": "Create a pivot table of all non password authentication methods by user. This is useful to migrate users from less secure methods like text message to more secure methods.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-08\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet isGUID = \"[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}\";\nSigninLogs\n| where TimeGenerated > ago(30d)\n| mv-expand todynamic(AuthenticationDetails)\n| extend ['Authentication Method'] = tostring(AuthenticationDetails.authenticationMethod)\n//Exclude previously satisifed, passwords and other data and any UserPrincipalName that comes through as a guid\n| where ['Authentication Method'] !in (\"Previously satisfied\", \"Password\", \"Other\")\n    and isnotempty(['Authentication Method'])\n    and not(UserPrincipalName matches regex isGUID)\n//Create pivot table of each method and the count by user\n| evaluate pivot(['Authentication Method'], count(), UserPrincipalName)\n| sort by UserPrincipalName asc",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-MFAMethodsPivotTable.kql",
+    "filename": "Identity-MFAMethodsPivotTable.kql",
+    "collected_at": "2026-08-08T03:35:23.938420+00:00"
+  },
+  {
     "id": "b8cc3c64230c",
     "title": "Data connector required for this query - Azure Active Directory - Audit Logs",
     "description": "Detect when an Azure AD Entitlement Package is created. You may want to review to see what resources and roles have been included in the package.",

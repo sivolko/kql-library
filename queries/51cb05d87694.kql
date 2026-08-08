@@ -1,0 +1,21 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-08-08
+// KQL Library - https://github.com/sivolko/kql-library
+
+let privusers=
+    IdentityInfo
+    | where TimeGenerated > ago(21d)
+    | summarize arg_max(TimeGenerated, *) by AccountUPN
+    | where isnotempty(AssignedRoles)
+    | where AssignedRoles != "[]"
+    | distinct AccountUPN;
+SigninLogs
+| where TimeGenerated > ago(30d)
+| where UserPrincipalName in (privusers)
+| where ResultType == 0
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| summarize
+    ['List of Users']=make_set(UserPrincipalName),
+    ['Count of Users']=dcount(UserPrincipalName)
+    by AppDisplayName
+| sort by ['Count of Users'] desc 
