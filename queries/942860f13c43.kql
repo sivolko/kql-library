@@ -1,0 +1,18 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-08-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago(90d)
+| extend V2Risk = tostring(RiskEventTypes_V2)
+| where V2Risk contains "estsRiskStateP"
+
+
+// MITRE ATT&CK Mapping
+
+// The query focuses on filtering sign-in logs based on risk events, which can be associated with the following MITRE ATT&CK techniques:
+
+// T1078 - Valid Accounts: Monitoring sign-in logs helps detect the use of valid accounts by adversaries1.
+// T1110 - Brute Force: Risk events related to sign-ins can indicate brute force attempts1.
+// T1190 - Exploit Public-Facing Application: Sign-in attempts might be part of exploiting public-facing applications1.
+// T1071 - Application Layer Protocol: Sign-in logs can reveal the use of application layer protocols for command and control1.

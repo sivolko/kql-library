@@ -1,5 +1,198 @@
 [
   {
+    "id": "6fc9e585d3bf",
+    "title": "Calculate the percentage that each guest domain is contributing to total downloads from your Office 365 tenant",
+    "description": "Calculate the percentage that each guest domain is contributing to total downloads from your Office 365 tenant",
+    "category": "Microsoft 365",
+    "tags": [
+      "m365"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nOfficeActivity\n| where TimeGenerated > ago(30d)\n| where Operation in (\"FileSyncDownloadedFull\", \"FileDownloaded\")\n| where UserId contains \"#EXT#\"\n| extend ['Guest UserPrincipalName'] = tostring(split(UserId, \"#\")[0])\n| extend ['Guest Domain'] = tostring(split(['Guest UserPrincipalName'], \"_\")[-1])\n| summarize Count=count() by ['Guest Domain']\n| as T\n| extend Percentage = round(100.0 * Count / toscalar (T\n    | summarize sum(Count)), 2)\n| project-reorder ['Guest Domain'], Count, Percentage\n| sort by Percentage desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Office 365/OfficeActivity-CalculatePercentageofDownloadsperDomain.kql",
+    "filename": "OfficeActivity-CalculatePercentageofDownloadsperDomain.kql",
+    "collected_at": "2026-08-09T03:46:22.091336+00:00"
+  },
+  {
+    "id": "c682b26d68d9",
+    "title": "Detecting EDR-killing Tool",
+    "description": "Detecting EDR-killing Tool",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet DriverwithLowPrevalence =\nDeviceFileEvents\n| where ActionType == \"FileCreated\"\n| where FileName endswith \".sys\"\n| invoke FileProfile(SHA1,10000)\n| where GlobalPrevalence <= 150\n| invoke FileProfile(SHA1,1000)\n| where GlobalPrevalence <= 150 or isempty(GlobalPrevalence)\n| join kind=leftouter DeviceFileCertificateInfo on SHA1\n| project FileName;\nlet DevicewithLPDriverActivated =\nDeviceEvents\n// Event ID 3004 \u2014 Kernel-mode Driver Validation\n//| where ReportId == \"3004\"\n| where ActionType == @\"DriverLoad\"\n| where FileName has_any(DriverwithLowPrevalence)\n| distinct DeviceName;\nDeviceEvents\n//| where ReportId == \"5013\"\n| where ActionType == @\"TamperingAttempt\"\n| where DeviceName has_any(DevicewithLPDriverActivated)\n\n\n// MITRE ATT&CK Mapping\n\n// File Creation and Prevalence Check:\n// Tactic: Defense Evasion\n// Technique: T1036.005 - Masquerading: Match Legitimate Name or Location\n// Description: The query identifies newly created .sys files (drivers) and checks their global prevalence to detect potentially rare or suspicious drivers.\n\n// Driver Load Event:\n// Tactic: Execution\n// Technique: T1547.001 - Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder\n// Description: The query monitors for driver load events (Event ID 3004) to detect the activation of low-prevalence drivers, which could indicate malicious activity.\n\n// Tampering Attempt Detection:\n// Tactic: Defense Evasion\n// Technique: T1562.001 - Impair Defenses: Disable or Modify Tools\n// Description: The query looks for tampering attempts (Event ID 5013) on devices where low-prevalence drivers have been activated, indicating potential attempts to disable security tools or modify system",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/DefenderXDR/Detecting EDR-killing Tool.kql",
+    "filename": "Detecting EDR-killing Tool.kql",
+    "collected_at": "2026-08-09T03:46:04.405678+00:00"
+  },
+  {
+    "id": "5de02b49e54c",
+    "title": "Detect when a successful self service password (SSPR) event is followed by a medium or high risk sign in within 2 hours",
+    "description": "Threat actors are known to socially engineer helpdesk staff to update MFA methods to allow them to complete SSPR",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet successCodes = dynamic([0, 50055, 50057, 50155, 50105, 50133, 50005, 50076, 50079, 50173, 50158, 50072, 50074, 53003, 53000, 53001, 50129]);\nAuditLogs\n| where TimeGenerated > ago(7d)\n| where OperationName == \"Reset password (self-service)\"\n| where ResultDescription == \"Successfully completed reset.\"\n| extend UserPrincipalName = tostring(TargetResources[0].userPrincipalName)\n| project-rename PasswordResetTime=TimeGenerated\n| project UserPrincipalName, PasswordResetTime, OperationName\n| join kind=inner(\nSigninLogs\n    | where TimeGenerated > ago(7d)\n    | where ResultType in (successCodes)\n    | where RiskLevelDuringSignIn in (\"high\", \"medium\")\n    | project\n        RiskTime=TimeGenerated,\n        UserPrincipalName,\n        ResultType,\n        ResultDescription,\n        AppDisplayName,\n        IPAddress,\n        Location,\n        UserAgent\n    )\n    on UserPrincipalName\n| extend ['Time Between Events']=datetime_diff('minute', PasswordResetTime, RiskTime)\n| project-reorder\n    PasswordResetTime,\n    RiskTime,\n    ['Time Between Events'],\n    UserPrincipalName,\n    OperationName,\n    ResultType,\n    ResultDescription,\n    AppDisplayName\n| where ['Time Between Events'] <= 120",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-SSPRfollowedbyRiskySignin.kql",
+    "filename": "Identity-SSPRfollowedbyRiskySignin.kql",
+    "collected_at": "2026-08-09T03:46:00.112564+00:00"
+  },
+  {
+    "id": "cb6a498f2141",
+    "title": "Summarize and visualize the roles being activated in Azure AD PIM",
+    "description": "Summarize and visualize the roles being activated in Azure AD PIM",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago(30d)\n| where OperationName == \"Add member to role completed (PIM activation)\"\n| extend ['Azure AD Role Name'] = tostring(TargetResources[0].displayName)\n| summarize Count=count()by ['Azure AD Role Name']\n| sort by Count\n| render barchart with (title=\"Count of Azure AD PIM activations by role\")",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-SummarizePIMRolesActivated.kql",
+    "filename": "Audit-SummarizePIMRolesActivated.kql",
+    "collected_at": "2026-08-09T03:45:59.502812+00:00"
+  },
+  {
+    "id": "33227cc15c5b",
+    "title": "Monitor Privilege User SSPR",
+    "description": "Monitor Privilege User SSPR",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet queryperiod = 30d;\nlet queryfrequency = 1h;\nlet PrivilegeUsers = (\n    IdentityInfo\n    | where TimeGenerated > ago(queryperiod)\n    | mv-expand AssignedRoles\n    | where AssignedRoles matches regex 'Admin'\n    | summarize by tolower(AccountUPN));\nAuditLogs\n| where TimeGenerated > ago(queryfrequency)\n| where ResultDescription == \"User started self-service password reset operation.\"\n| extend AccountUPN = tolower(InitiatedBy.user.userPrincipalName)\n| extend IPAdress = InitiatedBy.user.ipAddress\n| where AccountUPN in (PrivilegeUsers)\n\n// MITRE ATT&CK Mapping\n// Privilege Escalation (T1078.004 - Valid Accounts: Cloud Accounts):\n// The query identifies privileged users by checking for roles that match \u2018Admin\u2019. This is related to the use of valid accounts with elevated privileges.\n// Credential Access (T1110.001 - Brute Force):\n// Monitoring self-service password reset operations can help detect potential brute force attempts or misuse of password reset functionalities.\n// Defense Evasion (T1078 - Valid Accounts):\n// By focusing on privileged accounts, the query helps in identifying if legitimate accounts are being used to evade detection mechanisms.\n// Initial Access (T1078.004 - Valid Accounts: Cloud Accounts):\n// The detection of self-service password reset operations by privileged users can indicate an initial access attempt using valid credentials.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/Sentinel/Monitor Privilege User SSPR.kql",
+    "filename": "Monitor Privilege User SSPR.kql",
+    "collected_at": "2026-08-09T03:45:58.865187+00:00"
+  },
+  {
+    "id": "9e38bdbff2cd",
+    "title": "Alert when a user is added directly to an Azure AD role, bypassing PIM",
+    "description": "Alert when a user is added directly to an Azure AD role, bypassing PIM",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where OperationName has \"Add member to role outside of PIM\"\n| extend RoleName = tostring(TargetResources[0].displayName)\n| extend UserAdded = tostring(TargetResources[2].displayName)\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| project TimeGenerated, OperationName, RoleName, UserAdded, Actor",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-UserAddedtoRoleOutsidePIM.kql",
+    "filename": "Audit-UserAddedtoRoleOutsidePIM.kql",
+    "collected_at": "2026-08-09T03:45:58.263549+00:00"
+  },
+  {
+    "id": "c3303f2e3808",
+    "title": "Find users who have not elevated any roles in Azure AD PIM in 30 days",
+    "description": "Find users who have not elevated any roles in Azure AD PIM in 30 days",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago (365d)\n| project TimeGenerated, OperationName, Result, TargetResources, InitiatedBy\n| where OperationName == \"Add member to role completed (PIM activation)\"\n| where Result == \"success\"\n| extend ['Last Role Activated'] = tostring(TargetResources[0].displayName)\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| summarize arg_max(TimeGenerated, *) by Actor\n| project\n    Actor,\n    ['Last Role Activated'],\n    ['Last Activation Time']=TimeGenerated,\n    ['Days Since Last Activation']=datetime_diff(\"day\", now(), TimeGenerated)\n| where ['Days Since Last Activation'] >= 30\n| sort by ['Days Since Last Activation'] desc",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-UsersWhoHaventElevatedPIM.kql",
+    "filename": "Audit-UsersWhoHaventElevatedPIM.kql",
+    "collected_at": "2026-08-09T03:45:57.635815+00:00"
+  },
+  {
+    "id": "5ed249e2abd4",
+    "title": "Detect when a user adds someone to an Azure AD privileged role for the first time",
+    "description": "Detect when a user adds someone to an Azure AD privileged role for the first time",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet knownusers=\n    AuditLogs\n    | where TimeGenerated > ago(90d) and TimeGenerated < ago(1d)\n    | where OperationName == \"Add member to role\"\n    //Exclude role additions made by the Azure AD PIM service\n    | where Identity != \"MS-PIM\"\n    | extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n    | distinct Actor;\n//Find events in the last day by users not in the known list\nAuditLogs\n| where TimeGenerated > ago(1d)\n| where OperationName == \"Add member to role\"\n| where Identity != \"MS-PIM\"\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend ['Azure AD Role Name'] = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue)))\n| extend Target = tostring(TargetResources[0].userPrincipalName)\n| where Actor !in (knownusers)\n| project TimeGenerated, Actor, Target, ['Azure AD Role Name']\n",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-FirstTimeRoleAddition.kql",
+    "filename": "Identity-FirstTimeRoleAddition.kql",
+    "collected_at": "2026-08-09T03:45:57.018457+00:00"
+  },
+  {
+    "id": "47de887b8046",
+    "title": "GraphRunner Recon Detection & Response",
+    "description": "https://www.linkedin.com/posts/activity-7186279751127334912-zjwN/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where AuthenticationProtocol == \"deviceCode\"\n| where ResourceDisplayName == \"Microsoft Graph\"\n| extend DeviceName = tostring(DeviceDetail.displayName)\n| extend TrustType = tostring(DeviceDetail.trustType)\n| where TrustType != \"Hybrid Azure AD joined\" and TrustType != \"Azure AD joined\"\n\n// MITRE ATT&CK Mapping\n\n// Based on the query, the following MITRE ATT&CK techniques are relevant:\n\n// T1078 - Valid Accounts: The query focuses on authentication logs, which can help detect the use of valid accounts for unauthorized access.\n// T1078.004 - Cloud Accounts: Specifically, the query targets Azure AD logs, which are related to cloud accounts.\n// T1078.001 - Default Accounts: By filtering out specific trust types, the query might help identify the use of default or less secure accounts.\n// T1556 - Modify Authentication Process: The use of \u201cdeviceCode\u201d as an authentication protocol could be related to attempts to modify or bypass standard authentication processes.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/Sentinel/GraphRunner Recon Detection & Response.kql",
+    "filename": "GraphRunner Recon Detection & Response.kql",
+    "collected_at": "2026-08-09T03:45:52.163530+00:00"
+  },
+  {
+    "id": "942860f13c43",
+    "title": "Threat Hunting Nation State Actors",
+    "description": "https://www.linkedin.com/feed/update/urn:li:activity:7173156446581219328/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(90d)\n| extend V2Risk = tostring(RiskEventTypes_V2)\n| where V2Risk contains \"estsRiskStateP\"\n\n\n// MITRE ATT&CK Mapping\n\n// The query focuses on filtering sign-in logs based on risk events, which can be associated with the following MITRE ATT&CK techniques:\n\n// T1078 - Valid Accounts: Monitoring sign-in logs helps detect the use of valid accounts by adversaries1.\n// T1110 - Brute Force: Risk events related to sign-ins can indicate brute force attempts1.\n// T1190 - Exploit Public-Facing Application: Sign-in attempts might be part of exploiting public-facing applications1.\n// T1071 - Application Layer Protocol: Sign-in logs can reveal the use of application layer protocols for command and control1.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/Sentinel/Threat Hunting Nation State Actors.kql",
+    "filename": "Threat Hunting Nation State Actors.kql",
+    "collected_at": "2026-08-09T03:45:51.422872+00:00"
+  },
+  {
+    "id": "5be802b77fbb",
+    "title": "Detecting High Risk Passkey Users",
+    "description": "https://www.linkedin.com/posts/activity-7193644152645959682-ylGM/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where RiskEventTypes_V2 != \"[]\"\n| where RiskLevelAggregated == \"high\"\n| where RiskLevelDuringSignIn == \"high\"\n| where RiskState == \"atRisk\"\n| where AuthenticationDetails contains \"FIDO2 security key\"\n\n// MITRE ATT&CK Mapping\n\n// Based on the operations and objectives of the KQL code, the following MITRE ATT&CK techniques are relevant:\n\n// T1078 - Valid Accounts:\n// This technique involves the use of valid accounts to gain access to systems. High-risk sign-ins with FIDO2 security keys could indicate an attempt to use compromised credentials.\n// T1556 - Modify Authentication Process:\n// This technique involves modifying the authentication process to bypass security controls. High-risk sign-ins with specific authentication methods like FIDO2 security keys could be part of an // attempt to manipulate the authentication process.\n// T1071 - Application Layer Protocol:\n// This technique involves the use of application layer protocols for command and control. High-risk sign-ins could be part of an adversary\u2019s attempt to establish a foothold using legitimate protocols.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/Sentinel/Detecting High Risk Passkey Users.kql",
+    "filename": "Detecting High Risk Passkey Users.kql",
+    "collected_at": "2026-08-09T03:45:50.810966+00:00"
+  },
+  {
+    "id": "8e8651718d4c",
+    "title": "New Threat Actor Group Signature",
+    "description": "https://www.linkedin.com/posts/activity-7193281542645768192-9ZIM/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(90d)\n| where ResultType == \"50053\" or ResultType == \"50126\"\n| where AppDisplayName == \"OfficeHome\"\n| where UserAgent == \"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/116.0\"\n\n// MITRE ATT&CK Mapping\n\n// Based on the filters and the context of the query, the following MITRE ATT&CK techniques are relevant:\n\n// T1078 - Valid Accounts:\n// The query is looking for failed login attempts, which can be associated with attempts to use valid accounts with incorrect credentials.\n// T1110 - Brute Force:\n// The presence of multiple failed login attempts (ResultType 50126) suggests a brute force attack where an adversary is trying different passwords.\n// T1212 - Exploitation for Credential Access:\n// The specific user agent and application filters might indicate an attempt to exploit known vulnerabilities in the \u201cOfficeHome\u201d application or the browser to gain credential access.\n// T1071 - Application Layer Protocol:\n// The use of a specific user agent string can be related to the use of application layer protocols for communication, which might be part of the adversary\u2019s tactics.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/Sentinel/New Threat Actor Group Signature.kql",
+    "filename": "New Threat Actor Group Signature.kql",
+    "collected_at": "2026-08-09T03:45:50.186326+00:00"
+  },
+  {
+    "id": "3eeae99e9834",
+    "title": "Conditional Access Report",
+    "description": "https://www.linkedin.com/posts/activity-7192037878783205377-lq27/",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-08-09\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(30d)\n// Additional Toggle to determine CA result for success/failure login\n//| where ResultType == \"0\"\n| where ConditionalAccessPolicies != \"[]\"\n| mv-expand ConditionalAccessPolicies\n| extend CADisplayName = tostring(ConditionalAccessPolicies.displayName)\n| extend CAResult = tostring(ConditionalAccessPolicies.result)\n| summarize Count=count() by CADisplayName, CAResult\n| sort by CADisplayName asc \n\n// MITRE ATT&CK Mapping\n\n// The KQL query primarily focuses on analyzing Conditional Access Policies, which can be associated with the following MITRE ATT&CK techniques:\n\n// T1078 - Valid Accounts:\n// Description: Adversaries may use valid accounts to gain initial access, persist, escalate privileges, or evade detection.\n// Relevance: The query checks for Conditional Access Policies, which are often used to enforce multi-factor authentication (MFA) and other security measures to protect valid accounts.\n// T1110 - Brute Force:\n// Description: Adversaries may use brute force techniques to attempt to gain access to accounts.\n// Relevance: The query can be adapted to filter for failed login attempts (e.g., by uncommenting the ResultType == \"0\" line), which can help detect brute force attempts.\n// T1190 - Exploit Public-Facing Application:\n// Description: Adversaries may exploit vulnerabilities in public-facing applications to gain access.\n// Relevance: Conditional Access Policies can help mitigate the risk of exploitation by enforcing additional authentication requirements.\n// T1071 - Application Layer Protocol:\n// Description: Adversaries may use application layer protocols to communicate with systems under their control.\n// Relevance: Monitoring Conditional Access Policies can help detect unusual or unauthorized access patterns that may indicate the use of such protocols.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f6b5d050acdb30bdd76006d3e40b10aaa72d8eee/Sentinel/Conditional Access Report.kql",
+    "filename": "Conditional Access Report.kql",
+    "collected_at": "2026-08-09T03:45:49.423016+00:00"
+  },
+  {
     "id": "54a7d9adf2e1",
     "title": "Detect when a user is made an owner on multiple Teams in a short time frame.",
     "description": "Detect when a user is made an owner on multiple Teams in a short time frame.",

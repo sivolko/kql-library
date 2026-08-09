@@ -1,0 +1,11 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-08-09
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Add member to role completed (PIM activation)"
+| extend ['Azure AD Role Name'] = tostring(TargetResources[0].displayName)
+| summarize Count=count()by ['Azure AD Role Name']
+| sort by Count
+| render barchart with (title="Count of Azure AD PIM activations by role")
