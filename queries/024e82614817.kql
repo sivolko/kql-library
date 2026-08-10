@@ -1,0 +1,82 @@
+// Source: https://github.com/nigeltho12/sc200-study-repo
+// Collected: 2026-08-10
+// KQL Library - https://github.com/sivolko/kql-library
+
+Syslog
+| where Facility == "auth"
+| where SyslogMessage has "Failed"
+| extend User = extract("user (\\w+)", 1, SyslogMessage)
+| extend SrcIP = extract("from ([0-9.]+)", 1, SyslogMessage)
+| summarize FailCount = count() by User, SrcIP, HostName
+| sort by FailCount desc
+
+// SSH successful login
+Syslog
+| where Facility == "auth"
+| where SyslogMessage has "Accepted"
+| extend User = extract("for (\\w+)", 1, SyslogMessage)
+| extend SrcIP = extract("from ([0-9.]+)", 1, SyslogMessage)
+| project TimeGenerated, HostName, User, SrcIP
+
+// Root login via SSH
+Syslog
+| where Facility == "auth"
+| where SyslogMessage has "Accepted" and SyslogMessage has "root"
+
+// ── PRIVILEGE ESCALATION ────────────────────────────────────
+
+// Sudo usage tracking
+Syslog
+| where SyslogMessage has "sudo"
+| extend User = extract("(\\w+) : TTY", 1, SyslogMessage)
+| extend Command = extract("COMMAND=(.*)", 1, SyslogMessage)
+| project TimeGenerated, HostName, User, Command
+
+// Sudo failures (unauthorized attempts)
+Syslog
+| where SyslogMessage has "sudo" and SyslogMessage has "NOT in sudoers"
+
+// ── PERSISTENCE ─────────────────────────────────────────────
+
+// Cron job execution
+Syslog
+| where SyslogMessage has "CRON"
+| project TimeGenerated, HostName, SyslogMessage
+
+// New cron job added
+Syslog
+| where SyslogMessage has "crontab"
+| project TimeGenerated, HostName, SyslogMessage
+
+// ── SYSTEM CHANGES ──────────────────────────────────────────
+
+// User account created
+Syslog
+| where SyslogMessage has "useradd" or SyslogMessage has "new user"
+| project TimeGenerated, HostName, SyslogMessage
+
+// Service started/stopped
+Syslog
+| where SyslogMessage has_any ("Started", "Stopped", "Failed")
+| where Facility == "daemon"
+| project TimeGenerated, HostName, SyslogMessage
+
+// ── SUMMARY / HUNTING ───────────────────────────────────────
+
+// Log volume by host
+Syslog
+| summarize count() by HostName
+| sort by count_ desc
+
+// Syslog facility distribution
+Syslog
+| summarize count() by Facility
+| sort by count_ desc
+| render piechart
+
+// High-frequency events — potential noise or attack
+Syslog
+| where TimeGenerated > ago(1h)
+| summarize count() by HostName, Facility, SeverityLevel
+| where count_ > 100
+| sort by count_ desc
