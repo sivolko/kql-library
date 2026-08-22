@@ -1,5 +1,20 @@
 [
   {
+    "id": "42204a011634",
+    "title": "Data connector required for this query - Azure Active Directory - Signin Logs",
+    "description": "Create a pivot table showing all your users who have signed in with legacy auth, which applications they are using (such as IMAP or ActiveSync) and the count of each",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-22\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago(30d)\n| where ResultType == 0\n| where ClientAppUsed !in (\"Mobile Apps and Desktop clients\", \"Browser\")\n| where isnotempty(ClientAppUsed)\n| evaluate pivot(ClientAppUsed, count(), UserPrincipalName)\n\n//Advanced Hunting query\n\n//Data connector required for this query - Advanced Hunting with Azure AD P2 License\n\nAADSignInEventsBeta\n| where Timestamp > ago(30d)\n| where ErrorCode == 0\n| where ClientAppUsed !in (\"Mobile Apps and Desktop clients\", \"Browser\")\n| where isnotempty(ClientAppUsed)\n| evaluate pivot(ClientAppUsed, count(), AccountUpn)",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-LegacyAuthPivotTable.kql",
+    "filename": "Identity-LegacyAuthPivotTable.kql",
+    "collected_at": "2026-08-22T02:56:14.199874+00:00"
+  },
+  {
     "id": "febe417f7954",
     "title": "Data connector required for this query - Azure Active Directory - Audit Logs",
     "description": "Detect a successful self service password reset or account unlock from an IP address that user hasn't successfully signed into from in the last 30 days",

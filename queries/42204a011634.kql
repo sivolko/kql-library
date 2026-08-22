@@ -1,0 +1,21 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-08-22
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago(30d)
+| where ResultType == 0
+| where ClientAppUsed !in ("Mobile Apps and Desktop clients", "Browser")
+| where isnotempty(ClientAppUsed)
+| evaluate pivot(ClientAppUsed, count(), UserPrincipalName)
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting with Azure AD P2 License
+
+AADSignInEventsBeta
+| where Timestamp > ago(30d)
+| where ErrorCode == 0
+| where ClientAppUsed !in ("Mobile Apps and Desktop clients", "Browser")
+| where isnotempty(ClientAppUsed)
+| evaluate pivot(ClientAppUsed, count(), AccountUpn)
