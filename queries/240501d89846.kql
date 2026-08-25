@@ -1,0 +1,15 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-08-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+let logs = SigninLogs
+    | where TimeGenerated between (ago(90d) .. ago(7d))
+    | where UserPrincipalName in~(Users)
+    | distinct IPAddress;
+SigninLogs
+    | where TimeGenerated > ago (7d)
+    | where UserPrincipalName in~(Users)
+    | where isnull(DeviceDetail.displayName)
+    | where IPAddress !in(logs)
+| project TimeGenerated, UserPrincipalName, UserDisplayName, IPAddress, AppDisplayName, DeviceDetail
+| summarize arg_max(TimeGenerated, *) by UserPrincipalName

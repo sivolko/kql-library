@@ -1,0 +1,13 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-08-25
+// KQL Library - https://github.com/sivolko/kql-library
+
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Redeem external user invite"
+| extend GuestEmail = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| extend ['User Domain'] = tostring(split(GuestEmail, "@")[1])
+| where isnotempty(['User Domain'])
+| summarize Count=count()by ['User Domain']
+| sort by Count desc 
+| render barchart

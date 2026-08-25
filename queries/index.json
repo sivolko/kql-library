@@ -1,5 +1,63 @@
 [
   {
+    "id": "0e47571895b2",
+    "title": "Deviceevents",
+    "description": "KQL query collected from public GitHub repositories.",
+    "category": "Endpoint Security",
+    "tags": [
+      "defender"
+    ],
+    "content": "// Source: https://github.com/olafhartong/tableDumper\n// Collected: 2026-08-25\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceEvents\n| where Timestamp between (datetime(2026-08-19T13:37:00) .. datetime(2026-08-20T00:13:37))",
+    "source_repo": "olafhartong/tableDumper",
+    "source_url": "https://github.com/olafhartong/tableDumper/blob/66633538da3941cd7ac8a076da98f969f27745ba/exampleQueries/DeviceEvents.kql",
+    "filename": "DeviceEvents.kql",
+    "collected_at": "2026-08-25T03:00:55.542375+00:00"
+  },
+  {
+    "id": "9ac993125bbf",
+    "title": "Visualize the most popular domains that have redeemed invites to your Azure AD tenant over the last 30 days.",
+    "description": "Visualize the most popular domains that have redeemed invites to your Azure AD tenant over the last 30 days.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-08-25\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago(30d)\n| where OperationName == \"Redeem external user invite\"\n| extend GuestEmail = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend ['User Domain'] = tostring(split(GuestEmail, \"@\")[1])\n| where isnotempty(['User Domain'])\n| summarize Count=count()by ['User Domain']\n| sort by Count desc \n| render barchart",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-VisualizeGuestDomains.kql",
+    "filename": "Identity-VisualizeGuestDomains.kql",
+    "collected_at": "2026-08-25T03:00:52.291008+00:00"
+  },
+  {
+    "id": "240501d89846",
+    "title": "Query to find signins from new IP Address in the last 7 days",
+    "description": "Returns only IP that were not previously seen past X time range Can be useful to aid in detecting unusual and or unexpected login activity",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/MorganCPatz/KQL-Queries\n// Collected: 2026-08-25\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet logs = SigninLogs\n    | where TimeGenerated between (ago(90d) .. ago(7d))\n    | where UserPrincipalName in~(Users)\n    | distinct IPAddress;\nSigninLogs\n    | where TimeGenerated > ago (7d)\n    | where UserPrincipalName in~(Users)\n    | where isnull(DeviceDetail.displayName)\n    | where IPAddress !in(logs)\n| project TimeGenerated, UserPrincipalName, UserDisplayName, IPAddress, AppDisplayName, DeviceDetail\n| summarize arg_max(TimeGenerated, *) by UserPrincipalName",
+    "source_repo": "MorganCPatz/KQL-Queries",
+    "source_url": "https://github.com/MorganCPatz/KQL-Queries/blob/ffac10f91826ee4f5eb4fa3682ce2b0f6e45ec0f/Sentinel/SigninLogs-NewIPAddressLoginActivity.kql",
+    "filename": "SigninLogs-NewIPAddressLoginActivity.kql",
+    "collected_at": "2026-08-25T03:00:47.716205+00:00"
+  },
+  {
+    "id": "f4b84edacd38",
+    "title": "Author: Microsoft Azure",
+    "description": "Display name: Logon Activity by Device Description: Counts logon activities per device. Categories: security Solutions: SecurityInsights Topic: Security logon",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/microsoft/AzureMonitorCommunity\n// Collected: 2026-08-25\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4624\n| summarize LogonCount = count() by Computer",
+    "source_repo": "microsoft/AzureMonitorCommunity",
+    "source_url": "https://github.com/microsoft/AzureMonitorCommunity/blob/1a382bc9b8be899968a04b8252aa16e8c9bdeb1f/Solutions/SecurityInsights/Queries/Security logon/Logon Activity by Device.kql",
+    "filename": "Logon Activity by Device.kql",
+    "collected_at": "2026-08-25T03:00:41.781871+00:00"
+  },
+  {
     "id": "42204a011634",
     "title": "Data connector required for this query - Azure Active Directory - Signin Logs",
     "description": "Create a pivot table showing all your users who have signed in with legacy auth, which applications they are using (such as IMAP or ActiveSync) and the count of each",
