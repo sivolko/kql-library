@@ -1,5 +1,19 @@
 [
   {
+    "id": "720430d53f7d",
+    "title": "Manual targeted drill-down for SecurityEvent cost drivers.",
+    "description": "Run this only if SecurityEvent exists in the workspace. If it does not, check whether security events are routed to Event instead.",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/loredan1994/azure-log-analytics-cost-triage\n// Collected: 2026-08-27\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet Lookback = 3d;\nlet TopN = 50;\nlet TargetComputer = \"\";\nlet TargetEventID = int(-1);\nlet TargetActivity = \"\";\nunion isfuzzy=true\n(\n    SecurityEvent\n    | project\n        TimeGenerated,\n        _IsBillable = tostring(_IsBillable),\n        _BilledSize = toreal(_BilledSize),\n        Computer = tostring(Computer),\n        EventID = toint(EventID),\n        Activity = tostring(Activity),\n        LogonTypeName = tostring(LogonTypeName),\n        TargetAccount = tostring(TargetAccount),\n        EventSourceName = tostring(EventSourceName),\n        Channel = tostring(Channel)\n),\n(\n    datatable(\n        TimeGenerated:datetime,\n        _IsBillable:string,\n        _BilledSize:real,\n        Computer:string,\n        EventID:int,\n        Activity:string,\n        LogonTypeName:string,\n        TargetAccount:string,\n        EventSourceName:string,\n        Channel:string\n    )[]\n)\n| where TimeGenerated >= ago(Lookback)\n| where tolower(tostring(_IsBillable)) == \"true\"\n| where isempty(TargetComputer) or Computer =~ TargetComputer\n| where TargetEventID == -1 or EventID == TargetEventID\n| where isempty(TargetActivity) or Activity =~ TargetActivity\n| summarize\n    Rows = count(),\n    GB = sum(_BilledSize) / 1e9,\n    AvgKB = avg(_BilledSize) / 1024.0\n  by EventID, Computer, Activity, LogonTypeName, TargetAccount, EventSourceName, Channel\n| top TopN by GB desc\n| project\n    EventID,\n    Computer,\n    Activity,\n    LogonTypeName,\n    TargetAccount,\n    EventSourceName,\n    Channel,\n    GB = round(GB, 3),\n    Rows,\n    AvgKB = round(AvgKB, 2)",
+    "source_repo": "loredan1994/azure-log-analytics-cost-triage",
+    "source_url": "https://github.com/loredan1994/azure-log-analytics-cost-triage/blob/10b12b96376c15edfefaed77d15000ef3838f49c/kql/security/33_securityevent_breakdown.kql",
+    "filename": "33_securityevent_breakdown.kql",
+    "collected_at": "2026-08-27T12:35:48.154449+00:00"
+  },
+  {
     "id": "0e47571895b2",
     "title": "Deviceevents",
     "description": "KQL query collected from public GitHub repositories.",
