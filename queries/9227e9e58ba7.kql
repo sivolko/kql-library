@@ -1,0 +1,23 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 3d;
+let Activation = AuditLogs
+    | where TimeGenerated > ago (Lookback)
+    | where OperationName == "Add member to role completed (PIM activation)"
+    | where TargetResources[0].displayName == "Global Administrator"
+    | where Identity contains ""
+    | extend RoleStartTime = todatetime(parse_json(AdditionalDetails[4].value))
+    | extend RoleExpirationTime = todatetime(parse_json(AdditionalDetails[5].value))
+    | extend ActivationLenghtMins = datetime_diff('Minute', RoleExpirationTime, RoleStartTime)
+    | extend AccountUpn = tostring(parse_json(InitiatedBy.user).userPrincipalName)
+    | project Identity, RoleStartTime, RoleExpirationTime, ActivationLenghtMins, AccountUpn;
+Activation
+    | join kind=inner (AuditLogs
+    | where TimeGenerated > ago (Lookback)
+    | extend AccountUpn = tostring(parse_json(InitiatedBy.user).userPrincipalName)
+) on AccountUpn
+| where TimeGenerated between (RoleStartTime .. RoleExpirationTime)
+| project RoleStartTime, RoleExpirationTime, ActivationLenghtMins, Identity, AccountUpn, TimeGenerated, OperationName, TargetResources, AdditionalDetails
+| sort by RoleStartTime, Identity, TimeGenerated desc

@@ -1,0 +1,93 @@
+// Source: https://github.com/Panchal-Sahil/SOC-Analyst-Playbook-RAG
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+AppServiceHTTPLogs
+| where TimeGenerated > ago(24h)
+| where ScStatus == 429
+| summarize
+    ViolationCount = count(),
+    FirstSeen      = min(TimeGenerated),
+    LastSeen       = max(TimeGenerated)
+    by CsUsername, CIp
+| where ViolationCount >= 1
+| order by ViolationCount desc
+
+
+// --------------------------------------------------------------------------
+// 2. Blocked-Pattern Hits (Prompt Injection Attempts)
+//
+// SOC scenario: a credentialed attacker is attempting prompt injection to
+// extract the system prompt or enumerate the runbook corpus. The
+// BLOCKED_PATTERNS regex gate in security.py returns HTTP 400 on the /chat
+// endpoint before any search executes. Repeated 400s on /chat from a single
+// user indicate an active injection campaign.
+// --------------------------------------------------------------------------
+AppServiceHTTPLogs
+| where TimeGenerated > ago(24h)
+| where CsUriStem == "/chat" and ScStatus == 400
+| summarize
+    BlockedCount = count(),
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt  = max(TimeGenerated)
+    by CsUsername, CIp
+| where BlockedCount >= 1
+| order by BlockedCount desc
+
+
+// --------------------------------------------------------------------------
+// 3. Query Volume Spikes per User (Exfiltration Indicator)
+//
+// SOC scenario: even within rate limits, sustained high query volume from a
+// single account may indicate a slow-and-low exfiltration attempt. This
+// query aggregates /chat POST requests per user per hour and flags users
+// with volumes above the 90th percentile, or a hardcoded threshold of 20
+// requests/hour — adjust the threshold to your operational baseline.
+// --------------------------------------------------------------------------
+AppServiceHTTPLogs
+| where TimeGenerated > ago(24h)
+| where CsUriStem == "/chat" and CsMethod == "POST"
+| summarize RequestCount = count() by CsUsername, bin(TimeGenerated, 1h)
+| where RequestCount > 20
+| order by RequestCount desc, TimeGenerated desc
+
+
+// --------------------------------------------------------------------------
+// 4. Tier 2 Access Auditing (Advanced Runbook Retrieval)
+//
+// SOC scenario: auditing which analysts accessed advanced (Tier 2) runbooks.
+// The Flask app writes structured AUDIT lines to stdout, which App Service
+// forwards to AppServiceConsoleLogs. Lines containing "categories=advanced"
+// indicate a query that retrieved advanced-tier procedures. Lines containing
+// "Search filter: none" confirm the caller had Tier 2 access (no
+// allowedGroups restriction applied).
+// --------------------------------------------------------------------------
+AppServiceConsoleLogs
+| where TimeGenerated > ago(24h)
+| where ResultDescription has "AUDIT" and ResultDescription has "advanced"
+| parse ResultDescription with * "user=" User:string " |" *
+| parse ResultDescription with * "results=" ResultCount:string " |" *
+| parse ResultDescription with * "categories=" Categories:string " |" *
+| project TimeGenerated, User, ResultCount, Categories
+| order by TimeGenerated desc
+
+
+// --------------------------------------------------------------------------
+// 5. Failed Authentication Attempts
+//
+// SOC scenario: repeated 401/403 responses indicate failed Entra ID
+// authentication — either expired tokens, revoked sessions, or unauthorized
+// access attempts. A spike from a single IP may indicate brute-force
+// attempts against the Easy Auth gate.
+// --------------------------------------------------------------------------
+AppServiceHTTPLogs
+| where TimeGenerated > ago(24h)
+| where ScStatus in (401, 403)
+| summarize
+    FailedCount = count(),
+    FirstSeen   = min(TimeGenerated),
+    LastSeen    = max(TimeGenerated),
+    Paths       = make_set(CsUriStem, 10)
+    by CIp, CsUsername
+| where FailedCount >= 1
+| order by FailedCount desc

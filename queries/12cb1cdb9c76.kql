@@ -1,0 +1,57 @@
+// Source: https://github.com/loredan1994/azure-log-analytics-cost-triage
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 3d;
+let TopN = 50;
+let TargetComputer = "";
+let TargetChannel = "";
+let TargetEventID = int(-1);
+union isfuzzy=true
+(
+    WindowsEvent
+    | project
+        TimeGenerated,
+        _IsBillable = tostring(_IsBillable),
+        _BilledSize = toreal(_BilledSize),
+        Computer = tostring(Computer),
+        Channel = tostring(Channel),
+        EventID = toint(EventID),
+        EventLevelName = tostring(EventLevelName),
+        Provider = tostring(Provider),
+        _ResourceId = tostring(_ResourceId)
+),
+(
+    datatable(
+        TimeGenerated:datetime,
+        _IsBillable:string,
+        _BilledSize:real,
+        Computer:string,
+        Channel:string,
+        EventID:int,
+        EventLevelName:string,
+        Provider:string,
+        _ResourceId:string
+    )[]
+)
+| where TimeGenerated >= ago(Lookback)
+| where tolower(tostring(_IsBillable)) == "true"
+| where isempty(TargetComputer) or Computer =~ TargetComputer
+| where isempty(TargetChannel) or Channel =~ TargetChannel
+| where TargetEventID == -1 or EventID == TargetEventID
+| summarize
+    Rows = count(),
+    GB = sum(_BilledSize) / 1e9,
+    AvgKB = avg(_BilledSize) / 1024.0
+  by Channel, EventID, EventLevelName, Computer, Provider, ResourceId = _ResourceId
+| top TopN by GB desc
+| project
+    Channel,
+    EventID,
+    EventLevelName,
+    Computer,
+    Provider,
+    ResourceId,
+    GB = round(GB, 3),
+    Rows,
+    AvgKB = round(AvgKB, 2)

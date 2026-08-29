@@ -1,0 +1,22 @@
+// Source: https://github.com/dabbychiu/Purple-Team-Detection-Lab
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4769
+| extend
+    ServiceName = extract(@'<Data[^>]*Name="ServiceName"[^>]*>([^<]+)</Data>', 1, tostring(EventData)),
+    TargetUserName = extract(@'<Data Name="TargetUserName">([^<]+)</Data>', 1, tostring(EventData)),
+    TicketEncryptionType = extract(@'<Data Name="TicketEncryptionType">([^<]+)</Data>', 1, tostring(EventData)),
+    IpAddress = extract(@'<Data Name="IpAddress">([^<]+)</Data>', 1, tostring(EventData))
+| where ServiceName !startswith "krbtgt"
+| where ServiceName !endswith "$"
+| where TargetUserName !endswith "$"
+| summarize
+    RequestCount = count(),
+    SPNSet = make_set(ServiceName, 10),
+    EncTypes = make_set(TicketEncryptionType, 5)
+    by TargetUserName, IpAddress, bin(TimeGenerated, 5m)
+| where RequestCount >= 3
+| project TimeGenerated, TargetUserName, IpAddress, RequestCount, SPNSet, EncTypes
+| order by RequestCount desc

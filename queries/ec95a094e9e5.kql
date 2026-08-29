@@ -1,0 +1,18 @@
+// Source: https://github.com/dabbychiu/Purple-Team-Detection-Lab
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4768
+| extend PreAuthType = extract(@'Name="PreAuthType">([^<]+)<', 1, EventData)
+| extend TargetUser = extract(@'Name="TargetUserName">([^<]+)<', 1, EventData)
+| extend SrcIp = extract(@'Name="IpAddress">([^<]+)<', 1, EventData)
+| where PreAuthType == "0"
+| where TargetUser !endswith "$"
+| summarize
+    TargetedAccounts = dcount(TargetUser),
+    AccountSet = make_set(TargetUser, 20),
+    RequestCount = count()
+    by SrcIp, Computer, bin(TimeGenerated, 10m)
+| where TargetedAccounts >= 2
+| order by TargetedAccounts desc

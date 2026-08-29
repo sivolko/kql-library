@@ -1,0 +1,15 @@
+// Source: https://github.com/dabbychiu/Purple-Team-Detection-Lab
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4769
+| extend StartTime = extract(@'<Data Name="StartTime">([^<]+)</Data>', 1, tostring(EventData))
+| extend EndTime = extract(@'<Data Name="EndTime">([^<]+)</Data>', 1, tostring(EventData))
+| extend TicketLife = todatetime(EndTime) - todatetime(StartTime)
+| where isnotempty(StartTime) and isnotempty(EndTime)
+| where TicketLife > 10h
+| extend TargetUser = extract(@'<Data Name="TargetUserName">([^<]+)</Data>', 1, tostring(EventData))
+| extend ServiceName = extract(@'<Data Name="ServiceName">([^<]+)</Data>', 1, tostring(EventData))
+| project TimeGenerated, TargetUser, ServiceName, TicketLife, Computer
+| order by TicketLife desc

@@ -1,0 +1,138 @@
+// Source: https://github.com/loredan1994/azure-log-analytics-cost-triage
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetTable = "FunctionAppLogs";
+let Lookback = 1d;
+let Base =
+    materialize(
+        table(TargetTable)
+        | where TimeGenerated >= ago(Lookback)
+        | where tolower(tostring(column_ifexists("_IsBillable", "true"))) == "true"
+        | extend AppName = tostring(column_ifexists("AppName", ""))
+        | extend ResourceId = tostring(column_ifexists("_ResourceId", ""))
+        | extend Computer = tostring(column_ifexists("Computer", ""))
+        | extend Category = tostring(column_ifexists("Category", ""))
+        | extend Level = tostring(column_ifexists("Level", ""))
+        | extend OperationName = tostring(column_ifexists("OperationName", ""))
+        | extend EventIDPrimary = tostring(column_ifexists("EventID", ""))
+        | extend EventIDSecondary = tostring(column_ifexists("EventId", ""))
+        | extend EventID = iff(isnotempty(EventIDPrimary), EventIDPrimary, EventIDSecondary)
+        | extend ProcessName = tostring(column_ifexists("ProcessName", ""))
+        | extend Facility = tostring(column_ifexists("Facility", ""))
+        | extend SeverityLevel = tostring(column_ifexists("SeverityLevel", ""))
+        | extend ObjectName = tostring(column_ifexists("ObjectName", ""))
+        | extend CounterName = tostring(column_ifexists("CounterName", ""))
+        | extend MetricNamespace = tostring(column_ifexists("Namespace", ""))
+        | extend MetricName = tostring(column_ifexists("Name", ""))
+        | extend PodName = tostring(column_ifexists("PodName", ""))
+        | extend ContainerName = tostring(column_ifexists("ContainerName", ""))
+        | extend Caller = tostring(column_ifexists("Caller", ""))
+        | extend ResourceProvider = tostring(coalesce(column_ifexists("ResourceProvider", ""), column_ifexists("ResourceProviderValue", "")))
+        | extend FunctionName = tostring(column_ifexists("FunctionName", ""))
+        | extend SourceSystem = tostring(column_ifexists("SourceSystem", ""))
+    );
+let BaseRows = toscalar(Base | count);
+union
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(AppName)), DistinctValues = dcountif(AppName, isnotempty(AppName))
+    | project TableName = TargetTable, ColumnName = "AppName", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(ResourceId)), DistinctValues = dcountif(ResourceId, isnotempty(ResourceId))
+    | project TableName = TargetTable, ColumnName = "_ResourceId", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(Computer)), DistinctValues = dcountif(Computer, isnotempty(Computer))
+    | project TableName = TargetTable, ColumnName = "Computer", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(Category)), DistinctValues = dcountif(Category, isnotempty(Category))
+    | project TableName = TargetTable, ColumnName = "Category", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(Level)), DistinctValues = dcountif(Level, isnotempty(Level))
+    | project TableName = TargetTable, ColumnName = "Level", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(OperationName)), DistinctValues = dcountif(OperationName, isnotempty(OperationName))
+    | project TableName = TargetTable, ColumnName = "OperationName", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(EventID)), DistinctValues = dcountif(EventID, isnotempty(EventID))
+    | project TableName = TargetTable, ColumnName = "EventID", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(ProcessName)), DistinctValues = dcountif(ProcessName, isnotempty(ProcessName))
+    | project TableName = TargetTable, ColumnName = "ProcessName", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(Facility)), DistinctValues = dcountif(Facility, isnotempty(Facility))
+    | project TableName = TargetTable, ColumnName = "Facility", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(SeverityLevel)), DistinctValues = dcountif(SeverityLevel, isnotempty(SeverityLevel))
+    | project TableName = TargetTable, ColumnName = "SeverityLevel", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(ObjectName)), DistinctValues = dcountif(ObjectName, isnotempty(ObjectName))
+    | project TableName = TargetTable, ColumnName = "ObjectName", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(CounterName)), DistinctValues = dcountif(CounterName, isnotempty(CounterName))
+    | project TableName = TargetTable, ColumnName = "CounterName", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(MetricNamespace)), DistinctValues = dcountif(MetricNamespace, isnotempty(MetricNamespace))
+    | project TableName = TargetTable, ColumnName = "Namespace", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(MetricName)), DistinctValues = dcountif(MetricName, isnotempty(MetricName))
+    | project TableName = TargetTable, ColumnName = "Name", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(PodName)), DistinctValues = dcountif(PodName, isnotempty(PodName))
+    | project TableName = TargetTable, ColumnName = "PodName", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(ContainerName)), DistinctValues = dcountif(ContainerName, isnotempty(ContainerName))
+    | project TableName = TargetTable, ColumnName = "ContainerName", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(Caller)), DistinctValues = dcountif(Caller, isnotempty(Caller))
+    | project TableName = TargetTable, ColumnName = "Caller", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(ResourceProvider)), DistinctValues = dcountif(ResourceProvider, isnotempty(ResourceProvider))
+    | project TableName = TargetTable, ColumnName = "ResourceProvider", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(FunctionName)), DistinctValues = dcountif(FunctionName, isnotempty(FunctionName))
+    | project TableName = TargetTable, ColumnName = "FunctionName", PopulatedRows, DistinctValues
+),
+(
+    Base
+    | summarize PopulatedRows = countif(isnotempty(SourceSystem)), DistinctValues = dcountif(SourceSystem, isnotempty(SourceSystem))
+    | project TableName = TargetTable, ColumnName = "SourceSystem", PopulatedRows, DistinctValues
+)
+| extend CoveragePct = iff(BaseRows == 0, 0.0, round(100.0 * todouble(PopulatedRows) / todouble(BaseRows), 2))
+| order by CoveragePct desc, DistinctValues desc

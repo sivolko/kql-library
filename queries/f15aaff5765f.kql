@@ -1,0 +1,16 @@
+// Source: https://github.com/dabbychiu/Purple-Team-Detection-Lab
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let PrivAssign = SecurityEvent
+    | where EventID == 4672
+    | project PrivTime=TimeGenerated, PrivAccount=SubjectUserName;
+SecurityEvent
+| where EventID == 4769
+| extend TargetUser = extract(@'<Data Name="TargetUserName">([^<]+)</Data>', 1, tostring(EventData))
+| extend ServiceName = extract(@'<Data Name="ServiceName">([^<]+)</Data>', 1, tostring(EventData))
+| where TimeGenerated > ago(1h)
+| join kind=inner PrivAssign on $left.TargetUser == $right.PrivAccount
+| where PrivTime between (TimeGenerated .. (TimeGenerated + 5m))
+| project TimeGenerated, TargetUser, ServiceName, PrivTime, Computer
+| order by TimeGenerated desc

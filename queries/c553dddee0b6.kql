@@ -1,0 +1,67 @@
+// Source: https://github.com/loredan1994/azure-log-analytics-cost-triage
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetTable = "FunctionAppLogs";
+let Lookback = 3d;
+let Bucket = 1d;
+let WindowStart = startofday(ago(Lookback));
+let WindowEnd = startofday(now());
+let Raw =
+    materialize(
+        table(TargetTable)
+        | where _TimeReceived >= WindowStart and _TimeReceived < WindowEnd
+        | where tolower(tostring(_IsBillable)) == "true"
+    );
+let UsageByIngestionDay =
+    Usage
+    | where TimeGenerated > ago(32d)
+    | where IsBillable == true
+    | where DataType =~ TargetTable
+    | where StartTime >= WindowStart and EndTime < WindowEnd
+    | summarize UsageGB = sum(Quantity) / 1000 by IngestionDay = bin(StartTime, Bucket);
+let ReceivedByIngestionDay =
+    Raw
+    | summarize
+        ReceivedGB = sum(_BilledSize) / 1e9,
+        ReceivedRows = count()
+      by IngestionDay = bin(_TimeReceived, Bucket);
+let SameDayGeneratedByIngestionDay =
+    Raw
+    | where bin(TimeGenerated, Bucket) == bin(_TimeReceived, Bucket)
+    | summarize SameDayGeneratedGB = sum(_BilledSize) / 1e9 by IngestionDay = bin(_TimeReceived, Bucket);
+let LateArrivalByIngestionDay =
+    Raw
+    | where bin(TimeGenerated, Bucket) < bin(_TimeReceived, Bucket)
+    | summarize
+        LateArrivalGB = sum(_BilledSize) / 1e9,
+        LateArrivalRows = count(),
+        OldestTimeGenerated = min(TimeGenerated),
+        NewestTimeGenerated = max(TimeGenerated)
+      by IngestionDay = bin(_TimeReceived, Bucket);
+UsageByIngestionDay
+| join kind=fullouter ReceivedByIngestionDay on IngestionDay
+| join kind=leftouter SameDayGeneratedByIngestionDay on IngestionDay
+| join kind=leftouter LateArrivalByIngestionDay on IngestionDay
+| extend UsageGB = coalesce(UsageGB, 0.0)
+| extend ReceivedGB = coalesce(ReceivedGB, 0.0)
+| extend ReceivedRows = coalesce(ReceivedRows, 0)
+| extend SameDayGeneratedGB = coalesce(SameDayGeneratedGB, 0.0)
+| extend LateArrivalGB = coalesce(LateArrivalGB, 0.0)
+| extend LateArrivalRows = coalesce(LateArrivalRows, 0)
+| extend LateArrivalPctOfReceived = iff(ReceivedGB == 0.0, 0.0, round(100.0 * LateArrivalGB / ReceivedGB, 2))
+| extend UsageVsReceivedDeltaGB = round(UsageGB - ReceivedGB, 3)
+| project
+    IngestionDay,
+    TableName = TargetTable,
+    UsageGB = round(UsageGB, 3),
+    ReceivedGB = round(ReceivedGB, 3),
+    UsageVsReceivedDeltaGB,
+    SameDayGeneratedGB = round(SameDayGeneratedGB, 3),
+    LateArrivalGB = round(LateArrivalGB, 3),
+    LateArrivalPctOfReceived,
+    ReceivedRows,
+    LateArrivalRows,
+    OldestTimeGenerated,
+    NewestTimeGenerated
+| order by IngestionDay desc

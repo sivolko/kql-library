@@ -1,0 +1,107 @@
+// Source: https://github.com/loredan1994/azure-log-analytics-cost-triage
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetTable = "FunctionAppLogs";
+let TargetConsumer = "";
+let WindowLength = 7d;
+let WindowDays = WindowLength / 1d;
+let BeforeWindowStart = datetime(2026-03-01);
+let AfterWindowStart = datetime(2026-03-08);
+let TopN = 10;
+let Raw =
+    materialize(
+        table(TargetTable)
+        | where TimeGenerated >= BeforeWindowStart and TimeGenerated < (AfterWindowStart + WindowLength)
+        | where tolower(tostring(_IsBillable)) == "true"
+        | extend AppName = tostring(column_ifexists("AppName", ""))
+        | extend ResourceId = tostring(column_ifexists("_ResourceId", ""))
+        | extend Computer = tostring(column_ifexists("Computer", ""))
+        | extend Resource = tostring(column_ifexists("Resource", ""))
+        | extend SubscriptionId = tostring(column_ifexists("_SubscriptionId", ""))
+        | extend SourceSystem = tostring(column_ifexists("SourceSystem", ""))
+        | extend ConsumerType = case(
+            isnotempty(AppName), "AppName",
+            isnotempty(ResourceId), "_ResourceId",
+            isnotempty(Computer), "Computer",
+            isnotempty(Resource), "Resource",
+            isnotempty(SubscriptionId), "_SubscriptionId",
+            isnotempty(SourceSystem), "SourceSystem",
+            "Unknown"
+        )
+        | extend Consumer = case(
+            isnotempty(AppName), AppName,
+            isnotempty(ResourceId), ResourceId,
+            isnotempty(Computer), Computer,
+            isnotempty(Resource), Resource,
+            isnotempty(SubscriptionId), SubscriptionId,
+            isnotempty(SourceSystem), SourceSystem,
+            "<unknown>"
+        )
+        | where isempty(TargetConsumer) or Consumer =~ TargetConsumer
+    );
+let BeforeRaw =
+    materialize(
+        Raw
+        | where TimeGenerated >= BeforeWindowStart and TimeGenerated < (BeforeWindowStart + WindowLength)
+    );
+let AfterRaw =
+    materialize(
+        Raw
+        | where TimeGenerated >= AfterWindowStart and TimeGenerated < (AfterWindowStart + WindowLength)
+    );
+let BeforeTotalGB = toscalar(BeforeRaw | summarize sum(_BilledSize) / 1e9);
+let AfterTotalGB = toscalar(AfterRaw | summarize sum(_BilledSize) / 1e9);
+let BeforeTotalRows = toscalar(BeforeRaw | summarize count());
+let AfterTotalRows = toscalar(AfterRaw | summarize count());
+let Summary =
+    print
+        Section = "Summary",
+        TableName = TargetTable,
+        ConsumerType = "*",
+        Consumer = iff(isempty(TargetConsumer), "*ALL*", TargetConsumer),
+        BeforeGB = round(coalesce(BeforeTotalGB, 0.0), 3),
+        AfterGB = round(coalesce(AfterTotalGB, 0.0), 3),
+        DeltaGB = round(coalesce(AfterTotalGB, 0.0) - coalesce(BeforeTotalGB, 0.0), 3),
+        ReductionPct = iff(
+            coalesce(BeforeTotalGB, 0.0) == 0.0,
+            real(null),
+            round(100.0 * (coalesce(BeforeTotalGB, 0.0) - coalesce(AfterTotalGB, 0.0)) / coalesce(BeforeTotalGB, 0.0), 2)
+        ),
+        BeforeRows = tolong(coalesce(BeforeTotalRows, 0)),
+        AfterRows = tolong(coalesce(AfterTotalRows, 0)),
+        EstimatedDailySavingsGB = round((coalesce(BeforeTotalGB, 0.0) - coalesce(AfterTotalGB, 0.0)) / WindowDays, 3),
+        EstimatedMonthlySavingsGB = round(((coalesce(BeforeTotalGB, 0.0) - coalesce(AfterTotalGB, 0.0)) / WindowDays) * 30.0, 3);
+let BeforeByConsumer =
+    BeforeRaw
+    | summarize BeforeGB = sum(_BilledSize) / 1e9, BeforeRows = count() by ConsumerType, Consumer;
+let AfterByConsumer =
+    AfterRaw
+    | summarize AfterGB = sum(_BilledSize) / 1e9, AfterRows = count() by ConsumerType, Consumer;
+let ConsumerDelta =
+    BeforeByConsumer
+    | join kind=fullouter AfterByConsumer on ConsumerType, Consumer
+    | extend BeforeGB = coalesce(BeforeGB, 0.0)
+    | extend AfterGB = coalesce(AfterGB, 0.0)
+    | extend BeforeRows = coalesce(BeforeRows, 0)
+    | extend AfterRows = coalesce(AfterRows, 0)
+    | extend DeltaGB = round(AfterGB - BeforeGB, 3)
+    | extend ReductionPct = iff(BeforeGB == 0.0, real(null), round(100.0 * (BeforeGB - AfterGB) / BeforeGB, 2))
+    | extend EstimatedDailySavingsGB = round((BeforeGB - AfterGB) / WindowDays, 3)
+    | extend EstimatedMonthlySavingsGB = round(((BeforeGB - AfterGB) / WindowDays) * 30.0, 3)
+    | top TopN by abs(DeltaGB) desc
+    | project
+        Section = "ConsumerDelta",
+        TableName = TargetTable,
+        ConsumerType,
+        Consumer,
+        BeforeGB = round(BeforeGB, 3),
+        AfterGB = round(AfterGB, 3),
+        DeltaGB,
+        ReductionPct,
+        BeforeRows,
+        AfterRows,
+        EstimatedDailySavingsGB,
+        EstimatedMonthlySavingsGB;
+union Summary, ConsumerDelta
+| order by Section asc, abs(DeltaGB) desc

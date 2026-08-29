@@ -1,0 +1,40 @@
+// Source: https://github.com/a2awais/Threat-Hunting
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where Timestamp > ago(30d)
+| where ActionType == "ScreenshotTaken"
+| where (
+    // Screenshot from a process running in a known NightLedger staging path
+    InitiatingProcessFolderPath has_any (
+        @"\AppData\Local\Microsoft\VisualStudio",
+        @"\AppData\Local\Temp",
+        @"\AppData\Roaming",
+        @"univpn\promote",
+        @"\Users\Public"
+    )
+    or
+    // Screenshot from LOLBin/DLL-loader class process (hijack execution chain)
+    InitiatingProcessFileName in~ (
+        "rundll32.exe",
+        "regsvr32.exe",
+        "AppVShNotify.exe",
+        "dllhost.exe",
+        "msiexec.exe"
+    )
+)
+// Exclude expected screen-capture tools in your environment
+| where InitiatingProcessFileName !in~ (
+    "Teams.exe", "Zoom.exe", "mstsc.exe", "snippingtool.exe",
+    "ScreenSketch.exe"
+)
+| project
+    Timestamp,
+    DeviceName,
+    ActionType,
+    InitiatingProcessFileName,
+    InitiatingProcessFolderPath,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName
+| sort by Timestamp asc

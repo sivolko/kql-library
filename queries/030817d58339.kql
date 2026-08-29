@@ -1,0 +1,30 @@
+// Source: https://github.com/loredan1994/azure-log-analytics-cost-triage
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetTable = "FunctionAppLogs";
+let Lookback = 1d;
+let TopN = 50;
+table(TargetTable)
+| where TimeGenerated >= ago(Lookback)
+| where tolower(tostring(column_ifexists("_IsBillable", "true"))) == "true"
+| extend BilledSize = toreal(column_ifexists("_BilledSize", 0.0))
+| where BilledSize > 0
+| extend Dimension1 = tostring(column_ifexists("Category", ""))
+| extend Dimension2 = tostring(column_ifexists("Level", ""))
+| extend Dimension3 = tostring(column_ifexists("FunctionName", ""))
+| where isnotempty(Dimension1)
+| summarize
+    Rows = count(),
+    GB = sum(BilledSize) / 1e9,
+    AvgKB = avg(BilledSize) / 1024.0
+  by TableName = TargetTable, Dimension1, Dimension2, Dimension3
+| top TopN by GB desc
+| project
+    TableName,
+    Dimension1,
+    Dimension2,
+    Dimension3,
+    GB = round(GB, 3),
+    Rows,
+    AvgKB = round(AvgKB, 2)

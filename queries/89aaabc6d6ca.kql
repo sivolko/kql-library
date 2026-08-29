@@ -1,0 +1,15 @@
+// Source: https://github.com/dabbychiu/Purple-Team-Detection-Lab
+// Collected: 2026-08-29
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 5136
+| extend AttrName = extract(@'<Data Name="AttributeLDAPDisplayName">([^<]+)</Data>', 1, tostring(EventData))
+| extend SubjectUser = extract(@'<Data Name="SubjectUserName">([^<]+)</Data>', 1, tostring(EventData))
+| extend ObjectDN = extract(@'<Data Name="ObjectDN">([^<]+)</Data>', 1, tostring(EventData))
+| extend ObjectClass = extract(@'<Data Name="ObjectClass">([^<]+)</Data>', 1, tostring(EventData))
+| where AttrName == "nTSecurityDescriptor"
+| where ObjectClass in ("organizationalUnit", "groupPolicyContainer", "domainDNS")
+| where SubjectUser !endswith "$"
+| project TimeGenerated, SubjectUser, AttrName, ObjectDN, ObjectClass, Computer
+| order by TimeGenerated desc
