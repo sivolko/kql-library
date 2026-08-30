@@ -1,0 +1,10 @@
+// Source: https://github.com/rod-trent/Sentinel-SOC-101
+// Collected: 2026-08-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+view all legacy authentication events:
+
+SecurityEvent
+| where EventID == 4624 and TargetLogonId != 0x0  
+| extend LegacyAuthentication = iif((LogonProcessName =~ "Advapi" or LogonProcessName =~ "Ssp"), "True", "False")  
+| where LegacyAuthentication == "True"  

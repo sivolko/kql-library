@@ -1,0 +1,20 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where TimeGenerated > ago(3h)
+| where EventID == 4662
+| where ObjectServer == "DS"
+| where AccessMask == "0x10"
+| where SubjectUserName !endswith "$"
+| where SubjectUserName != "-"
+| where SubjectAccount startswith "CORP\\"
+| summarize
+    ActiveBins = dcount(bin(TimeGenerated, 15m)),
+    SpanMin = datetime_diff("minute", max(TimeGenerated), min(TimeGenerated)),
+    EventCount = count()
+    by SubjectAccount, Computer, bin(TimeGenerated, 3h)
+| where SpanMin >= 25 and ActiveBins >= 4
+| project TimeGenerated, SubjectAccount, Computer, ActiveBins, SpanMin, EventCount
+| order by SpanMin desc

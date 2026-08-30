@@ -1,0 +1,19 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let Lookback = 14d;
+AzureActivity
+| where TimeGenerated >= ago(Lookback)
+| where OperationNameValue in~ (
+    "Microsoft.Authorization/roleAssignments/write",
+    "Microsoft.Authorization/roleAssignments/delete",
+    "Microsoft.Authorization/roleDefinitions/write",
+    "Microsoft.Authorization/roleDefinitions/delete",
+    "Microsoft.Authorization/policyAssignments/write",
+    "Microsoft.Authorization/policyAssignments/delete",
+    "Microsoft.Authorization/locks/write",
+    "Microsoft.Authorization/locks/delete"
+)
+| project TimeGenerated, Caller, CallerIpAddress, OperationNameValue, ActivityStatusValue, SubscriptionId, ResourceGroup, _ResourceId, CorrelationId
+| order by TimeGenerated desc

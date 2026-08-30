@@ -1,0 +1,48 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceEvents
+| where ActionType == "CreateRemoteThread"
+| extend SourceImage = tostring(AdditionalFields.SourceImage),
+         TargetImage = tostring(AdditionalFields.TargetImage),
+         StartFunction = tostring(AdditionalFields.StartFunction),
+         StartModule = tostring(AdditionalFields.StartModule),
+         SourceUser = tostring(AdditionalFields.SourceUser),
+         TargetUser = tostring(AdditionalFields.TargetUser)
+         
+// Exclude known legitimate system debugging behaviour
+| where SourceImage !in (
+        @"C:\Windows\System32\WerFault.exe",
+        @"C:\Windows\System32\wermgr.exe",
+        @"C:\Windows\System32\vsjitdebugger.exe",
+        @"C:\Program Files\WindowsApps\MicrosoftCorporationII.WinAppRuntime.Singleton_*"
+    )
+
+// Exclude antivirus and EDR remote thread operations
+| where SourceImage !startswith @"C:\Program Files\Windows Defender"
+| where SourceImage !startswith @"C:\Program Files\Microsoft Security Client"
+| where SourceImage !startswith @"C:\Program Files\CrowdStrike"
+| where SourceImage !startswith @"C:\Program Files\SentinelOne"
+
+// Suspicious targets: high‑value processes
+| where TargetImage in (
+        @"C:\Windows\System32\lsass.exe",
+        @"C:\Windows\System32\winlogon.exe",
+        @"C:\Windows\System32\services.exe",
+        @"C:\Windows\System32\svchost.exe",
+        @"C:\Windows\explorer.exe"
+    )
+
+// Suspicious StartFunction (non‑debugging)
+| where StartFunction !in (
+        "RtlpQueryProcessDebugInformationRemote",
+        "DbgUiRemoteBreakin"
+    )
+
+// Privilege escalation indicator
+| where SourceUser != TargetUser
+
+// Output fields
+| project Timestamp, SourceImage, TargetImage, StartModule, StartFunction,
+          AdditionalFields.NewThreadId, SourceUser, TargetUser, DeviceName

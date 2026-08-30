@@ -1,0 +1,216 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+OfficeActivity
+| where Operation == "Set-Mailbox"
+| where tostring(Parameters) has "ForwardingSmtpAddress"
+| project TimeGenerated, UserId, ClientIP, Parameters
+
+// Step 2: Substitute values from step 1. Record OAuthAppId and IPAddress.
+let TargetAccountId = "<UserId>";
+let SourceIp = "<ClientIP>";
+CloudAppEvents
+| where ActionType == "MailboxForwardingConfigured"
+| where AccountId == TargetAccountId and IPAddress == SourceIp
+| project Timestamp, OAuthAppId, ObjectName, IPAddress
+
+// Step 3: Substitute OAuthAppId and IPAddress. Inspect Evidence.
+let ApplicationId = "<OAuthAppId>";
+let SourceIp = "<IPAddress>";
+AADServicePrincipalSignInLogs
+| where AppId == ApplicationId and IPAddress == SourceIp
+| project TimeGenerated, ServicePrincipalName, Evidence=UserAgent
+
+// ============================================================================
+// EMAIL-02: Malicious Inbox Rules
+// TTP-ID: malicious-inbox-rules
+// OfficeActivity -> SigninLogs -> AADNonInteractiveUserSignInLogs
+// MITRE ATT&CK: T1070.008 - Indicator Removal: Clear Mailbox Data
+// MITRE ATT&CK: T1114.003 - Email Collection: Email Forwarding Rule
+// References:
+//   https://attack.mitre.org/techniques/T1070/008/
+//   https://attack.mitre.org/techniques/T1114/003/
+//   https://learn.microsoft.com/powershell/module/exchange/get-inboxrule
+//
+// KEY TAKEAWAY: A rule that moves or deletes security mail shows concealment, but
+// the authentication trail shows who created it and whether access continued.
+// PIVOT LOGIC:
+//   Step 1 -> 2: UserId anchors the affected mailbox and ClientIP anchors the
+//   source. Using both avoids attributing another user's nearby sign-in to the rule.
+//   Step 2 -> 3: CorrelationId is the request-chain identifier. It links the
+//   interactive Exchange sign-in to the exact non-interactive continuation.
+// BIG PICTURE: The pivots connect mailbox manipulation, the initiating session,
+// and automated follow-on access, showing both defense evasion and persistence.
+// ============================================================================
+
+// Step 1: Find rules that suppress security messages. Record UserId and ClientIP.
+OfficeActivity
+| where Operation == "New-InboxRule"
+| where tostring(Parameters) has_any ("DeleteMessage", "MoveToFolder")
+| project TimeGenerated, UserId, ClientIP, Parameters
+
+// Step 2: Substitute values from step 1. Record CorrelationId.
+let MailboxUser = "<UserId>";
+let SourceIp = "<ClientIP>";
+SigninLogs
+| where UserPrincipalName == MailboxUser and IPAddress == SourceIp
+| where AppDisplayName == "Office 365 Exchange Online"
+| project TimeGenerated, CorrelationId, UserPrincipalName, IPAddress
+
+// Step 3: Substitute CorrelationId. Inspect Evidence.
+let AuthCorrelationId = "<CorrelationId>";
+AADNonInteractiveUserSignInLogs
+| where CorrelationId == AuthCorrelationId
+| project TimeGenerated, AppDisplayName, IncomingTokenType, Evidence=AuthenticationDetails
+
+// ============================================================================
+// IDENTITY-01: Token Abuse
+// TTP-ID: token-abuse
+// SigninLogs -> AADNonInteractiveUserSignInLogs
+// MITRE ATT&CK: T1528 - Steal Application Access Token
+// MITRE ATT&CK: T1550.001 - Use Alternate Authentication Material: Application Access Token
+// References:
+//   https://attack.mitre.org/techniques/T1528/
+//   https://attack.mitre.org/techniques/T1550/001/
+//   https://learn.microsoft.com/entra/identity-platform/access-tokens
+//
+// KEY TAKEAWAY: The risky device-code sign-in shows token issuance; SessionId
+// proves that later non-interactive activity belongs to that same authenticated session.
+// PIVOT LOGIC:
+//   Step 1 -> 2: SessionId survives the change from an interactive sign-in to
+//   background token use. It is stronger evidence than matching only user or IP.
+// BIG PICTURE: The pivot demonstrates session continuity without another login or
+// MFA prompt, which is why password changes alone may not terminate token abuse.
+// ============================================================================
+
+// Step 1: Find the risky interactive device-code sign-in. Record SessionId.
+SigninLogs
+| where AuthenticationProtocol == "deviceCode" and ResultType == "0"
+| where IsRisky and IsInteractive and isnotempty(SessionId)
+| project TimeGenerated, UserPrincipalName, SessionId, IPAddress
+
+// Step 2: Substitute SessionId. Inspect Evidence.
+let CompromisedSessionId = "<SessionId>";
+AADNonInteractiveUserSignInLogs
+| where SessionId == CompromisedSessionId and not(IsInteractive)
+| project TimeGenerated, UserPrincipalName, IncomingTokenType, Evidence=AuthenticationDetails
+
+// ============================================================================
+// IDENTITY-02: Conditional Access Policy Abuse
+// TTP-ID: conditional-access-policy-abuse
+// AuditLogs -> CloudAppEvents -> SigninLogs
+// MITRE ATT&CK: T1562 - Impair Defenses (behavioral alignment)
+// References:
+//   https://attack.mitre.org/techniques/T1562/
+//   https://learn.microsoft.com/entra/identity/conditional-access/concept-conditional-access-policies
+//   https://learn.microsoft.com/graph/api/resources/signin
+//
+// KEY TAKEAWAY: A policy update is a control-plane event; its security impact is
+// established only when a sign-in is evaluated under the altered policy.
+// PIVOT LOGIC:
+//   Step 1 -> 2: CorrelationId ties the Entra audit record to the same policy
+//   operation observed by Defender for Cloud Apps and reveals the policy ObjectId.
+//   Step 2 -> 3: ObjectId identifies the exact Conditional Access policy evaluated
+//   during sign-in, avoiding assumptions based only on timing or policy names.
+// BIG PICTURE: The pivots connect who changed a defensive control, which policy
+// changed, and the successful authentication consequence of that weakened control.
+// ============================================================================
+
+// Step 1: Find the policy update. Record CorrelationId.
+AuditLogs
+| where OperationName == "Update conditional access policy"
+| project TimeGenerated, Identity, CorrelationId, TargetResources
+
+// Step 2: Substitute CorrelationId. Record ObjectId.
+let PolicyAuditCorrelationId = "<CorrelationId>";
+CloudAppEvents
+| extend AuditCorrelationId=tostring(RawEventData.AuditCorrelationId)
+| where AuditCorrelationId == PolicyAuditCorrelationId
+| project Timestamp, ObjectId, AccountId, IPAddress
+
+// Step 3: Substitute ObjectId. Inspect Evidence.
+let PolicyId = "<ObjectId>";
+SigninLogs
+| where tostring(ConditionalAccessPolicies) == PolicyId
+| project TimeGenerated, UserPrincipalName, ConditionalAccessStatus, Evidence=AuthenticationDetails
+
+// ============================================================================
+// APPLICATION-01: API Access Abuse
+// TTP-ID: api-access-abuse
+// AuditLogs -> AADServicePrincipalSignInLogs -> GraphAPIAuditEvents
+// MITRE ATT&CK: T1059.009 - Command and Scripting Interpreter: Cloud API
+// MITRE ATT&CK: T1550.001 - Use Alternate Authentication Material: Application Access Token
+// References:
+//   https://attack.mitre.org/techniques/T1059/009/
+//   https://attack.mitre.org/techniques/T1550/001/
+//   https://learn.microsoft.com/graph/auth/auth-concepts
+//
+// KEY TAKEAWAY: Consent grants potential access; only the token and API records
+// prove that the service principal exercised those permissions against a resource.
+// PIVOT LOGIC:
+//   Step 1 -> 2: ServicePrincipalId identifies the application identity created or
+//   authorized by consent and separates it from the consenting human identity.
+//   Step 2 -> 3: UniqueTokenIdentifier follows one issued token into the exact Graph
+//   request, preventing unrelated calls by the same application from being conflated.
+// BIG PICTURE: The pivots reconstruct authorization -> app-only authentication ->
+// resource access, showing how broad consent becomes operational API abuse.
+// ============================================================================
+
+// Step 1: Find suspicious application consent. Record ServicePrincipalId.
+AuditLogs
+| where OperationName == "Consent to application"
+| where tostring(AdditionalDetails) has_all ("Files.Read.All", "Directory.Read.All")
+| extend ServicePrincipalId=tostring(TargetResources[0].id)
+| project TimeGenerated, Identity, ServicePrincipalId, TargetResources
+
+// Step 2: Substitute ServicePrincipalId. Record UniqueTokenIdentifier.
+let ConsentedServicePrincipalId = "<ServicePrincipalId>";
+AADServicePrincipalSignInLogs
+| where ServicePrincipalId == ConsentedServicePrincipalId
+| project TimeGenerated, AppId, UniqueTokenIdentifier, IPAddress
+
+// Step 3: Substitute UniqueTokenIdentifier. Inspect Evidence.
+let IssuedTokenId = "<UniqueTokenIdentifier>";
+GraphAPIAuditEvents
+| where UniqueTokenIdentifier == IssuedTokenId
+| project TimeGenerated, ApplicationId, RequestMethod, Evidence=RequestUri, ResponseStatusCode
+
+// ============================================================================
+// APPLICATION-02: Cloud Data Collection (Non-Mail)
+// TTP-ID: cloud-data-collection-non-mail
+// CloudAppEvents -> GraphAPIAuditEvents -> OfficeActivity
+// MITRE ATT&CK: T1530 - Data from Cloud Storage
+// MITRE ATT&CK: T1213.002 - Data from Information Repositories: SharePoint
+// References:
+//   https://attack.mitre.org/techniques/T1530/
+//   https://attack.mitre.org/techniques/T1213/002/
+//   https://learn.microsoft.com/graph/api/driveitem-get-content
+//
+// KEY TAKEAWAY: A cloud-app access alert suggests interest in a file, but Graph
+// and Office audit records are needed to prove API retrieval and completed download.
+// PIVOT LOGIC:
+//   Step 1 -> 2: ObjectId is the stable file/object identifier shared by the cloud
+//   app observation and Graph request; names alone can collide or be changed.
+//   Step 2 -> 3: ReportId carries that object identity into OfficeObjectId, linking
+//   the API request to the workload's authoritative FileDownloaded audit event.
+// BIG PICTURE: The pivots connect suspicious app-only access, the retrieval channel,
+// and final data movement, distinguishing collection from mere browsing or enumeration.
+// ============================================================================
+
+// Step 1: Find application-only file access. Record ObjectId.
+CloudAppEvents
+| where ActionType == "FileAccessed" and AccountType == "ServicePrincipal"
+| project Timestamp, ObjectId, OAuthAppId, IPAddress
+
+// Step 2: Substitute ObjectId. Record ReportId.
+let AccessedObjectId = "<ObjectId>";
+GraphAPIAuditEvents
+| where ReportId == AccessedObjectId
+| project TimeGenerated, ReportId, ApplicationId, RequestMethod, RequestUri
+
+// Step 3: Substitute ReportId. Inspect Evidence.
+let DownloadReportId = "<ReportId>";
+OfficeActivity
+| where OfficeObjectId == DownloadReportId and Operation == "FileDownloaded"
+| project TimeGenerated, UserId, OfficeObjectId, Evidence=SourceFileName, ClientIP

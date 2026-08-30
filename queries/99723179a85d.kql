@@ -1,0 +1,37 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let DCSyncEvents = SecurityEvent
+    | where EventID == 4662 and ObjectServer == "DS"
+    | where Properties has_any (
+        "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2",
+        "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
+    | where SubjectUserName !endswith "$"
+    | where SubjectUserName != "-"
+    | where TimeGenerated > ago(1h)
+    | project DCSyncTime=TimeGenerated, Attacker=SubjectAccount, Computer;
+DCSyncEvents
+| join kind=inner (
+    SecurityEvent
+    | where EventID == 4769
+    | where TimeGenerated > ago(3h)
+    | extend ServiceName = extract(@'<Data Name="ServiceName">([^<]+)</Data>', 1, tostring(EventData))
+    | extend TargetUser = extract(@'<Data Name="TargetUserName">([^<]+)</Data>', 1, tostring(EventData))
+    | extend SrcIp = extract(@'<Data Name="IpAddress">([^<]+)</Data>', 1, tostring(EventData))
+    | where ServiceName !startswith "krbtgt"
+    | where TargetUser !endswith "$"
+    | where SrcIp !startswith "::1"
+    | where SrcIp !startswith "::ffff:10.0.3."
+    | where SrcIp !startswith "::ffff:10.0.4."
+    | where SrcIp != "-"
+    | project TgsTime=TimeGenerated, ServiceName, TargetUser, SrcIp, Computer
+) on Computer
+| where TgsTime between ((DCSyncTime - 2h) .. (DCSyncTime + 2h))
+| summarize
+    TicketCount = count(),
+    Services = make_set(ServiceName, 20),
+    FirstTgs = min(TgsTime),
+    LastTgs = max(TgsTime)
+    by DCSyncTime, Attacker, SrcIp
+| order by DCSyncTime desc

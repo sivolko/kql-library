@@ -1,0 +1,13 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent
+| where EventID == 4768
+| extend Status = extract(@'Name="Status">([^<]+)<', 1, EventData)
+| extend TargetUser = extract(@'Name="TargetUserName">([^<]+)<', 1, EventData)
+| extend SrcIp = extract(@'Name="IpAddress">([^<]+)<', 1, EventData)
+| where Status == "0x12"
+| where TargetUser !endswith "$"
+| project TimeGenerated, TargetUser, Status, SrcIp, Computer
+| order by TimeGenerated desc

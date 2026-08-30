@@ -1,0 +1,15 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-30
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TrustChanges = CloudAppEvents
+| where Timestamp > ago(30m)
+| where ActionType has_any ("Add member to role", "Consent to application", "Update trust policy")
+| project TrustTime=Timestamp, AccountObjectId, TrustAction=ActionType;
+SigninLogs
+| where TimeGenerated > ago(15m)
+| where ResultType == 0
+| where AuthenticationRequirement != "multiFactorAuthentication"
+| join kind=innerunique TrustChanges on $left.UserId == $right.AccountObjectId
+| where TimeGenerated between (TrustTime .. TrustTime + 15m)
+| project TimeGenerated, UserPrincipalName, IPAddress, AppDisplayName, TrustAction, CorrelationId
