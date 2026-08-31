@@ -1,0 +1,23 @@
+// Source: https://github.com/SCGIS-Wales/entrascope
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = {lookback_hours}h;
+{table}
+| where TimeGenerated > ago(lookback)
+| where {failures_only} == 0 or ResultType != 0
+| where "{app_filter}" == "" or AppId == "{app_filter}" or AppDisplayName has "{app_filter}"
+| project
+    TimeGenerated,
+    UserPrincipalName,
+    AppId,
+    AppDisplayName,
+    ResourceDisplayName,
+    ClientAppUsed,
+    IPAddress,
+    ResultType,
+    ResultDescription,
+    ConditionalAccessStatus,
+    CorrelationId
+| order by TimeGenerated desc
+| take {row_limit}

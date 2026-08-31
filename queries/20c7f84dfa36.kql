@@ -1,0 +1,13 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetUser = "user@contoso.com";
+let Lookback = 14d;
+OfficeActivity
+| where TimeGenerated >= ago(Lookback)
+| where UserId =~ TargetUser or MailboxOwnerUPN =~ TargetUser
+| extend SourceIP = iff(isnotempty(ClientIP), ClientIP, ActorIpAddress)
+| extend Object = case(isnotempty(SourceFileName), SourceFileName, isnotempty(Item), Item, OfficeObjectId)
+| project TimeGenerated, OfficeWorkload, Operation, UserId, MailboxOwnerUPN, SourceIP, Object, ResultStatus
+| order by TimeGenerated desc

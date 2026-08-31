@@ -1,0 +1,23 @@
+// Source: https://github.com/SCGIS-Wales/entrascope
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+let lookback = {lookback_hours}h;
+AuditLogs
+| where TimeGenerated > ago(lookback)
+| where "{category}" == "" or Category == "{category}"
+| extend TargetName = tostring(TargetResources[0].displayName)
+| extend TargetId = tostring(TargetResources[0].id)
+| where "{target_filter}" == "" or TargetName has "{target_filter}" or TargetId == "{target_filter}"
+| project
+    TimeGenerated,
+    Category,
+    OperationName,
+    Result,
+    ResultReason,
+    InitiatedBy,
+    TargetName,
+    TargetId,
+    CorrelationId
+| order by TimeGenerated desc
+| take {row_limit}

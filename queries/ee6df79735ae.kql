@@ -1,0 +1,43 @@
+// Source: https://github.com/IamCharli01/CloudOperationsAutomationOpenAI
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago(24h)
+| where ResultType != 0
+| summarize Failures = count(), Reasons = make_set(ResultDescription, 5) by UserPrincipalName, IPAddress
+| where Failures >= 5
+| order by Failures desc
+
+// --- Impossible travel heuristic (same user, distant IPs within 1h) ----------
+SigninLogs
+| where TimeGenerated > ago(1d) and ResultType == 0
+| project TimeGenerated, UserPrincipalName, IPAddress, Location = tostring(LocationDetails.countryOrRegion)
+| summarize Countries = make_set(Location), Logins = count() by UserPrincipalName, bin(TimeGenerated, 1h)
+| where array_length(Countries) > 1
+| order by Logins desc
+
+// --- High-impact control-plane operations (role assignment, policy, delete) ---
+AzureActivity
+| where TimeGenerated > ago(7d)
+| where OperationNameValue has_any (
+    "Microsoft.Authorization/roleAssignments/write",
+    "Microsoft.Authorization/policyAssignments/write",
+    "Microsoft.Resources/subscriptions/resourceGroups/delete",
+    "Microsoft.KeyVault/vaults/delete")
+| project TimeGenerated, Caller, OperationNameValue, ActivityStatusValue, ResourceGroup, _ResourceId
+| order by TimeGenerated desc
+
+// --- Key Vault access denials ------------------------------------------------
+AzureDiagnostics
+| where ResourceProvider == "MICROSOFT.KEYVAULT"
+| where ResultType != "Success"
+| summarize Denials = count() by identity_claim_upn_s, OperationName, ResultType
+| order by Denials desc
+
+// --- NSG flow: top talkers to the Internet (requires NSG flow logs) ----------
+AzureNetworkAnalytics_CL
+| where TimeGenerated > ago(1d)
+| where FlowDirection_s == "O" and DestPublicIPs_s != ""
+| summarize Bytes = sum(OutboundBytes_d) by SrcIP_s, DestIP_s = DestPublicIPs_s, L4Protocol_s, DestPort_d
+| top 20 by Bytes desc

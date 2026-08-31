@@ -1,0 +1,143 @@
+// Source: https://github.com/nigeltho12/sc200-study-repo
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityIncident
+| summarize count() by Status
+
+// High severity incidents last 7 days
+SecurityIncident
+| where TimeGenerated > ago(7d)
+| where Severity == "High"
+| project TimeGenerated, Title, Status, Owner, IncidentNumber
+
+// Incident MTTA (Mean Time to Acknowledge)
+SecurityIncident
+| where Status != "New"
+| extend MTTA = datetime_diff("minute", FirstActivityTime, CreatedTime)
+| summarize avg(MTTA), percentile(MTTA, 90) by bin(TimeGenerated, 1d)
+| render timechart
+
+// Incidents assigned to me
+SecurityIncident
+| where Owner has "your-alias"
+| where Status == "Active"
+| project TimeGenerated, IncidentNumber, Title, Severity
+
+// ── ALERT ANALYSIS ──────────────────────────────────────────
+
+// Top 10 alert types by volume
+SecurityAlert
+| summarize count() by AlertName
+| sort by count_ desc
+| take 10
+
+// Alert volume over time (trend chart)
+SecurityAlert
+| where TimeGenerated > ago(7d)
+| summarize count() by bin(TimeGenerated, 1h)
+| render timechart
+
+// Expand alert entities for IOC pivoting
+SecurityAlert
+| extend Entities = parse_json(Entities)
+| mv-expand Entities
+| extend EntityType = tostring(Entities.Type)
+| extend EntityValue = tostring(Entities["$id"])
+| project TimeGenerated, AlertName, EntityType, EntityValue
+
+// Alerts by tactic (MITRE ATT&CK)
+SecurityAlert
+| where isnotempty(Tactics)
+| extend Tactics = split(Tactics, ",")
+| mv-expand Tactics
+| summarize count() by tostring(Tactics)
+| sort by count_ desc
+
+// ── IDENTITY & SIGN-IN ──────────────────────────────────────
+
+// Failed sign-ins by user (brute force / spray)
+SigninLogs
+| where ResultType != 0
+| summarize FailCount = count() by UserPrincipalName, IPAddress, AppDisplayName
+| where FailCount > 10
+| sort by FailCount desc
+
+// Successful login after failures (spray success indicator)
+let failures = SigninLogs
+| where ResultType != 0
+| summarize count() by UserPrincipalName
+| where count_ > 5;
+SigninLogs
+| where ResultType == 0
+| join kind=inner failures on UserPrincipalName
+| project TimeGenerated, UserPrincipalName, IPAddress, Location, AppDisplayName
+
+// Sign-ins from new countries
+SigninLogs
+| where ResultType == 0
+| summarize Countries = make_set(Location) by UserPrincipalName
+| where array_length(Countries) > 3
+
+// MFA not satisfied (legacy auth / MFA bypass attempt)
+SigninLogs
+| where AuthenticationRequirement == "multiFactorAuthentication"
+| where MfaDetail.authMethod == ""
+| project TimeGenerated, UserPrincipalName, IPAddress, AppDisplayName, ResultDescription
+
+// ── ENTRA ID / AZURE AD AUDIT ───────────────────────────────
+
+// New user created
+AuditLogs
+| where OperationName == "Add user"
+| extend Actor = tostring(InitiatedBy.user.userPrincipalName)
+| extend Target = tostring(TargetResources[0].userPrincipalName)
+| project TimeGenerated, Actor, Target, Result
+
+// Role assigned to user
+AuditLogs
+| where OperationName has "Add member to role"
+| extend Actor = tostring(InitiatedBy.user.userPrincipalName)
+| extend Target = tostring(TargetResources[0].displayName)
+| extend Role = tostring(TargetResources[1].displayName)
+| project TimeGenerated, Actor, Target, Role
+
+// Application added (OAuth app hunting)
+AuditLogs
+| where OperationName has "Add application"
+| project TimeGenerated, tostring(InitiatedBy.user.userPrincipalName), tostring(TargetResources[0].displayName)
+
+// ── UEBA / BEHAVIOR ANALYTICS ───────────────────────────────
+
+// Anomalous activity from UEBA
+BehaviorAnalytics
+| where ActivityInsights has "UncommonForUser"
+| project TimeGenerated, UserName, DeviceName, ActivityType, ActivityInsights
+
+// Unusual resource access
+BehaviorAnalytics
+| where InvestigationPriority > 5
+| project TimeGenerated, UserName, InvestigationPriority, ActivityType, ActivityInsights
+| sort by InvestigationPriority desc
+
+// ── WATCHLIST USAGE ─────────────────────────────────────────
+
+// Cross-reference IPs against a watchlist
+let MaliciousIPs = _GetWatchlist("MaliciousIPList") | project SearchKey;
+SigninLogs
+| where IPAddress in (MaliciousIPs)
+| project TimeGenerated, UserPrincipalName, IPAddress, ResultType, AppDisplayName
+
+// ── THREAT HUNTING HELPERS ──────────────────────────────────
+
+// Sentinel connector health check
+OfficeActivity
+| summarize LastEvent = max(TimeGenerated) by OfficeWorkload
+| extend StaleHours = datetime_diff("hour", now(), LastEvent)
+| where StaleHours > 6
+
+// All tables with data in last 24h
+search *
+| where TimeGenerated > ago(24h)
+| summarize count() by $table
+| sort by count_ desc

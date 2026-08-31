@@ -1,0 +1,117 @@
+// Source: https://github.com/nigeltho12/sc200-study-repo
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has_any ("-enc", "-EncodedCommand", "-ec ")
+| project Timestamp, DeviceName, AccountName, ProcessCommandLine
+
+// LOLBin abuse — mshta, certutil, regsvr32, wscript, cscript
+DeviceProcessEvents
+| where FileName has_any ("mshta.exe", "certutil.exe", "regsvr32.exe", "wscript.exe", "cscript.exe")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
+
+// CMD spawning recon tools
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "cmd.exe"
+| where FileName has_any ("net.exe", "whoami.exe", "ipconfig.exe", "nltest.exe", "systeminfo.exe")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine
+
+// PowerShell downloading content
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has_any ("Invoke-WebRequest", "IWR", "DownloadFile", "WebClient", "curl", "wget")
+| project Timestamp, DeviceName, AccountName, ProcessCommandLine
+
+// Suspicious parent-child chain (Office spawning shell)
+DeviceProcessEvents
+| where InitiatingProcessFileName has_any ("winword.exe", "excel.exe", "outlook.exe", "powerpnt.exe")
+| where FileName has_any ("cmd.exe", "powershell.exe", "wscript.exe", "cscript.exe", "mshta.exe")
+| project Timestamp, DeviceName, InitiatingProcessFileName, FileName, ProcessCommandLine
+
+// ── NETWORK EVENTS ──────────────────────────────────────────
+
+// Suspicious outbound connections (common C2 ports)
+DeviceNetworkEvents
+| where RemotePort in (4444, 1337, 8080, 9001, 9002)
+| where ActionType == "ConnectionSuccess"
+| project Timestamp, DeviceName, RemoteIP, RemotePort, InitiatingProcessFileName
+
+// DNS lookups to suspicious TLDs
+DeviceNetworkEvents
+| where ActionType == "DnsConnectionInspected"
+| where RemoteUrl has_any (".xyz", ".top", ".tk", ".pw", ".ru")
+| project Timestamp, DeviceName, RemoteUrl, InitiatingProcessFileName
+
+// Outbound traffic from unexpected processes
+DeviceNetworkEvents
+| where InitiatingProcessFileName has_any ("powershell.exe", "cmd.exe", "wscript.exe", "mshta.exe")
+| where ActionType == "ConnectionSuccess"
+| where RemoteIPType == "Public"
+| project Timestamp, DeviceName, RemoteIP, RemotePort, InitiatingProcessFileName
+
+// ── FILE EVENTS ─────────────────────────────────────────────
+
+// Files dropped in Temp / AppData (staging area)
+DeviceFileEvents
+| where FolderPath has_any (@"Temp\", @"AppData\Local\Temp", @"AppData\Roaming\")
+| where ActionType == "FileCreated"
+| where FileName has_any (".exe", ".dll", ".ps1", ".bat", ".vbs", ".js")
+| project Timestamp, DeviceName, FileName, FolderPath, InitiatingProcessFileName
+
+// Executable written then immediately run
+let written = DeviceFileEvents
+| where ActionType == "FileCreated"
+| where FileName endswith ".exe"
+| project WrittenTime = Timestamp, DeviceName, FileName, FolderPath;
+DeviceProcessEvents
+| join kind=inner written on DeviceName, FileName
+| where Timestamp > WrittenTime and Timestamp < WrittenTime + 5m
+| project Timestamp, DeviceName, FileName, FolderPath, ProcessCommandLine
+
+// ── REGISTRY EVENTS ─────────────────────────────────────────
+
+// Run key persistence
+DeviceRegistryEvents
+| where RegistryKey has_any (
+    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    @"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+    @"SOFTWARE\CurrentVersion\Run"
+  )
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| project Timestamp, DeviceName, AccountName, RegistryKey, RegistryValueName, RegistryValueData
+
+// Defender tamper (disabling real-time protection via registry)
+DeviceRegistryEvents
+| where RegistryKey has "Windows Defender"
+| where RegistryValueName has_any ("DisableRealtimeMonitoring", "DisableBehaviorMonitoring", "DisableAntiSpyware")
+| where RegistryValueData == "1"
+| project Timestamp, DeviceName, AccountName, RegistryKey, RegistryValueName
+
+// ── DEFENDER EVENTS ─────────────────────────────────────────
+
+// ASR rule blocks
+DeviceEvents
+| where ActionType startswith "Asr"
+| project Timestamp, DeviceName, ActionType, FileName, FolderPath, InitiatingProcessCommandLine
+
+// Tamper protection alerts
+DeviceEvents
+| where ActionType == "TamperingAttempt"
+| project Timestamp, DeviceName, AccountName, ActionType
+
+// ── SUMMARY / HUNTING ───────────────────────────────────────
+
+// Most active devices by process creation
+DeviceProcessEvents
+| where TimeGenerated > ago(24h)
+| summarize ProcessCount = count() by DeviceName
+| sort by ProcessCount desc | take 20
+
+// Rare processes across the fleet (low-frequency = interesting)
+DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| summarize DeviceCount = dcount(DeviceName), TotalCount = count() by FileName
+| where DeviceCount == 1
+| sort by TotalCount asc

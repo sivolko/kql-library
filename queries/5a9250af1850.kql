@@ -1,0 +1,12 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetUser = "user@contoso.com";
+let Lookback = 7d;
+SigninLogs
+| where TimeGenerated >= ago(Lookback)
+| where UserPrincipalName =~ TargetUser
+| where ResultType != "0"
+| summarize Attempts=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by IPAddress, AppDisplayName, ResultType, ResultDescription
+| order by Attempts desc

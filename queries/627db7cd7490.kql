@@ -1,0 +1,8 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+SecurityEvent  
+| where TimeGenerated > ago(1d) and EventID == 4624 and TargetLogonId != 0x0  
+| extend LegacyAuthentication = iif((LogonProcessName =~ "Advapi" or LogonProcessName =~ "Ssp"), "True", "False")  
+| where LegacyAuthentication == "True"  

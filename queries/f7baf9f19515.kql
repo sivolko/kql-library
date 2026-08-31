@@ -1,0 +1,50 @@
+// Source: https://github.com/sivolko/kql-library
+// Collected: 2026-08-31
+// KQL Library - https://github.com/sivolko/kql-library
+
+let TargetUPN = "";                          // required: exact UPN
+let AnchorTime = now();
+let Lookback = 24h;
+let Lookforward = 0h;
+let SensitiveOperationTerms = dynamic([
+    "consent", "credential", "credentials", "role", "password", "security",
+    "permission", "device", "application", "StrongAuthentication", "MFA", "policy"
+]);
+let StartTime = AnchorTime - Lookback;
+let EndTime = AnchorTime + Lookforward;
+AuditLogs
+| where isnotempty(TargetUPN)
+| where TimeGenerated between (StartTime .. EndTime)
+| extend
+    Initiator = todynamic(InitiatedBy),
+    Targets = todynamic(TargetResources)
+| extend
+    InitiatorUPN = tostring(Initiator.user.userPrincipalName),
+    InitiatorApp = tostring(Initiator.app.displayName),
+    InitiatorIP = tostring(Initiator.user.ipAddress)
+| extend
+    InitiatedByUser = InitiatorUPN =~ TargetUPN,
+    TargetsUser = tostring(TargetResources) contains TargetUPN
+| where InitiatedByUser or TargetsUser
+| extend Direction = case(
+    InitiatedByUser and TargetsUser, "initiated by and targets user",
+    InitiatedByUser, "initiated by user",
+    "targets user")
+| extend Sensitivity = iff(
+    OperationName has_any (SensitiveOperationTerms), "review first", "routine")
+| extend FirstTarget = coalesce(
+    tostring(Targets[0].userPrincipalName), tostring(Targets[0].displayName))
+| project
+    TimeGenerated,
+    Sensitivity,
+    OperationName = tostring(OperationName),
+    Result = tostring(Result),
+    Category = tostring(Category),
+    Direction,
+    InitiatorUPN,
+    InitiatorApp,
+    InitiatorIP,
+    FirstTarget,
+    TargetCount = array_length(Targets),
+    CorrelationId = tostring(CorrelationId)
+| sort by Sensitivity asc, TimeGenerated asc
