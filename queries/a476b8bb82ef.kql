@@ -1,0 +1,15 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-10-01
+// KQL Library - https://github.com/sivolko/kql-library
+
+let devices=
+    AuditLogs
+    | where TimeGenerated > ago (1d)
+    | where OperationName == "Device no longer compliant"
+    | extend DeviceName = tostring(TargetResources[0].displayName)
+    | distinct DeviceName;
+//Lookup those devices in the IntuneDevices table, and retrieve the latest record
+IntuneDevices
+| where TimeGenerated > ago (7d)
+| summarize arg_max(TimeGenerated, *) by DeviceName
+| where DeviceName in (devices)
