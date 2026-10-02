@@ -1,0 +1,16 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-10-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago (30d)
+| where ResultType has_any ("50074", "53000")
+| mv-expand ConditionalAccessPolicies
+| where ConditionalAccessPolicies.result == "failure"
+| extend ['Conditional Access Policy'] = tostring(ConditionalAccessPolicies.displayName)
+| summarize FailureCount = count() by ['Conditional Access Policy'], bin(TimeGenerated, 1d)
+| render timechart with  
+  ( 
+  ytitle="Count",
+  xtitle="Day",
+  title="Failures by CA Policy over Time")

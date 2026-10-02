@@ -1,0 +1,13 @@
+// Source: https://github.com/MorganCPatz/KQL-Queries
+// Collected: 2026-10-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago (30d)
+| where ResultType != "0"
+| mv-expand ConditionalAccessPolicies 
+| where ConditionalAccessPolicies.result == "failure"
+| where ConditionalAccessPolicies.displayName startswith ""
+| extend ['Conditional Access Policy'] = tostring((ConditionalAccessPolicies).displayName)
+| summarize ['Failure Count'] = count() by ['Conditional Access Policy'], ResultType, ResultDescription
+| sort by ['Conditional Access Policy'] asc

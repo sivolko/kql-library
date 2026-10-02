@@ -1,0 +1,17 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-10-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+let timerange=180d;
+AuditLogs
+| where TimeGenerated > ago (timerange)
+| where OperationName in ("Redeem external user invite", "Invite external user")
+| summarize
+    InvitesSent=countif(OperationName == "Invite external user"),
+    InvitesRedeemed=countif(OperationName == "Redeem external user invite")
+    by startofweek(TimeGenerated)
+| render columnchart
+    with (
+    title="Guest Invites Sent v Guest Invites Redeemed",
+    xtitle="Invites",
+    kind=unstacked)

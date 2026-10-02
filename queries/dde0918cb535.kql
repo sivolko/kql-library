@@ -1,0 +1,34 @@
+// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules
+// Collected: 2026-10-02
+// KQL Library - https://github.com/sivolko/kql-library
+
+let APISpray =
+SigninLogs
+| where TimeGenerated > ago(90d)
+| where ResultType == "50126" or ResultType == "50053"
+| where UserAgent has "AmazonAPIGateway_"
+| distinct IPAddress;
+BehaviorAnalytics
+| where SourceIPAddress has_any (APISpray)
+| extend BlastRadius = UsersInsights.BlastRadius
+| where BlastRadius == "High"
+
+// #Sentinel #UEBA #BehaviourAnalytics #APISpray #BlastRadius #AWS #APIGateway
+
+// MITRE ATT&ACK Mapping
+
+// Tactic: Credential Access
+// Technique: Valid Accounts (T1078)
+// Sub-technique: Cloud Accounts (T1078.004)
+
+// Tactic: Initial Access
+// Technique: Exploit Public-Facing Application (T1190)
+// Reason: The presence of “AmazonAPIGateway_” in the UserAgent string suggests interaction with a public-facing API, which could be exploited.
+
+// Tactic: Discovery
+// Technique: Account Discovery (T1087)
+// Reason: The query is looking for behaviors associated with specific IP addresses, which could indicate reconnaissance activities.
+
+// Tactic: Impact
+// Technique: Data Destruction (T1485)
+// Reason: High blast radius indicates a significant impact, potentially related to destructive actions.

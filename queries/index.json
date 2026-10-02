@@ -1,5 +1,216 @@
 [
   {
+    "id": "ac2b14d70fb3",
+    "title": "Create a pivot table showing all the actions taken by your privileged users",
+    "description": "Create a pivot table showing all the actions taken by your privileged users",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet privusers=\n    IdentityInfo\n    | where TimeGenerated > ago(21d)\n    | summarize arg_max(TimeGenerated, *) by AccountUPN\n    | where isnotempty(AssignedRoles)\n    | where AssignedRoles != \"[]\"\n    | distinct AccountUPN;\n//Search for all actions taken by those users in the last 7 days\nAuditLogs\n| where TimeGenerated > ago(7d)\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| where Actor in (privusers)\n//Create a pivot table counting each action for each user\n| evaluate pivot(OperationName, count(), Actor)\n| order by Actor asc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-PivotTableofPrivilegedUserActions.kql",
+    "filename": "Audit-PivotTableofPrivilegedUserActions.kql",
+    "collected_at": "2026-10-02T08:07:48.407126+00:00"
+  },
+  {
+    "id": "447e61127f92",
+    "title": "Find users who are assigned a privileged role in Azure AD but haven't activated a role in the last 45 days",
+    "description": "Find users who are assigned a privileged role in Azure AD but haven't activated a role in the last 45 days",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nIdentityInfo\n| where TimeGenerated > ago(21d)\n| where isnotempty(AssignedRoles)\n| where AssignedRoles != \"[]\"\n| summarize arg_max(TimeGenerated, *) by AccountUPN\n| join kind=leftanti  (\n    AuditLogs\n    | where TimeGenerated > ago(45d)\n    | where OperationName == \"Add member to role completed (PIM activation)\"\n    | extend AccountUPN = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n    | summarize arg_max(TimeGenerated, *) by AccountUPN)\n    on AccountUPN",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/PIM-UserAssignedRolebutHasntActivated.kql",
+    "filename": "PIM-UserAssignedRolebutHasntActivated.kql",
+    "collected_at": "2026-10-02T08:07:47.633571+00:00"
+  },
+  {
+    "id": "9df9e9e75773",
+    "title": "Lists guests who have been invited but not yet redeemed their invites.",
+    "description": "Lists guests who have been invited but not yet redeemed their invites.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timerange=365d;\nlet timeframe=30d;\nAuditLogs\n| where TimeGenerated between (ago(timerange) .. ago(timeframe)) \n| where OperationName == \"Invite external user\"\n| extend GuestUPN = tolower(tostring(TargetResources[0].userPrincipalName))\n| project TimeGenerated, GuestUPN\n| join kind=leftanti  (\n    AuditLogs\n    | where TimeGenerated > ago (timerange)\n    | where OperationName == \"Redeem external user invite\"\n    | where CorrelationId <> \"00000000-0000-0000-0000-000000000000\"\n    | extend d = tolower(tostring(TargetResources[0].displayName))\n    | parse d with * \"upn: \" GuestUPN \",\" *\n    | project TimeGenerated, GuestUPN)\n    on GuestUPN\n| distinct GuestUPN",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-GuestsInvitedbutnotRedeemed.kql",
+    "filename": "Identity-GuestsInvitedbutnotRedeemed.kql",
+    "collected_at": "2026-10-02T08:07:46.978555+00:00"
+  },
+  {
+    "id": "4ee37fbad623",
+    "title": "Data connector required for this query - Azure Active Directory - Audit Logs",
+    "description": "Tracks privileged post creation events on your Azure AD service principals, such as secrets being generated, permissions being added or an admin consenting.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timeframe=60d;\nlet AppAdded=\n    AuditLogs\n    | where TimeGenerated > ago (timeframe)\n    | where OperationName == \"Add service principal\"\n    | extend AppId = tostring(AdditionalDetails[1].value)\n    | extend ServicePrincipalId = tostring(TargetResources[0].id)\n    // Optionally add a specific Application ID\n    //| where AppId == \"id\"\n    | extend AppName = tostring(TargetResources[0].displayName)\n    | where isnotempty(AppId)\n    | project TimeGenerated, OperationName, AppId, AppName, ServicePrincipalId;\nlet AppSecretAdded=\n    AuditLogs\n    | where OperationName contains 'Update application \u2013 Certificates and secrets management'\n    | extend AppId = tostring(AdditionalDetails[1].value)\n    | project TimeGenerated, AppId, OperationName\n    | join kind=inner AppAdded on AppId\n    | project TimeGenerated, OperationName, AppId, AppName;\nlet AppApplicationAccess=\n    AuditLogs\n    | where OperationName == \"Add app role assignment to service principal\"\n    | extend AppId = tostring(TargetResources[1].displayName)\n    | project TimeGenerated, AppId, OperationName\n    | join kind=inner AppAdded on AppId\n    | project TimeGenerated, OperationName, AppId, AppName;\nlet AppDelegatedAccess=\n    AuditLogs\n    | where OperationName == \"Add delegated permission grant\"\n    | extend ServicePrincipalId = tostring(TargetResources[1].id)\n    | project TimeGenerated, ServicePrincipalId, OperationName\n    | join kind=inner AppAdded on ServicePrincipalId\n    | project TimeGenerated, OperationName, AppId, AppName;\nlet AppConsentGiven=\n    AuditLogs\n    | where OperationName == \"Consent to application\"\n    | extend AppId = tostring(AdditionalDetails[1].value)\n    | project TimeGenerated, AppId, OperationName\n    | join kind=inner AppAdded on AppId\n    | project TimeGenerated, OperationName, AppId, AppName;\nlet AppDeleted=\n    AuditLogs\n    | where OperationName == \"Delete application\"\n    | extend AppId = tostring(AdditionalDetails[1].value)\n    | project TimeGenerated, AppId, OperationName\n    | join kind=inner AppAdded on AppId\n    | project TimeGenerated, OperationName, AppId, AppName;\nAppAdded\n| union\n    AppSecretAdded,\n    AppApplicationAccess,\n    AppConsentGiven,\n    AppDelegatedAccess,\n    AppDeleted\n| sort by TimeGenerated asc \n| summarize\n    AppOperations=(make_list(OperationName)),\n    AppOperationTime=(make_list(TimeGenerated))\n    by AppId, AppName",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/OAuth-TrackEventsonServicePrincipals.kql",
+    "filename": "OAuth-TrackEventsonServicePrincipals.kql",
+    "collected_at": "2026-10-02T08:07:46.339717+00:00"
+  },
+  {
+    "id": "eb11d27705d7",
+    "title": "Detect when a group is added to Azure AD with the 'Azure AD roles can be assigned to this group' flag enabled",
+    "description": "Detect when a group is added to Azure AD with the 'Azure AD roles can be assigned to this group' flag enabled",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nAuditLogs\n| where TimeGenerated > ago(90d)\n| where OperationName == \"Add group\"\n| where parse_json(tostring(TargetResources[0].modifiedProperties))[1].displayName == \"IsAssignableToRole\"\n| where parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue))[0] == true\n| extend GroupName = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[0].newValue))[0])\n| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)\n| extend ['Actor IP Address'] = tostring(parse_json(tostring(InitiatedBy.user)).ipAddress)\n| project TimeGenerated, OperationName, GroupName, Actor, ['Actor IP Address']",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Audit-DetectNewPrivilegedGroupAdded.kql",
+    "filename": "Audit-DetectNewPrivilegedGroupAdded.kql",
+    "collected_at": "2026-10-02T08:07:45.711369+00:00"
+  },
+  {
+    "id": "766fc390f819",
+    "title": "Visualizes the total guest invites sent from your Azure AD tenant vs those redeemed. Data is summarized per week.",
+    "description": "Visualizes the total guest invites sent from your Azure AD tenant vs those redeemed. Data is summarized per week.",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet timerange=180d;\nAuditLogs\n| where TimeGenerated > ago (timerange)\n| where OperationName in (\"Redeem external user invite\", \"Invite external user\")\n| summarize\n    InvitesSent=countif(OperationName == \"Invite external user\"),\n    InvitesRedeemed=countif(OperationName == \"Redeem external user invite\")\n    by startofweek(TimeGenerated)\n| render columnchart\n    with (\n    title=\"Guest Invites Sent v Guest Invites Redeemed\",\n    xtitle=\"Invites\",\n    kind=unstacked)",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Azure Active Directory/Identity-GuestInvitesSentvsRedeemed.kql",
+    "filename": "Identity-GuestInvitesSentvsRedeemed.kql",
+    "collected_at": "2026-10-02T08:07:45.055473+00:00"
+  },
+  {
+    "id": "dde0918cb535",
+    "title": "Detect API Spray Attack on your Entra High Value Assets",
+    "description": "Detect API Spray Attack on your Entra High Value Assets",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet APISpray =\nSigninLogs\n| where TimeGenerated > ago(90d)\n| where ResultType == \"50126\" or ResultType == \"50053\"\n| where UserAgent has \"AmazonAPIGateway_\"\n| distinct IPAddress;\nBehaviorAnalytics\n| where SourceIPAddress has_any (APISpray)\n| extend BlastRadius = UsersInsights.BlastRadius\n| where BlastRadius == \"High\"\n\n// #Sentinel #UEBA #BehaviourAnalytics #APISpray #BlastRadius #AWS #APIGateway\n\n// MITRE ATT&ACK Mapping\n\n// Tactic: Credential Access\n// Technique: Valid Accounts (T1078)\n// Sub-technique: Cloud Accounts (T1078.004)\n\n// Tactic: Initial Access\n// Technique: Exploit Public-Facing Application (T1190)\n// Reason: The presence of \u201cAmazonAPIGateway_\u201d in the UserAgent string suggests interaction with a public-facing API, which could be exploited.\n\n// Tactic: Discovery\n// Technique: Account Discovery (T1087)\n// Reason: The query is looking for behaviors associated with specific IP addresses, which could indicate reconnaissance activities.\n\n// Tactic: Impact\n// Technique: Data Destruction (T1485)\n// Reason: High blast radius indicates a significant impact, potentially related to destructive actions.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f3bff1c9998ea9fb7d56dedae7815b7acca7dde3/Sentinel/Detect API Spray Attack on your Entra High Value Assets.kql",
+    "filename": "Detect API Spray Attack on your Entra High Value Assets.kql",
+    "collected_at": "2026-10-02T08:07:40.003317+00:00"
+  },
+  {
+    "id": "7acd32689f0f",
+    "title": "Summarizes results of Conditional Access Policies failures over time",
+    "description": "Targets CA Poicies failures where StrongAuthentication or Device Compliant is required https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/MorganCPatz/KQL-Queries\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago (30d)\n| where ResultType has_any (\"50074\", \"53000\")\n| mv-expand ConditionalAccessPolicies\n| where ConditionalAccessPolicies.result == \"failure\"\n| extend ['Conditional Access Policy'] = tostring(ConditionalAccessPolicies.displayName)\n| summarize FailureCount = count() by ['Conditional Access Policy'], bin(TimeGenerated, 1d)\n| render timechart with  \n  ( \n  ytitle=\"Count\",\n  xtitle=\"Day\",\n  title=\"Failures by CA Policy over Time\")",
+    "source_repo": "MorganCPatz/KQL-Queries",
+    "source_url": "https://github.com/MorganCPatz/KQL-Queries/blob/bbd8a77d42be35c148f79727f6787e88b205a9db/Sentinel/SigninLogs-VisualizeConditionalAccessFailures.kql",
+    "filename": "SigninLogs-VisualizeConditionalAccessFailures.kql",
+    "collected_at": "2026-10-02T08:07:39.345791+00:00"
+  },
+  {
+    "id": "c9254a546e7a",
+    "title": "Detecting Mamba 2FA phishing-as-a-service",
+    "description": "Detecting Mamba 2FA phishing-as-a-service",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet IPv4IOC = dynamic(['23.26.35.67','23.26.206.99','45.86.54.206','45.9.153.102','45.61.130.11','45.61.169.4','172.86.64.212','172.86.96.84','172.86.96.128','172.86.97.78', '172.86.97.165','172.86.104.33','172.86.104.64','172.86.104.178','172.86.105.59','172.86.105.72','172.86.106.94']);\nlet IPv6IOC = dynamic(['2607:5500:3000:1cab::2','2607:5500:3000:7bc::2','2607:5500:3000:312::2','2607:5500:3000:7a5::2','2607:5500:3000:a8c::2','2607:5500:3000:fea::2','2607:5500:3000:b16::2']);\nSigninLogs\n| where TimeGenerated > ago(90d)\n| where IPAddress has_any (IPv4IOC) or IPAddress has_any (IPv6IOC)\n\n// Query 2 - User endpoint communicating with Mamba 2FA\n\nlet DomainsIOC = dynamic(['ccokies1cakes.com','ccokies2mangoes.com','ccokies3tomatoes.com','m1tis-apicookies.com','m2fes-apicookies.com','m3mas-apicookies.com','winss0conect.click','winstnet80nss.cfd','tenetur.top','tenetur.xyz','hypexfinancial.com','voltampereactive.com','planchereserver.com','thirdmandomavis.com','fourthmanservice.com','sithchibb.com','copelustration.xyz','copefood.xyz','seven-oranges.com','onemanforest.com','twomancake.com','threemanshop.com','fourmanchurch.com','fivemanchool.com','sixmanteams.com','sevenmanjungle.com','88mansession.com','fiveradio-newbam.com','nine9manforest.com','10decadesmen.com','11cyclesforest.com','1messisnfarm.com','2moniunesson.com','3alphabetjay.com','4sessionmoon.com','5poleanalhy.com','6treesmangle.com','7motionmansa.com','8boomandool.com','9cantronnfit.com','10trioneyue8ss.com','11beamgools.com']);\nDeviceNetworkEvents\n| where TimeGenerated > ago(90d)\n| where ActionType == \"HttpConnectionInspected\"\n| extend WWWHost = AdditionalFields.host\n| where WWWHost has_any (DomainsIOC)\n\n// MITRE ATT&CK\n// T1557",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f3bff1c9998ea9fb7d56dedae7815b7acca7dde3/Sentinel/Detecting Mamba 2FA phishing-as-a-service.kql",
+    "filename": "Detecting Mamba 2FA phishing-as-a-service.kql",
+    "collected_at": "2026-10-02T08:07:38.695217+00:00"
+  },
+  {
+    "id": "fcf330c83d0f",
+    "title": "Summarizes Conditional Access Policy failures over time",
+    "description": "Can be used to search for failures of specific policies",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/MorganCPatz/KQL-Queries\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSigninLogs\n| where TimeGenerated > ago (30d)\n| where ResultType != \"0\"\n| mv-expand ConditionalAccessPolicies \n| where ConditionalAccessPolicies.result == \"failure\"\n| where ConditionalAccessPolicies.displayName startswith \"\"\n| extend ['Conditional Access Policy'] = tostring((ConditionalAccessPolicies).displayName)\n| summarize ['Failure Count'] = count() by ['Conditional Access Policy'], ResultType, ResultDescription\n| sort by ['Conditional Access Policy'] asc",
+    "source_repo": "MorganCPatz/KQL-Queries",
+    "source_url": "https://github.com/MorganCPatz/KQL-Queries/blob/bbd8a77d42be35c148f79727f6787e88b205a9db/Sentinel/SigninLogs-ConditionalAccessPolicyFailures.kql",
+    "filename": "SigninLogs-ConditionalAccessPolicyFailures.kql",
+    "collected_at": "2026-10-02T08:07:38.074919+00:00"
+  },
+  {
+    "id": "64f70bb4bd01",
+    "title": "Detect Power Pwn (aka LOLCopilot) Red Team Tool",
+    "description": "Detect Power Pwn (aka LOLCopilot) Red Team Tool",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "defender",
+      "network",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/SlimKQL/Hunting-Queries-Detection-Rules\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nDeviceNetworkEvents \n| where InitiatingProcessVersionInfoProductName == \"Node.js\"\n| where RemoteUrl startswith \"https://www.office.com\" or \nRemoteUrl startswith \"https://teams.microsoft.com\"\n\n// Sentinel detection on Entra Signin for possible LOLCopilot usage on non MDE endpoints\n\nSigninLogs\n| where TimeGenerated > ago(1h)\n| where UserAgent contains \"headless\"\n\n// Note: The above will no longer work if threat actor changes the Power Pwn Puppeteer script's setUserAgent value \n\n// Reference: https://www.wired.com/story/microsoft-copilot-phishing-data-extraction/\n\n// MITRE ATT&CK Mapping\n\n// T1071.001 - Application Layer Protocol: Web Protocols: This technique involves using web protocols for command and control communication1.\n// T1105 - Ingress Tool Transfer: This technique involves transferring tools or files from an external system into a compromised environment2.\n\n// T1078 - Valid Accounts: This technique involves the use of valid accounts to gain access to systems3.\n// T1202 - Indirect Command Execution: This technique involves executing commands through a legitimate interface, such as a headless browser4.",
+    "source_repo": "SlimKQL/Hunting-Queries-Detection-Rules",
+    "source_url": "https://github.com/SlimKQL/Hunting-Queries-Detection-Rules/blob/f3bff1c9998ea9fb7d56dedae7815b7acca7dde3/DefenderXDR/Detect Power Pwn (aka LOLCopilot) Red Team Tool .kql",
+    "filename": "Detect Power Pwn (aka LOLCopilot) Red Team Tool .kql",
+    "collected_at": "2026-10-02T08:07:37.393995+00:00"
+  },
+  {
+    "id": "47869765dd60",
+    "title": "Detect when Kerberos preauthentication is enabled or disabled for a user",
+    "description": "Detect when Kerberos preauthentication is enabled or disabled for a user",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/shubhendushubham/kali-browser\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == 4738\n| where AccountType == \"User\"\n| where UserAccountControl has_any (\"2064\", \"2096\")\n| extend Action = case(UserAccountControl has \"2096\", strcat(\"Kerberos preauthentication disabled\"),\n    UserAccountControl has \"2064\", strcat(\"Kerberos preauthentication enabled\"),\n    \"unknown\")\n| project TimeGenerated, Actor=SubjectAccount, User=TargetAccount, Action",
+    "source_repo": "shubhendushubham/kali-browser",
+    "source_url": "https://github.com/shubhendushubham/kali-browser/blob/ab391e8889d702282fd4f6e629ce9460ad1c0fea/kql_queries/SecurityEvent-AccountPreAuthChanges.kql",
+    "filename": "SecurityEvent-AccountPreAuthChanges.kql",
+    "collected_at": "2026-10-02T08:07:31.545196+00:00"
+  },
+  {
+    "id": "b3ec3c31fbb9",
+    "title": "ActiveDirectoryPermissionChanges",
+    "description": "ActiveDirectoryPermissionChanges",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/eshlomo1/Microsoft-Sentinel-SecOps\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nlet ADObjectTypes = datatable (ObjectClass:string, Severity:string, UIText:string)\n    [\"domainDNS\", \"High\",\"root domain\",\n     \"user\",  \"Low\",\"User\",\n     \"group\", \"Low\",\"Group\",\n     \"groupPolicyContainer\", \"Medium\",\" Group Policy Object\",\n     \"organizationalUnit\", \"Medium\",\"Organizational Unit\",\n     \"container\", \"Medium\",\"Built-in Container\",\n     ];\nlet CriticalADGroups = dynamic ([\"Enterprise Admins\",\"Domain Admins\",\"Schema Admins\",\"Protected Users\",\"DnsAdmins\"]);\nlet CriticalContainers = dynamic ([\"AdminSDHolder\"]);\nSecurityEvent\n| where EventID == 5136\n| extend MyData = tostring(parse_xml(EventData))\n| extend Object = extractjson(\"$['EventData']['Data'][8]#text\", MyData)\n| extend ObjectClass = extractjson(\"$['EventData']['Data'][10]#text\", MyData)\n| extend OperationType = iif(extractjson(\"$['EventData']['Data'][14]#text\", MyData) == \"%%14674\",\"Value Added\",\"Value Deleted\")\n| parse Object with * \"CN=\" GroupName \",\" *\n| parse Object with * \"OU=\" OUName \",\" *\n| where OperationType == \"Value Added\"\n| join kind = inner ADObjectTypes on ObjectClass\n| extend CriticalGroupChange = (GroupName has_any (CriticalADGroups))\n| extend CriticalContainerChange = (GroupName has_any (CriticalContainers))\n| extend Severity = iif(CriticalGroupChange == \"true\",\"High\",Severity)\n| extend Severity = iif(CriticalContainerChange == \"true\",\"High\",Severity)\n| project TimeGenerated,ObjectClass,Severity,Account,Object,OperationType,GroupName,CriticalGroupChange,CriticalContainerChange,UIText,OUName",
+    "source_repo": "eshlomo1/Microsoft-Sentinel-SecOps",
+    "source_url": "https://github.com/eshlomo1/Microsoft-Sentinel-SecOps/blob/e8470db5c6cf8a3e84080a89453107980be5c66e/AD/ActiveDirectoryPermissionChanges.kql",
+    "filename": "ActiveDirectoryPermissionChanges.kql",
+    "collected_at": "2026-10-02T08:07:30.896994+00:00"
+  },
+  {
+    "id": "fc73c407ff1e",
+    "title": "Create a daily report of users being added to on premise Active Directory groups, summarized by group name",
+    "description": "Create a daily report of users being added to on premise Active Directory groups, summarized by group name",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/Gyarbij/Artemis\n// Collected: 2026-10-02\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (7d)\n| where AccountType == \"User\"\n| where EventID in (4728, 4732, 4756, 4761, 4746, 4751)\n| project TimeGenerated, MemberName, ['Group Name']=TargetUserName, EventID\n| parse MemberName with * 'CN=' UserAdded ',' *\n| summarize UsersAdded=make_set(UserAdded) by ['Group Name'], startofday(TimeGenerated)\n| sort by ['Group Name'] asc, TimeGenerated desc ",
+    "source_repo": "Gyarbij/Artemis",
+    "source_url": "https://github.com/Gyarbij/Artemis/blob/4ef64a4c54532e0a1155265078a96e222c4abae5/Hunting/Active Directory/SecurityEvent-DailySummaryofGroupAdditions.kql",
+    "filename": "SecurityEvent-DailySummaryofGroupAdditions.kql",
+    "collected_at": "2026-10-02T08:07:30.233019+00:00"
+  },
+  {
     "id": "a476b8bb82ef",
     "title": "When Azure AD flags a device as non compliant, retrieve the details about the devices from Intune",
     "description": "When Azure AD flags a device as non compliant, retrieve the details about the devices from Intune",
