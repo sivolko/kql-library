@@ -1,5 +1,19 @@
 [
   {
+    "id": "a1d575a98fd2",
+    "title": "Detects when unconstrained kerberos delegation is enabled on a user object",
+    "description": "Detects when unconstrained kerberos delegation is enabled on a user object",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/EmreOzanMemis/AzureSentinel\n// Collected: 2026-10-13\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where EventID == \"4738\"\n| parse EventData with * 'NewUacValue\">' NewUacValue '</Data>' *\n| parse EventData with * 'TargetUserName\">' UserName '</Data>' *\n| parse EventData with * 'SubjectUserName\">' Actor '</Data>' *\n| where NewUacValue == \"0x2010\"\n| project TimeGenerated, Activity, UserName, Actor",
+    "source_repo": "EmreOzanMemis/AzureSentinel",
+    "source_url": "https://github.com/EmreOzanMemis/AzureSentinel/blob/c04f3c94811e44003267420c1789965797e2c2ea/Sentinel-KQL-Sorgular\u0131/Active Directory/SecurityEvent-UnconstrainedDelegationtoUser.kql",
+    "filename": "SecurityEvent-UnconstrainedDelegationtoUser.kql",
+    "collected_at": "2026-10-13T09:06:24.608704+00:00"
+  },
+  {
     "id": "d5fc77b075a3",
     "title": "Create a daily report of users being added to on premise Active Directory groups, summarized by group name",
     "description": "Create a daily report of users being added to on premise Active Directory groups, summarized by group name",
