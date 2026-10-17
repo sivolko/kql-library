@@ -1,5 +1,34 @@
 [
   {
+    "id": "30bcb50f0194",
+    "title": "Even if \"Software OATH tokens\" method is disabled, it might be possible to register it, generating an anomalous signal",
+    "description": "Even if \"Software OATH tokens\" method is disabled, it might be possible to register it, generating an anomalous signal",
+    "category": "Identity & Access",
+    "tags": [
+      "sentinel",
+      "identity"
+    ],
+    "content": "// Source: https://github.com/ep3p/Sentinel_KQL\n// Collected: 2026-10-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nunion\n    (\n    AuditLogs\n    // | where LoggedByService == \"Authentication Methods\" and Category == \"PolicyManagement\" and AADOperationType == \"ServiceApi\"\n    | where OperationName has \"POST UserAuthMethod.SoftwareOathProofupRegistration\"\n    ),\n    (\n    AuditLogs\n    // | where LoggedByService == \"Core Directory\" and Category == \"UserManagement\"\n    // | where OperationName == \"Update user\"\n    | where TargetResources has \"StrongAuthenticationPhoneAppDetail\"\n    | mv-expand TargetResource = TargetResources\n    | mv-expand modifiedProperty = TargetResource[\"modifiedProperties\"]\n    | where modifiedProperty[\"displayName\"] == \"StrongAuthenticationPhoneAppDetail\"\n    | mv-apply newValue = todynamic(tostring(modifiedProperty[\"newValue\"])), oldValue = todynamic(tostring(modifiedProperty[\"oldValue\"])) on (\n        summarize\n            NewValueBag = make_bag_if(bag_pack(tostring(newValue[\"Id\"]), newValue), isnotempty(newValue)),\n            OldValueBag = make_bag_if(bag_pack(tostring(oldValue[\"Id\"]), oldValue), isnotempty(oldValue))\n        | extend AddedAuthenticationMethod = bag_remove_keys(NewValueBag, bag_keys(OldValueBag))\n        | where array_length(bag_keys(AddedAuthenticationMethod)) > 0\n        )\n    | mv-expand AddedAuthenticationMethod = todynamic(tostring(AddedAuthenticationMethod))\n    | extend AddedAuthenticationMethod = AddedAuthenticationMethod[tostring(bag_keys(AddedAuthenticationMethod)[0])]\n    | where AddedAuthenticationMethod[\"AuthenticationType\"] == 2\n        or tostring(AddedAuthenticationMethod[\"DeviceName\"]) == \"NO_DEVICE\"\n        or tostring(AddedAuthenticationMethod[\"DeviceToken\"]) == \"NO_DEVICE_TOKEN\"\n        or tostring(AddedAuthenticationMethod[\"PhoneAppVersion\"]) == \"NO_PHONE_APP_VERSION\"\n        or not(tostring(AddedAuthenticationMethod[\"HashFunction\"]) in (\"\", \"hmacsha256\"))// or == \"hmacsha1\"\n        or not(tolong(AddedAuthenticationMethod[\"NotificationType\"]) in (2, 3, 4))\n    )\n| extend\n    Initiator = iif(isnotempty(InitiatedBy[\"user\"]), tostring(InitiatedBy[\"user\"][\"userPrincipalName\"]), tostring(InitiatedBy[\"app\"][\"displayName\"])),\n    InitiatorId = iif(isnotempty(InitiatedBy[\"user\"]), tostring(InitiatedBy[\"user\"][\"id\"]), tostring(InitiatedBy[\"app\"][\"servicePrincipalId\"])),\n    IPAddress = tostring(InitiatedBy[tostring(bag_keys(InitiatedBy)[0])][\"ipAddress\"])\n| project\n    TimeGenerated,\n    LoggedByService,\n    Category,\n    AADOperationType,\n    Initiator,\n    Identity,\n    IPAddress,\n    OperationName,\n    Result,\n    ResultDescription,\n    AddedAuthenticationMethod,\n    OldAuthenticationMethods = OldValueBag,\n    AdditionalDetails,\n    InitiatorId,\n    InitiatedBy,\n    TargetResources,\n    CorrelationId",
+    "source_repo": "ep3p/Sentinel_KQL",
+    "source_url": "https://github.com/ep3p/Sentinel_KQL/blob/48d67a7219ba91a171f6e20e42d905294862d16d/Queries/Entra ID/Authentication/AuditLogs-Software OATH token method registered.kql",
+    "filename": "AuditLogs-Software OATH token method registered.kql",
+    "collected_at": "2026-10-17T06:43:36.752284+00:00"
+  },
+  {
+    "id": "1648a4a90110",
+    "title": "Data connector required for this query - Windows Security Events via AMA or Security Events via Legacy Agent",
+    "description": "Use your Windows security log to find the users most at risk for lateral movement by finding those that have connected remotely to the most devices",
+    "category": "Endpoint Security",
+    "tags": [
+      "sentinel"
+    ],
+    "content": "// Source: https://github.com/reprise99/Sentinel-Queries\n// Collected: 2026-10-17\n// KQL Library - https://github.com/sivolko/kql-library\n\nSecurityEvent\n| where TimeGenerated > ago (30d)\n| where EventID == \"4624\"\n| where LogonType == 10\n| where SubjectDomainName == TargetDomainName\n//Summarize total logins, distinct devices and then list all the devices each account has logged onto\n//Account is dropped to lower case to make sure each account is only listed once, i.e Reprise99 and reprise99 are combined\n| summarize\n    ['Total logon count']=count(),\n    ['Distinct device logon count']=dcount(Computer),\n    ['List of devices']=make_set(Computer)\n    by tolower(Account)\n| sort by ['Distinct device logon count'] desc ",
+    "source_repo": "reprise99/Sentinel-Queries",
+    "source_url": "https://github.com/reprise99/Sentinel-Queries/blob/660895f644b2a149009820f653978620f65ef56c/Windows Security Events/SecEvents-FindLateralMovementUsers.kql",
+    "filename": "SecEvents-FindLateralMovementUsers.kql",
+    "collected_at": "2026-10-17T06:43:27.623182+00:00"
+  },
+  {
     "id": "a1d575a98fd2",
     "title": "Detects when unconstrained kerberos delegation is enabled on a user object",
     "description": "Detects when unconstrained kerberos delegation is enabled on a user object",
