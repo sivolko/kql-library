@@ -1,0 +1,22 @@
+// Source: https://github.com/reprise99/Sentinel-Queries
+// Collected: 2026-10-28
+// KQL Library - https://github.com/sivolko/kql-library
+
+SigninLogs
+| where TimeGenerated > ago(30d)
+| where ResultType == "0"
+| summarize Guests=dcountif(UserPrincipalName,UserType == "Guest"), Members=dcountif(UserPrincipalName,UserType == "Member") by AppDisplayName
+| where Guests > Members
+| sort by Guests desc 
+
+//Advanced Hunting query
+
+//Data connector required for this query - Advanced Hunting with Azure AD P2 License
+
+AADSignInEventsBeta
+| where Timestamp > ago(30d)
+| where LogonType == @"[""interactiveUser""]"
+| where ErrorCode == "0"
+| summarize Guests=dcountif(AccountUpn,IsGuestUser == "true"), Members=dcountif(AccountUpn,IsGuestUser == "false") by Application
+| where Guests > Members
+| sort by Guests desc 
